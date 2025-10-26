@@ -89,6 +89,10 @@ set(RENDER_SOURCES
     src/core/opengl_context.cpp
     src/core/render_state.cpp
     
+    # Rendering
+    src/rendering/shader.cpp
+    src/rendering/uniform_manager.cpp
+    
     # Utils
     src/utils/logger.cpp
     src/utils/file_utils.cpp
@@ -103,6 +107,10 @@ set(RENDER_HEADERS
     include/render/opengl_context.h
     include/render/render_state.h
     include/render/types.h
+    
+    # Rendering
+    include/render/shader.h
+    include/render/uniform_manager.h
     
     # Utils
     include/render/logger.h

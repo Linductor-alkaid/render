@@ -42,7 +42,8 @@ Makefile
 *.userosscache
 *.sln.docstates
 
-# 临时文件
+# 临时文件和日志
+logs/
 *.log
 *.tmp
 *.temp

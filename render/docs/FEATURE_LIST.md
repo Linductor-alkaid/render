@@ -158,11 +158,12 @@
 
 ## 技术路线图
 
-### Phase 1: 核心基础（进行中 - 30%）
+### Phase 1: 核心基础（进行中 - 35%）
 - [x] 基础渲染框架
 - [x] OpenGL 抽象层
 - [x] 窗口和上下文管理
-- [ ] 着色器系统
+- [x] 着色器基类（Shader + UniformManager）
+- [ ] 几何数据抽象层（VertexBuffer/IndexBuffer/VertexArray）
 - [ ] 资源管理系统
 - [ ] 基本 2D/3D 渲染
 - [ ] 相机和光照

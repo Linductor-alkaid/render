@@ -1,4 +1,5 @@
 #include "render/logger.h"
+#include <filesystem>
 
 namespace Render {
 
@@ -10,7 +11,8 @@ Logger& Logger::GetInstance() {
 Logger::Logger() 
     : m_logLevel(LogLevel::Debug)
     , m_logToConsole(true)
-    , m_logToFile(false) {
+    , m_logToFile(false)
+    , m_logDirectory("logs") {
 }
 
 Logger::~Logger() {
@@ -23,6 +25,10 @@ void Logger::SetLogLevel(LogLevel level) {
     m_logLevel = level;
 }
 
+void Logger::SetLogDirectory(const std::string& directory) {
+    m_logDirectory = directory;
+}
+
 void Logger::SetLogToFile(bool enable, const std::string& filename) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
@@ -30,13 +36,39 @@ void Logger::SetLogToFile(bool enable, const std::string& filename) {
         if (m_fileStream.is_open()) {
             m_fileStream.close();
         }
-        m_fileStream.open(filename, std::ios::out | std::ios::app);
+        
+        // 创建日志目录
+        CreateLogDirectory();
+        
+        // 生成日志文件名（如果未指定）
+        std::string logFile;
+        if (filename.empty()) {
+            logFile = GenerateLogFileName();
+        } else {
+            // 如果指定了文件名，也放到 logs 目录下
+            logFile = m_logDirectory + "/" + filename;
+        }
+        
+        m_currentLogFile = logFile;
+        
+        // 打开文件
+        m_fileStream.open(logFile, std::ios::out | std::ios::trunc); // 使用 trunc 创建新文件
         m_logToFile = m_fileStream.is_open();
+        
+        if (m_logToFile) {
+            // 写入文件头
+            m_fileStream << "========================================" << std::endl;
+            m_fileStream << "RenderEngine Log File" << std::endl;
+            m_fileStream << "Created: " << GetTimestamp() << std::endl;
+            m_fileStream << "========================================" << std::endl;
+            m_fileStream.flush();
+        }
     } else {
         if (m_fileStream.is_open()) {
             m_fileStream.close();
         }
         m_logToFile = false;
+        m_currentLogFile.clear();
     }
 }
 
@@ -97,6 +129,15 @@ std::string Logger::GetTimestamp() {
     return ss.str();
 }
 
+std::string Logger::GetFileTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time), "%Y%m%d_%H%M%S");
+    return ss.str();
+}
+
 std::string Logger::LevelToString(LogLevel level) {
     switch (level) {
         case LogLevel::Debug:   return "DEBUG";
@@ -105,6 +146,17 @@ std::string Logger::LevelToString(LogLevel level) {
         case LogLevel::Error:   return "ERROR";
         default:                return "UNKNOWN";
     }
+}
+
+void Logger::CreateLogDirectory() {
+    if (!std::filesystem::exists(m_logDirectory)) {
+        std::filesystem::create_directories(m_logDirectory);
+    }
+}
+
+std::string Logger::GenerateLogFileName() {
+    std::string timestamp = GetFileTimestamp();
+    return m_logDirectory + "/render_" + timestamp + ".log";
 }
 
 } // namespace Render

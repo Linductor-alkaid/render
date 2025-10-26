@@ -13,8 +13,8 @@ using namespace Render;
 int main(int argc, char* argv[]) {
     // 设置日志
     Logger::GetInstance().SetLogToConsole(true);
-    Logger::GetInstance().SetLogToFile(true, "render.log");
-    Logger::GetInstance().SetLogLevel(LogLevel::Debug);
+    Logger::GetInstance().SetLogToFile(true); // 自动生成时间戳命名的日志文件
+    Logger::GetInstance().SetLogLevel(LogLevel::Info);
     
     LOG_INFO("========================================");
     LOG_INFO("Basic Window Example");

@@ -178,6 +178,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{657B58C6-AF71-3037-AE1C-479B368F0146}</Project>
       <Name>01_basic_window</Name>
     </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\02_shader_test.vcxproj">
+      <Project>{8CE87B9E-032A-31F9-912C-0126D91A0BCF}</Project>
+      <Name>02_shader_test</Name>
+    </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>
       <Name>RenderEngine</Name>
