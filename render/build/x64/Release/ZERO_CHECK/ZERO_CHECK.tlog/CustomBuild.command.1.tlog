@@ -1,0 +1,10 @@
+^G:\MYPROJECT\RENDER\BUILD\CMAKEFILES\40239DB994622C3DF6F57DD59F90766E\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SG:/myproject/render -BG:/myproject/render/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file G:/myproject/render/build/RenderEngine.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -1,0 +1,171 @@
+#pragma once
+
+#include "render/types.h"
+#include "render/opengl_context.h"
+#include "render/render_state.h"
+#include <memory>
+#include <string>
+
+namespace Render {
+
+/**
+ * @brief 渲染统计信息
+ */
+struct RenderStats {
+    uint32_t drawCalls = 0;
+    uint32_t triangles = 0;
+    uint32_t vertices = 0;
+    float frameTime = 0.0f;
+    float fps = 0.0f;
+    
+    void Reset() {
+        drawCalls = 0;
+        triangles = 0;
+        vertices = 0;
+    }
+};
+
+/**
+ * @brief 主渲染器类
+ * 
+ * 提供高层渲染接口，管理渲染上下文和状态
+ */
+class Renderer {
+public:
+    /**
+     * @brief 创建渲染器实例
+     */
+    static Renderer* Create();
+    
+    /**
+     * @brief 销毁渲染器实例
+     */
+    static void Destroy(Renderer* renderer);
+    
+    Renderer();
+    ~Renderer();
+    
+    /**
+     * @brief 初始化渲染器
+     * @param title 窗口标题
+     * @param width 窗口宽度
+     * @param height 窗口高度
+     * @return 成功返回 true，失败返回 false
+     */
+    bool Initialize(const std::string& title = "RenderEngine", 
+                   int width = 1920, 
+                   int height = 1080);
+    
+    /**
+     * @brief 关闭渲染器
+     */
+    void Shutdown();
+    
+    /**
+     * @brief 开始新的一帧
+     */
+    void BeginFrame();
+    
+    /**
+     * @brief 结束当前帧
+     */
+    void EndFrame();
+    
+    /**
+     * @brief 呈现渲染结果
+     */
+    void Present();
+    
+    /**
+     * @brief 清空缓冲区
+     */
+    void Clear(bool colorBuffer = true, bool depthBuffer = true, bool stencilBuffer = false);
+    
+    /**
+     * @brief 设置清屏颜色
+     */
+    void SetClearColor(const Color& color);
+    
+    /**
+     * @brief 设置清屏颜色（分量）
+     */
+    void SetClearColor(float r, float g, float b, float a = 1.0f);
+    
+    /**
+     * @brief 设置窗口标题
+     */
+    void SetWindowTitle(const std::string& title);
+    
+    /**
+     * @brief 设置窗口大小
+     */
+    void SetWindowSize(int width, int height);
+    
+    /**
+     * @brief 设置 VSync
+     */
+    void SetVSync(bool enable);
+    
+    /**
+     * @brief 设置全屏模式
+     */
+    void SetFullscreen(bool fullscreen);
+    
+    /**
+     * @brief 获取窗口宽度
+     */
+    int GetWidth() const;
+    
+    /**
+     * @brief 获取窗口高度
+     */
+    int GetHeight() const;
+    
+    /**
+     * @brief 获取帧时间（秒）
+     */
+    float GetDeltaTime() const { return m_deltaTime; }
+    
+    /**
+     * @brief 获取 FPS
+     */
+    float GetFPS() const { return m_stats.fps; }
+    
+    /**
+     * @brief 获取渲染统计信息
+     */
+    const RenderStats& GetStats() const { return m_stats; }
+    
+    /**
+     * @brief 获取 OpenGL 上下文
+     */
+    OpenGLContext* GetContext() { return m_context.get(); }
+    
+    /**
+     * @brief 获取渲染状态管理器
+     */
+    RenderState* GetRenderState() { return m_renderState.get(); }
+    
+    /**
+     * @brief 检查是否已初始化
+     */
+    bool IsInitialized() const { return m_initialized; }
+    
+private:
+    void UpdateStats();
+    
+    std::unique_ptr<OpenGLContext> m_context;
+    std::unique_ptr<RenderState> m_renderState;
+    
+    bool m_initialized;
+    RenderStats m_stats;
+    
+    // 时间统计
+    float m_deltaTime;
+    float m_lastFrameTime;
+    float m_fpsUpdateTimer;
+    uint32_t m_frameCount;
+};
+
+} // namespace Render
+

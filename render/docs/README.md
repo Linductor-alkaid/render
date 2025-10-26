@@ -58,6 +58,9 @@ RenderEngine 是一个基于 OpenGL 和 SDL3 构建的高性能抽象渲染引�
 - [功能特性列表](FEATURE_LIST.md) - 已实现和计划中的功能
 - [贡献指南](CONTRIBUTING.md) - 如何参与项目贡献
 
+### 开发计划
+- [Phase 1: 基础渲染功能 TODO](todolists/PHASE1_BASIC_RENDERING.md) - 第一阶段的详细开发任务列表
+
 ## 快速开始
 
 ```cpp

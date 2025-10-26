@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"G:/myproject/render/build/cmake_install.cmake",
+		"G:/myproject/render/build/SDL3/cmake_install.cmake",
+		"G:/myproject/render/build/examples/cmake_install.cmake",
+		"G:/myproject/render/build/tests/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

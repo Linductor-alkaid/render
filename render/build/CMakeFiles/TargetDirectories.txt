@@ -1,0 +1,15 @@
+G:/myproject/render/build/CMakeFiles/RenderEngine.dir
+G:/myproject/render/build/CMakeFiles/RUN_TESTS.dir
+G:/myproject/render/build/CMakeFiles/INSTALL.dir
+G:/myproject/render/build/CMakeFiles/ALL_BUILD.dir
+G:/myproject/render/build/CMakeFiles/ZERO_CHECK.dir
+G:/myproject/render/build/SDL3/CMakeFiles/SDL3-static.dir
+G:/myproject/render/build/SDL3/CMakeFiles/SDL_uclibc.dir
+G:/myproject/render/build/SDL3/CMakeFiles/RUN_TESTS.dir
+G:/myproject/render/build/SDL3/CMakeFiles/INSTALL.dir
+G:/myproject/render/build/SDL3/CMakeFiles/ALL_BUILD.dir
+G:/myproject/render/build/examples/CMakeFiles/01_basic_window.dir
+G:/myproject/render/build/examples/CMakeFiles/RUN_TESTS.dir
+G:/myproject/render/build/examples/CMakeFiles/INSTALL.dir
+G:/myproject/render/build/tests/CMakeFiles/RUN_TESTS.dir
+G:/myproject/render/build/tests/CMakeFiles/INSTALL.dir
