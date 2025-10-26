@@ -1,0 +1,64 @@
+# CombineWorld .gitignore
+
+# 构建目录
+build/
+cmake-build-*/
+
+# 编译输出
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# CMake生成文件
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+
+# IDE配置文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Visual Studio
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# 临时文件
+*.log
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# 调试文件
+*.pdb
+*.ilk
+
+# 用户配置
+config_user.json
+
+# 不忽略第三方库
+!third_party/
+
+# 不忽略资源文件
+!assets/
+
