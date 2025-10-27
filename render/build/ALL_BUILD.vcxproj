@@ -186,6 +186,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{4D1B65D1-1D4D-390E-A935-14AE09E03BF1}</Project>
       <Name>03_geometry_shader_test</Name>
     </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\04_state_management_test.vcxproj">
+      <Project>{47080892-0ABF-3AC9-9AD3-14559C4EA2E8}</Project>
+      <Name>04_state_management_test</Name>
+    </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>
       <Name>RenderEngine</Name>

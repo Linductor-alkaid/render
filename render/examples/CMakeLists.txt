@@ -12,12 +12,20 @@ target_link_libraries(02_shader_test RenderEngine)
 add_executable(03_geometry_shader_test 03_geometry_shader_test.cpp)
 target_link_libraries(03_geometry_shader_test RenderEngine)
 
+# 04 - 状态管理测试
+add_executable(04_state_management_test 04_state_management_test.cpp)
+target_link_libraries(04_state_management_test RenderEngine)
+# 设置 UTF-8 编码
+if(MSVC)
+    target_compile_options(04_state_management_test PRIVATE /utf-8)
+endif()
+
 # 复制 SDL3 DLL 到输出目录（Windows）
 if(WIN32 AND SDL3_LIBRARY)
     get_filename_component(SDL3_DLL_DIR ${SDL3_LIBRARY} DIRECTORY)
     file(GLOB SDL3_DLLS "${SDL3_DLL_DIR}/*.dll")
     
-    set(ALL_EXAMPLES 01_basic_window 02_shader_test 03_geometry_shader_test)
+    set(ALL_EXAMPLES 01_basic_window 02_shader_test 03_geometry_shader_test 04_state_management_test)
     
     foreach(example ${ALL_EXAMPLES})
         foreach(dll ${SDL3_DLLS})

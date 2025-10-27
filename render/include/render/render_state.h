@@ -1,6 +1,7 @@
 #pragma once
 
 #include "render/types.h"
+#include <array>
 
 namespace Render {
 
@@ -37,6 +38,16 @@ enum class CullFace {
     Front,
     Back,
     FrontAndBack
+};
+
+/**
+ * @brief 缓冲区绑定目标
+ */
+enum class BufferTarget {
+    ArrayBuffer,        // VBO
+    ElementArrayBuffer, // EBO/IBO
+    UniformBuffer,      // UBO
+    ShaderStorageBuffer // SSBO
 };
 
 /**
@@ -118,6 +129,80 @@ public:
      */
     CullFace GetCullFace() const { return m_cullFace; }
     
+    // ========================================================================
+    // 纹理绑定管理
+    // ========================================================================
+    
+    /**
+     * @brief 绑定纹理到指定纹理单元
+     * @param unit 纹理单元索引 (0-31)
+     * @param textureId OpenGL 纹理 ID
+     * @param target 纹理目标 (GL_TEXTURE_2D 等)
+     */
+    void BindTexture(uint32_t unit, uint32_t textureId, uint32_t target = 0x0DE1 /* GL_TEXTURE_2D */);
+    
+    /**
+     * @brief 解绑指定纹理单元
+     * @param unit 纹理单元索引
+     */
+    void UnbindTexture(uint32_t unit, uint32_t target = 0x0DE1 /* GL_TEXTURE_2D */);
+    
+    /**
+     * @brief 设置当前活动纹理单元
+     * @param unit 纹理单元索引
+     */
+    void SetActiveTextureUnit(uint32_t unit);
+    
+    /**
+     * @brief 获取当前绑定的纹理
+     * @param unit 纹理单元索引
+     * @return 纹理 ID
+     */
+    uint32_t GetBoundTexture(uint32_t unit) const;
+    
+    // ========================================================================
+    // 缓冲区绑定管理
+    // ========================================================================
+    
+    /**
+     * @brief 绑定 VAO (顶点数组对象)
+     * @param vaoId VAO ID
+     */
+    void BindVertexArray(uint32_t vaoId);
+    
+    /**
+     * @brief 绑定缓冲区
+     * @param target 缓冲区目标
+     * @param bufferId 缓冲区 ID
+     */
+    void BindBuffer(BufferTarget target, uint32_t bufferId);
+    
+    /**
+     * @brief 获取当前绑定的 VAO
+     */
+    uint32_t GetBoundVertexArray() const { return m_boundVAO; }
+    
+    /**
+     * @brief 获取当前绑定的缓冲区
+     * @param target 缓冲区目标
+     */
+    uint32_t GetBoundBuffer(BufferTarget target) const;
+    
+    // ========================================================================
+    // 着色器程序管理
+    // ========================================================================
+    
+    /**
+     * @brief 绑定着色器程序
+     * @param programId 着色器程序 ID
+     */
+    void UseProgram(uint32_t programId);
+    
+    /**
+     * @brief 获取当前使用的着色器程序
+     */
+    uint32_t GetCurrentProgram() const { return m_currentProgram; }
+    
 private:
     void ApplyDepthTest();
     void ApplyDepthFunc();
@@ -125,7 +210,11 @@ private:
     void ApplyBlendMode();
     void ApplyCullFace();
     
-    // 状态缓存
+    uint32_t GetGLBufferTarget(BufferTarget target) const;
+    
+    // ========================================================================
+    // 基础渲染状态缓存
+    // ========================================================================
     bool m_depthTest;
     DepthFunc m_depthFunc;
     bool m_depthWrite;
@@ -141,6 +230,27 @@ private:
     bool m_depthWriteDirty;
     bool m_blendModeDirty;
     bool m_cullFaceDirty;
+    
+    // ========================================================================
+    // 纹理绑定状态
+    // ========================================================================
+    static constexpr uint32_t MAX_TEXTURE_UNITS = 32;
+    std::array<uint32_t, MAX_TEXTURE_UNITS> m_boundTextures;
+    uint32_t m_activeTextureUnit;
+    
+    // ========================================================================
+    // 缓冲区绑定状态
+    // ========================================================================
+    uint32_t m_boundVAO;
+    uint32_t m_boundArrayBuffer;         // VBO
+    uint32_t m_boundElementArrayBuffer;  // EBO
+    uint32_t m_boundUniformBuffer;       // UBO
+    uint32_t m_boundShaderStorageBuffer; // SSBO
+    
+    // ========================================================================
+    // 着色器程序状态
+    // ========================================================================
+    uint32_t m_currentProgram;
 };
 
 } // namespace Render

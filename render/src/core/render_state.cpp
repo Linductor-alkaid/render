@@ -17,7 +17,17 @@ RenderState::RenderState()
     , m_depthFuncDirty(true)
     , m_depthWriteDirty(true)
     , m_blendModeDirty(true)
-    , m_cullFaceDirty(true) {
+    , m_cullFaceDirty(true)
+    , m_activeTextureUnit(0)
+    , m_boundVAO(0)
+    , m_boundArrayBuffer(0)
+    , m_boundElementArrayBuffer(0)
+    , m_boundUniformBuffer(0)
+    , m_boundShaderStorageBuffer(0)
+    , m_currentProgram(0) {
+    // 初始化纹理绑定数组
+    m_boundTextures.fill(0);
+    
     // 不在构造函数中调用 Reset()，因为此时 OpenGL 上下文还未创建
     // Reset() 将在 Renderer::Initialize() 中调用
 }
@@ -120,6 +130,16 @@ void RenderState::Reset() {
     
     glClearColor(m_clearColor.r, m_clearColor.g, m_clearColor.b, m_clearColor.a);
     glDisable(GL_SCISSOR_TEST);
+    
+    // 重置纹理、缓冲区、程序绑定
+    m_boundTextures.fill(0);
+    m_activeTextureUnit = 0;
+    m_boundVAO = 0;
+    m_boundArrayBuffer = 0;
+    m_boundElementArrayBuffer = 0;
+    m_boundUniformBuffer = 0;
+    m_boundShaderStorageBuffer = 0;
+    m_currentProgram = 0;
 }
 
 void RenderState::ApplyDepthTest() {
@@ -203,6 +223,136 @@ void RenderState::ApplyCullFace() {
             break;
     }
     m_cullFaceDirty = false;
+}
+
+// ============================================================================
+// 纹理绑定管理
+// ============================================================================
+
+void RenderState::BindTexture(uint32_t unit, uint32_t textureId, uint32_t target) {
+    if (unit >= MAX_TEXTURE_UNITS) {
+        Logger::GetInstance().Error("Texture unit " + std::to_string(unit) + 
+                                    " exceeds maximum " + std::to_string(MAX_TEXTURE_UNITS));
+        return;
+    }
+    
+    // 检查是否需要切换
+    if (m_boundTextures[unit] != textureId) {
+        // 激活纹理单元（如果需要）
+        if (m_activeTextureUnit != unit) {
+            glActiveTexture(GL_TEXTURE0 + unit);
+            m_activeTextureUnit = unit;
+        }
+        
+        // 绑定纹理
+        glBindTexture(target, textureId);
+        m_boundTextures[unit] = textureId;
+    }
+}
+
+void RenderState::UnbindTexture(uint32_t unit, uint32_t target) {
+    BindTexture(unit, 0, target);
+}
+
+void RenderState::SetActiveTextureUnit(uint32_t unit) {
+    if (unit >= MAX_TEXTURE_UNITS) {
+        Logger::GetInstance().Error("Texture unit " + std::to_string(unit) + 
+                                    " exceeds maximum " + std::to_string(MAX_TEXTURE_UNITS));
+        return;
+    }
+    
+    if (m_activeTextureUnit != unit) {
+        glActiveTexture(GL_TEXTURE0 + unit);
+        m_activeTextureUnit = unit;
+    }
+}
+
+uint32_t RenderState::GetBoundTexture(uint32_t unit) const {
+    if (unit >= MAX_TEXTURE_UNITS) {
+        Logger::GetInstance().Error("Texture unit " + std::to_string(unit) + 
+                                    " exceeds maximum " + std::to_string(MAX_TEXTURE_UNITS));
+        return 0;
+    }
+    return m_boundTextures[unit];
+}
+
+// ============================================================================
+// 缓冲区绑定管理
+// ============================================================================
+
+void RenderState::BindVertexArray(uint32_t vaoId) {
+    if (m_boundVAO != vaoId) {
+        glBindVertexArray(vaoId);
+        m_boundVAO = vaoId;
+    }
+}
+
+void RenderState::BindBuffer(BufferTarget target, uint32_t bufferId) {
+    GLenum glTarget = GetGLBufferTarget(target);
+    
+    // 根据目标检查缓存
+    uint32_t* cachedId = nullptr;
+    switch (target) {
+        case BufferTarget::ArrayBuffer:
+            cachedId = &m_boundArrayBuffer;
+            break;
+        case BufferTarget::ElementArrayBuffer:
+            cachedId = &m_boundElementArrayBuffer;
+            break;
+        case BufferTarget::UniformBuffer:
+            cachedId = &m_boundUniformBuffer;
+            break;
+        case BufferTarget::ShaderStorageBuffer:
+            cachedId = &m_boundShaderStorageBuffer;
+            break;
+    }
+    
+    if (cachedId && *cachedId != bufferId) {
+        glBindBuffer(glTarget, bufferId);
+        *cachedId = bufferId;
+    }
+}
+
+uint32_t RenderState::GetBoundBuffer(BufferTarget target) const {
+    switch (target) {
+        case BufferTarget::ArrayBuffer:
+            return m_boundArrayBuffer;
+        case BufferTarget::ElementArrayBuffer:
+            return m_boundElementArrayBuffer;
+        case BufferTarget::UniformBuffer:
+            return m_boundUniformBuffer;
+        case BufferTarget::ShaderStorageBuffer:
+            return m_boundShaderStorageBuffer;
+        default:
+            return 0;
+    }
+}
+
+uint32_t RenderState::GetGLBufferTarget(BufferTarget target) const {
+    switch (target) {
+        case BufferTarget::ArrayBuffer:
+            return GL_ARRAY_BUFFER;
+        case BufferTarget::ElementArrayBuffer:
+            return GL_ELEMENT_ARRAY_BUFFER;
+        case BufferTarget::UniformBuffer:
+            return GL_UNIFORM_BUFFER;
+        case BufferTarget::ShaderStorageBuffer:
+            return GL_SHADER_STORAGE_BUFFER;
+        default:
+            Logger::GetInstance().Error("Unknown buffer target");
+            return GL_ARRAY_BUFFER;
+    }
+}
+
+// ============================================================================
+// 着色器程序管理
+// ============================================================================
+
+void RenderState::UseProgram(uint32_t programId) {
+    if (m_currentProgram != programId) {
+        glUseProgram(programId);
+        m_currentProgram = programId;
+    }
 }
 
 } // namespace Render
