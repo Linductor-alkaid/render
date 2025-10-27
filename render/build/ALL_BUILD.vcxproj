@@ -194,6 +194,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{A6644C7F-55EB-3465-8E8E-74BF3631F6D9}</Project>
       <Name>05_texture_test</Name>
     </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\06_mesh_test.vcxproj">
+      <Project>{A158E2AA-9F37-3DB1-A5EC-209FAF4CD0E7}</Project>
+      <Name>06_mesh_test</Name>
+    </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>
       <Name>RenderEngine</Name>

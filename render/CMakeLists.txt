@@ -135,6 +135,8 @@ set(RENDER_SOURCES
     src/rendering/shader_cache.cpp
     src/rendering/texture.cpp
     src/rendering/texture_loader.cpp
+    src/rendering/mesh.cpp
+    src/rendering/mesh_loader.cpp
     
     # Utils
     src/utils/logger.cpp
@@ -157,6 +159,8 @@ set(RENDER_HEADERS
     include/render/shader_cache.h
     include/render/texture.h
     include/render/texture_loader.h
+    include/render/mesh.h
+    include/render/mesh_loader.h
     
     # Utils
     include/render/logger.h

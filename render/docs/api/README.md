@@ -20,6 +20,10 @@
 - **[Texture](Texture.md)** - 纹理对象管理
 - **[TextureLoader](TextureLoader.md)** - 纹理加载器和缓存管理
 
+### 网格系统
+- **[Mesh](Mesh.md)** - 网格对象管理（VAO/VBO/EBO）
+- **[MeshLoader](MeshLoader.md)** - 几何形状生成器
+
 ### 工具类
 - **[Logger](Logger.md)** - 日志系统
 - **[FileUtils](FileUtils.md)** - 文件工具
@@ -63,6 +67,13 @@ ShaderCache (单例)
 TextureLoader (单例)
   └── Texture[] (纹理集合)
 
+MeshLoader (静态工具类)
+  └── 生成 Mesh 对象
+
+Mesh (网格对象)
+  ├── VAO/VBO/EBO (OpenGL 缓冲区)
+  └── Vertex[] + Index[] (顶点和索引数据)
+
 Logger (单例)
 FileUtils (静态工具类)
 ```
@@ -91,6 +102,7 @@ FileUtils (静态工具类)
 - [03_geometry_shader_test.cpp](../../examples/03_geometry_shader_test.cpp) - 几何着色器和缓存
 - [04_state_management_test.cpp](../../examples/04_state_management_test.cpp) - **状态管理和 OpenGL 状态封装**
 - [05_texture_test.cpp](../../examples/05_texture_test.cpp) - **纹理加载和渲染**
+- [06_mesh_test.cpp](../../examples/06_mesh_test.cpp) - **网格系统和几何形状生成**
 
 ## 相关文档
 

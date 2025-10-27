@@ -24,12 +24,20 @@ endif()
 add_executable(05_texture_test 05_texture_test.cpp)
 target_link_libraries(05_texture_test RenderEngine)
 
+# 06 - 网格系统测试
+add_executable(06_mesh_test 06_mesh_test.cpp)
+target_link_libraries(06_mesh_test RenderEngine)
+# 设置 UTF-8 编码
+if(MSVC)
+    target_compile_options(06_mesh_test PRIVATE /utf-8)
+endif()
+
 # 复制 SDL3 DLL 到输出目录（Windows）
 if(WIN32 AND SDL3_LIBRARY)
     get_filename_component(SDL3_DLL_DIR ${SDL3_LIBRARY} DIRECTORY)
     file(GLOB SDL3_DLLS "${SDL3_DLL_DIR}/*.dll")
     
-    set(ALL_EXAMPLES 01_basic_window 02_shader_test 03_geometry_shader_test 04_state_management_test 05_texture_test)
+    set(ALL_EXAMPLES 01_basic_window 02_shader_test 03_geometry_shader_test 04_state_management_test 05_texture_test 06_mesh_test)
     
     foreach(example ${ALL_EXAMPLES})
         foreach(dll ${SDL3_DLLS})

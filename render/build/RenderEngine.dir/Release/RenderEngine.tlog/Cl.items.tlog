@@ -6,6 +6,8 @@ G:\myproject\render\src\rendering\uniform_manager.cpp;G:\myproject\render\build\
 G:\myproject\render\src\rendering\shader_cache.cpp;G:\myproject\render\build\RenderEngine.dir\Release\shader_cache.obj
 G:\myproject\render\src\rendering\texture.cpp;G:\myproject\render\build\RenderEngine.dir\Release\texture.obj
 G:\myproject\render\src\rendering\texture_loader.cpp;G:\myproject\render\build\RenderEngine.dir\Release\texture_loader.obj
+G:\myproject\render\src\rendering\mesh.cpp;G:\myproject\render\build\RenderEngine.dir\Release\mesh.obj
+G:\myproject\render\src\rendering\mesh_loader.cpp;G:\myproject\render\build\RenderEngine.dir\Release\mesh_loader.obj
 G:\myproject\render\src\utils\logger.cpp;G:\myproject\render\build\RenderEngine.dir\Release\logger.obj
 G:\myproject\render\src\utils\file_utils.cpp;G:\myproject\render\build\RenderEngine.dir\Release\file_utils.obj
 G:\myproject\render\third_party\glad\src\glad.c;G:\myproject\render\build\RenderEngine.dir\Release\glad.obj

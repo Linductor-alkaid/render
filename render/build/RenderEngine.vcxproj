@@ -312,6 +312,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="G:\myproject\render\src\rendering\shader_cache.cpp" />
     <ClCompile Include="G:\myproject\render\src\rendering\texture.cpp" />
     <ClCompile Include="G:\myproject\render\src\rendering\texture_loader.cpp" />
+    <ClCompile Include="G:\myproject\render\src\rendering\mesh.cpp" />
+    <ClCompile Include="G:\myproject\render\src\rendering\mesh_loader.cpp" />
     <ClCompile Include="G:\myproject\render\src\utils\logger.cpp" />
     <ClCompile Include="G:\myproject\render\src\utils\file_utils.cpp" />
     <ClCompile Include="G:\myproject\render\third_party\glad\src\glad.c" />
@@ -324,6 +326,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClInclude Include="G:\myproject\render\include\render\shader_cache.h" />
     <ClInclude Include="G:\myproject\render\include\render\texture.h" />
     <ClInclude Include="G:\myproject\render\include\render\texture_loader.h" />
+    <ClInclude Include="G:\myproject\render\include\render\mesh.h" />
+    <ClInclude Include="G:\myproject\render\include\render\mesh_loader.h" />
     <ClInclude Include="G:\myproject\render\include\render\logger.h" />
     <ClInclude Include="G:\myproject\render\include\render\file_utils.h" />
   </ItemGroup>

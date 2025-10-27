@@ -17,6 +17,7 @@ G:/myproject/render/build/examples/CMakeFiles/02_shader_test.dir
 G:/myproject/render/build/examples/CMakeFiles/03_geometry_shader_test.dir
 G:/myproject/render/build/examples/CMakeFiles/04_state_management_test.dir
 G:/myproject/render/build/examples/CMakeFiles/05_texture_test.dir
+G:/myproject/render/build/examples/CMakeFiles/06_mesh_test.dir
 G:/myproject/render/build/examples/CMakeFiles/RUN_TESTS.dir
 G:/myproject/render/build/examples/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/tests/CMakeFiles/RUN_TESTS.dir
