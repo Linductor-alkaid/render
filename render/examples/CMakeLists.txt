@@ -8,12 +8,16 @@ target_link_libraries(01_basic_window RenderEngine)
 add_executable(02_shader_test 02_shader_test.cpp)
 target_link_libraries(02_shader_test RenderEngine)
 
+# 03 - 几何着色器和着色器缓存测试
+add_executable(03_geometry_shader_test 03_geometry_shader_test.cpp)
+target_link_libraries(03_geometry_shader_test RenderEngine)
+
 # 复制 SDL3 DLL 到输出目录（Windows）
 if(WIN32 AND SDL3_LIBRARY)
     get_filename_component(SDL3_DLL_DIR ${SDL3_LIBRARY} DIRECTORY)
     file(GLOB SDL3_DLLS "${SDL3_DLL_DIR}/*.dll")
     
-    set(ALL_EXAMPLES 01_basic_window 02_shader_test)
+    set(ALL_EXAMPLES 01_basic_window 02_shader_test 03_geometry_shader_test)
     
     foreach(example ${ALL_EXAMPLES})
         foreach(dll ${SDL3_DLLS})

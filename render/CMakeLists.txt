@@ -92,6 +92,7 @@ set(RENDER_SOURCES
     # Rendering
     src/rendering/shader.cpp
     src/rendering/uniform_manager.cpp
+    src/rendering/shader_cache.cpp
     
     # Utils
     src/utils/logger.cpp
@@ -111,6 +112,7 @@ set(RENDER_HEADERS
     # Rendering
     include/render/shader.h
     include/render/uniform_manager.h
+    include/render/shader_cache.h
     
     # Utils
     include/render/logger.h

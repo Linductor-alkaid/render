@@ -10,6 +10,7 @@ G:/myproject/render/build/SDL3/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/SDL3/CMakeFiles/ALL_BUILD.dir
 G:/myproject/render/build/examples/CMakeFiles/01_basic_window.dir
 G:/myproject/render/build/examples/CMakeFiles/02_shader_test.dir
+G:/myproject/render/build/examples/CMakeFiles/03_geometry_shader_test.dir
 G:/myproject/render/build/examples/CMakeFiles/RUN_TESTS.dir
 G:/myproject/render/build/examples/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/tests/CMakeFiles/RUN_TESTS.dir

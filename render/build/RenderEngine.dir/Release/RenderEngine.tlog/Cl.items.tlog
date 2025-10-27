@@ -3,6 +3,7 @@ G:\myproject\render\src\core\opengl_context.cpp;G:\myproject\render\build\Render
 G:\myproject\render\src\core\render_state.cpp;G:\myproject\render\build\RenderEngine.dir\Release\render_state.obj
 G:\myproject\render\src\rendering\shader.cpp;G:\myproject\render\build\RenderEngine.dir\Release\shader.obj
 G:\myproject\render\src\rendering\uniform_manager.cpp;G:\myproject\render\build\RenderEngine.dir\Release\uniform_manager.obj
+G:\myproject\render\src\rendering\shader_cache.cpp;G:\myproject\render\build\RenderEngine.dir\Release\shader_cache.obj
 G:\myproject\render\src\utils\logger.cpp;G:\myproject\render\build\RenderEngine.dir\Release\logger.obj
 G:\myproject\render\src\utils\file_utils.cpp;G:\myproject\render\build\RenderEngine.dir\Release\file_utils.obj
 G:\myproject\render\third_party\glad\src\glad.c;G:\myproject\render\build\RenderEngine.dir\Release\glad.obj

@@ -16,6 +16,9 @@
     <ClCompile Include="G:\myproject\render\src\rendering\uniform_manager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="G:\myproject\render\src\rendering\shader_cache.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="G:\myproject\render\src\utils\logger.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -43,6 +46,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="G:\myproject\render\include\render\uniform_manager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="G:\myproject\render\include\render\shader_cache.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="G:\myproject\render\include\render\logger.h">
