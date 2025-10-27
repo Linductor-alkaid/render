@@ -61,6 +61,29 @@ RenderEngine 是一个基于 OpenGL 和 SDL3 构建的高性能抽象渲染引�
 ### 开发计划
 - [Phase 1: 基础渲染功能 TODO](todolists/PHASE1_BASIC_RENDERING.md) - 第一阶段的详细开发任务列表
 
+### API 文档
+- [API 文档首页](api/README.md) - 完整的 API 参考文档
+- [API 文档总结](API_DOCUMENTATION_SUMMARY.md) - API 文档完成情况和统计
+
+## 最新更新 🎉
+
+### v1.1.0 (2025-10-27) - OpenGL 状态封装
+
+✅ **新增功能**：
+- **纹理绑定管理**：支持 32 个纹理单元的自动缓存
+- **缓冲区绑定管理**：VAO, VBO, EBO, UBO, SSBO 的状态缓存
+- **着色器程序管理**：自动缓存着色器程序切换，减少冗余 glUseProgram 调用
+
+📝 **API 文档**：
+- 更新了 [RenderState API](api/RenderState.md) 文档
+- 新增 [状态管理测试示例](../examples/04_state_management_test.cpp)
+
+🚀 **性能优化**：
+- 状态缓存可减少 50-80% 的 OpenGL API 调用
+- 批量渲染时自动跳过重复的状态切换
+
+详见：[RenderState API 文档](api/RenderState.md) | [示例程序](../examples/04_state_management_test.cpp)
+
 ## 快速开始
 
 ```cpp

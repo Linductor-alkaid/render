@@ -5,6 +5,54 @@
 
 ## 核心 API
 
+### 状态管理（RenderState）
+
+状态管理系统提供了 OpenGL 状态缓存，减少冗余的 API 调用，提高渲染性能。
+
+```cpp
+#include "render/renderer.h"
+#include "render/render_state.h"
+
+// 获取渲染状态管理器
+RenderState* state = renderer->GetRenderState();
+
+// 着色器程序管理
+state->UseProgram(shaderProgramId);  // 自动缓存，重复调用会被跳过
+
+// VAO/VBO 绑定管理
+state->BindVertexArray(vaoId);       // 自动缓存
+state->BindBuffer(RenderState::BufferTarget::ArrayBuffer, vboId);
+
+// 纹理绑定管理（支持32个纹理单元）
+state->BindTexture(0, diffuseTexture);   // 纹理单元 0
+state->BindTexture(1, normalTexture);    // 纹理单元 1
+state->BindTexture(2, specularTexture);  // 纹理单元 2
+
+// 渲染状态设置
+state->SetDepthTest(true);
+state->SetDepthFunc(DepthFunc::Less);
+state->SetBlendMode(BlendMode::Alpha);
+state->SetCullFace(true);
+state->SetCullMode(CullMode::Back);
+
+// 批量渲染示例（状态缓存优化）
+for (auto& mesh : meshes) {
+    // 只有状态真正改变时才会调用 OpenGL API
+    state->UseProgram(mesh.shaderId);
+    state->BindTexture(0, mesh.textureId);
+    state->BindVertexArray(mesh.vaoId);
+    
+    glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
+}
+```
+
+**性能提示**：
+- 状态切换有开销，按状态分组渲染可提高性能
+- 纹理绑定和着色器切换是最昂贵的操作
+- 使用状态缓存可减少 50-80% 的状态切换调用
+
+详见：[RenderState API 文档](api/RenderState.md)
+
 ### Renderer 初始化
 
 ```cpp

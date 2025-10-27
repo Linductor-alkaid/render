@@ -8,9 +8,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # 编译选项
 if(MSVC)
+    # UTF-8 编码支持
+    add_compile_options(/utf-8)
     add_compile_options(/W4 /WX-)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+    # UTF-8 编码支持
+    add_compile_options(-finput-charset=UTF-8 -fexec-charset=UTF-8)
 endif()
 
 # 设置输出目录
@@ -45,6 +49,41 @@ else()
 endif()
 
 # ============================================================================
+# SDL3_image 配置 - 作为子项目编译
+# ============================================================================
+set(SDL3_IMAGE_DIR ${THIRD_PARTY_DIR}/SDL_image)
+
+# 禁用 SDL3_image 的一些不需要的选项
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library" FORCE)
+set(SDLIMAGE_INSTALL OFF CACHE BOOL "Enable SDL3_image install target" FORCE)
+set(SDLIMAGE_DEPS_SHARED OFF CACHE BOOL "Load dependencies dynamically" FORCE)
+set(SDLIMAGE_VENDORED ON CACHE BOOL "Use vendored third-party libraries" FORCE)
+set(SDLIMAGE_SAMPLES OFF CACHE BOOL "Build SDL3_image samples" FORCE)
+
+# 启用常用的图片格式支持（使用内置解码器）
+set(SDLIMAGE_PNG ON CACHE BOOL "Enable PNG support" FORCE)
+set(SDLIMAGE_JPG ON CACHE BOOL "Enable JPEG support" FORCE)
+set(SDLIMAGE_BMP ON CACHE BOOL "Enable BMP support" FORCE)
+set(SDLIMAGE_TGA ON CACHE BOOL "Enable TGA support" FORCE)
+
+# 禁用不常用格式以加快编译
+set(SDLIMAGE_AVIF OFF CACHE BOOL "Disable AVIF support" FORCE)
+set(SDLIMAGE_JXL OFF CACHE BOOL "Disable JXL support" FORCE)
+set(SDLIMAGE_TIF OFF CACHE BOOL "Disable TIFF support" FORCE)
+set(SDLIMAGE_WEBP OFF CACHE BOOL "Disable WEBP support" FORCE)
+
+# 添加 SDL3_image 子项目
+if(EXISTS ${SDL3_IMAGE_DIR}/CMakeLists.txt)
+    message(STATUS "Adding SDL3_image as subdirectory: ${SDL3_IMAGE_DIR}")
+    add_subdirectory(${SDL3_IMAGE_DIR} ${CMAKE_BINARY_DIR}/SDL3_image EXCLUDE_FROM_ALL)
+    set(SDL3_IMAGE_LIBRARY SDL3_image::SDL3_image-static)
+    set(SDL3_IMAGE_INCLUDE_DIRS ${SDL3_IMAGE_DIR}/include)
+    message(STATUS "SDL3_image configured as subproject")
+else()
+    message(FATAL_ERROR "SDL3_image source not found at ${SDL3_IMAGE_DIR}")
+endif()
+
+# ============================================================================
 # Eigen3 配置
 # ============================================================================
 set(EIGEN3_INCLUDE_DIR ${THIRD_PARTY_DIR}/eigen-3.4.0)
@@ -75,6 +114,7 @@ find_package(OpenGL REQUIRED)
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${SDL3_INCLUDE_DIRS}
+    ${SDL3_IMAGE_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
     ${GLAD_INCLUDE_DIR}
     ${OPENGL_INCLUDE_DIR}
@@ -93,6 +133,8 @@ set(RENDER_SOURCES
     src/rendering/shader.cpp
     src/rendering/uniform_manager.cpp
     src/rendering/shader_cache.cpp
+    src/rendering/texture.cpp
+    src/rendering/texture_loader.cpp
     
     # Utils
     src/utils/logger.cpp
@@ -113,6 +155,8 @@ set(RENDER_HEADERS
     include/render/shader.h
     include/render/uniform_manager.h
     include/render/shader_cache.h
+    include/render/texture.h
+    include/render/texture_loader.h
     
     # Utils
     include/render/logger.h
@@ -128,6 +172,7 @@ add_library(RenderEngine STATIC ${RENDER_SOURCES} ${RENDER_HEADERS})
 target_link_libraries(RenderEngine
     PUBLIC
         ${SDL3_LIBRARY}
+        ${SDL3_IMAGE_LIBRARY}
         ${OPENGL_LIBRARIES}
 )
 
@@ -171,6 +216,8 @@ message(STATUS "  C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  SDL3 Include: ${SDL3_INCLUDE_DIRS}")
 message(STATUS "  SDL3 Library: ${SDL3_LIBRARY}")
+message(STATUS "  SDL3_image Include: ${SDL3_IMAGE_INCLUDE_DIRS}")
+message(STATUS "  SDL3_image Library: ${SDL3_IMAGE_LIBRARY}")
 message(STATUS "  Eigen3 Include: ${EIGEN3_INCLUDE_DIR}")
 message(STATUS "  OpenGL Include: ${OPENGL_INCLUDE_DIR}")
 message(STATUS "  Build Examples: ${BUILD_EXAMPLES}")

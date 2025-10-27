@@ -69,7 +69,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -79,7 +79,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -89,7 +89,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -99,7 +99,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -189,6 +189,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="G:\myproject\render\build\examples\04_state_management_test.vcxproj">
       <Project>{47080892-0ABF-3AC9-9AD3-14559C4EA2E8}</Project>
       <Name>04_state_management_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\05_texture_test.vcxproj">
+      <Project>{A6644C7F-55EB-3465-8E8E-74BF3631F6D9}</Project>
+      <Name>05_texture_test</Name>
     </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>

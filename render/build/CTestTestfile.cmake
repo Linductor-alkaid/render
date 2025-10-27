@@ -5,5 +5,6 @@
 # This file includes the relevant testing commands required for 
 # testing this directory and lists subdirectories to be tested as well.
 subdirs("SDL3")
+subdirs("SDL3_image")
 subdirs("examples")
 subdirs("tests")

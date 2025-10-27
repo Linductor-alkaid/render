@@ -57,6 +57,7 @@
 - `examples/01_basic_window.cpp` - 窗口创建示例
 - `examples/02_shader_test.cpp` - 着色器测试
 - `examples/03_geometry_shader_test.cpp` - 几何着色器和缓存测试
+- `examples/04_state_management_test.cpp` - OpenGL 状态管理测试
 
 ### 3. 可读性
 
@@ -72,10 +73,10 @@
 ### 总体数据
 
 - **API 文档数量**: 10 个
-- **总字数**: 约 50,000 字
-- **代码示例**: 150+ 个
-- **涵盖方法**: 100+ 个公共方法
-- **参考的示例程序**: 3 个
+- **总字数**: 约 55,000 字
+- **代码示例**: 165+ 个
+- **涵盖方法**: 115+ 个公共方法
+- **参考的示例程序**: 4 个
 
 ### 各文档详情
 
@@ -83,7 +84,7 @@
 |-----|--------|--------|--------|
 | Renderer.md | 10 | 25 | 15 |
 | OpenGLContext.md | 6 | 15 | 8 |
-| RenderState.md | 7 | 18 | 12 |
+| RenderState.md | 9 | 28 | 20 |
 | Shader.md | 8 | 12 | 20 |
 | ShaderCache.md | 9 | 12 | 18 |
 | UniformManager.md | 10 | 22 | 25 |
@@ -142,6 +143,7 @@ Logger.md → FileUtils.md → Types.md
 
 | 日期 | 版本 | 更新内容 |
 |-----|------|---------|
+| 2025-10-27 | 1.1.0 | 更新 RenderState API，新增 OpenGL 状态封装功能（纹理/缓冲区/着色器程序管理） |
 | 2025-10-27 | 1.0.0 | 初始版本，完成所有已实现模块的 API 文档 |
 
 ---
@@ -199,9 +201,10 @@ Logger.md → FileUtils.md → Types.md
 
 ### 示例程序
 
-- [01_basic_window.cpp](../examples/01_basic_window.cpp)
-- [02_shader_test.cpp](../examples/02_shader_test.cpp)
-- [03_geometry_shader_test.cpp](../examples/03_geometry_shader_test.cpp)
+- [01_basic_window.cpp](../examples/01_basic_window.cpp) - 基础窗口创建和渲染循环
+- [02_shader_test.cpp](../examples/02_shader_test.cpp) - 着色器编译和 Uniform 管理
+- [03_geometry_shader_test.cpp](../examples/03_geometry_shader_test.cpp) - 几何着色器和缓存系统
+- [04_state_management_test.cpp](../examples/04_state_management_test.cpp) - OpenGL 状态管理和三角形渲染
 
 ---
 
@@ -218,7 +221,7 @@ Logger.md → FileUtils.md → Types.md
 
 **API 文档状态**: ✅ **完成**  
 **最后更新**: 2025-10-27  
-**版本**: 1.0.0  
+**版本**: 1.1.0  
 
 ---
 

@@ -1,5 +1,10 @@
 #include "render/logger.h"
 #include <filesystem>
+#include <iostream>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace Render {
 
@@ -13,6 +18,20 @@ Logger::Logger()
     , m_logToConsole(true)
     , m_logToFile(false)
     , m_logDirectory("logs") {
+    
+#ifdef _WIN32
+    // Windows 控制台 UTF-8 支持
+    SetConsoleOutputCP(CP_UTF8);
+    // 启用 ANSI 转义序列支持（Windows 10+）
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut != INVALID_HANDLE_VALUE) {
+        DWORD dwMode = 0;
+        if (GetConsoleMode(hOut, &dwMode)) {
+            dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            SetConsoleMode(hOut, dwMode);
+        }
+    }
+#endif
 }
 
 Logger::~Logger() {
@@ -51,15 +70,18 @@ void Logger::SetLogToFile(bool enable, const std::string& filename) {
         
         m_currentLogFile = logFile;
         
-        // 打开文件
-        m_fileStream.open(logFile, std::ios::out | std::ios::trunc); // 使用 trunc 创建新文件
+        // 打开文件（使用 UTF-8 编码）
+        m_fileStream.open(logFile, std::ios::out | std::ios::trunc);
         m_logToFile = m_fileStream.is_open();
         
         if (m_logToFile) {
+            // 写入 UTF-8 BOM（可选，但有助于某些编辑器识别）
+            m_fileStream << "\xEF\xBB\xBF";
+            
             // 写入文件头
             m_fileStream << "========================================" << std::endl;
-            m_fileStream << "RenderEngine Log File" << std::endl;
-            m_fileStream << "Created: " << GetTimestamp() << std::endl;
+            m_fileStream << "RenderEngine 日志文件" << std::endl;
+            m_fileStream << "创建时间: " << GetTimestamp() << std::endl;
             m_fileStream << "========================================" << std::endl;
             m_fileStream.flush();
         }
