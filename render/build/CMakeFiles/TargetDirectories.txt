@@ -37,6 +37,8 @@ G:/myproject/render/build/examples/CMakeFiles/11_model_loader_test.dir
 G:/myproject/render/build/examples/CMakeFiles/12_material_test.dir
 G:/myproject/render/build/examples/CMakeFiles/13_material_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/14_model_material_loader_test.dir
+G:/myproject/render/build/examples/CMakeFiles/15_resource_manager_test.dir
+G:/myproject/render/build/examples/CMakeFiles/16_resource_manager_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/RUN_TESTS.dir
 G:/myproject/render/build/examples/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/tests/CMakeFiles/RUN_TESTS.dir

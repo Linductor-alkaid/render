@@ -385,5 +385,46 @@ GLenum Texture::ToGLWrap(TextureWrap wrap) const {
     }
 }
 
+size_t Texture::GetMemoryUsage() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_textureID == 0) {
+        return 0;
+    }
+    
+    // 计算每像素字节数
+    size_t bytesPerPixel = 0;
+    switch (m_format) {
+        case TextureFormat::RGB:
+            bytesPerPixel = 3;
+            break;
+        case TextureFormat::RGBA:
+            bytesPerPixel = 4;
+            break;
+        case TextureFormat::RED:
+            bytesPerPixel = 1;
+            break;
+        case TextureFormat::RG:
+            bytesPerPixel = 2;
+            break;
+        case TextureFormat::Depth:
+            bytesPerPixel = 4;  // 通常是 32 位深度
+            break;
+        case TextureFormat::DepthStencil:
+            bytesPerPixel = 4;  // 24 位深度 + 8 位模板
+            break;
+    }
+    
+    // 基础纹理内存
+    size_t baseMemory = static_cast<size_t>(m_width) * static_cast<size_t>(m_height) * bytesPerPixel;
+    
+    // 如果有 mipmap，大约增加 1/3 的内存（mipmap 链的总和）
+    if (m_hasMipmap) {
+        baseMemory = baseMemory * 4 / 3;
+    }
+    
+    return baseMemory;
+}
+
 } // namespace Render
 

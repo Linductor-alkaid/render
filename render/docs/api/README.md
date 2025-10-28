@@ -27,6 +27,9 @@
 ### 材质系统
 - **[Material](Material.md)** - 材质管理（属性、纹理、着色器、渲染状态） 🔒 **线程安全**
 
+### 资源管理
+- **[ResourceManager](ResourceManager.md)** - 统一资源管理器（纹理、网格、材质、着色器） 🔒 **线程安全**
+
 ### 工具类
 - **[Logger](Logger.md)** - 日志系统
 - **[FileUtils](FileUtils.md)** - 文件工具
@@ -88,13 +91,26 @@ FileUtils (静态工具类)
 
 ## API 版本
 
-- **Engine Version**: 0.6.0
-- **API Version**: 0.6.0
+- **Engine Version**: 0.7.0
+- **API Version**: 0.7.0
 - **OpenGL Version**: 4.5+
 - **C++ Standard**: C++17
 - **Last Updated**: 2025-10-28
 
 ### 版本更新记录
+- **v0.7.0** (2025-10-28): 🎯 **统一资源管理系统**
+  - ✅ 新增 `ResourceManager` 类 - 统一资源管理器
+  - ✅ 支持纹理、网格、材质、着色器的统一管理
+  - ✅ 资源注册、获取、移除接口
+  - ✅ 自动引用计数和生命周期管理
+  - ✅ 自动清理未使用资源（`CleanupUnused()`）
+  - ✅ 详细的资源统计和监控功能
+  - ✅ 批量操作接口（`Clear()`, `ClearType()`）
+  - ✅ ForEach遍历功能
+  - 🔒 **全面线程安全** - 所有公共方法使用互斥锁保护
+  - ✅ 新增资源管理器测试程序 (15_resource_manager_test)
+  - ✅ 新增资源管理器线程安全测试程序 (16_resource_manager_thread_safe_test)
+  - ✅ 完整的 ResourceManager API 文档和使用指南
 - **v0.6.0** (2025-10-28): 🎨 **材质纹理加载与性能优化**
   - ✅ `MeshLoader::LoadFromFileWithMaterials()` - 从模型文件加载材质和纹理
   - ✅ 新增 `MeshWithMaterial` 结构体，关联网格、材质和名称
@@ -160,7 +176,9 @@ FileUtils (静态工具类)
 - [11_model_loader_test.cpp](../../examples/11_model_loader_test.cpp) - 外部模型加载测试
 - [12_material_test.cpp](../../examples/12_material_test.cpp) - **材质系统测试**
 - [13_material_thread_safe_test.cpp](../../examples/13_material_thread_safe_test.cpp) - **材质系统线程安全测试** 🔒
-- [14_model_material_loader_test.cpp](../../examples/14_model_material_loader_test.cpp) - **模型材质纹理加载测试** ⭐ **新增**
+- [14_model_material_loader_test.cpp](../../examples/14_model_material_loader_test.cpp) - **模型材质纹理加载测试**
+- [15_resource_manager_test.cpp](../../examples/15_resource_manager_test.cpp) - **资源管理器测试** ⭐ **新增**
+- [16_resource_manager_thread_safe_test.cpp](../../examples/16_resource_manager_thread_safe_test.cpp) - **资源管理器线程安全测试** 🔒 ⭐ **新增**
 
 ## 相关文档
 

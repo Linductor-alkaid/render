@@ -213,6 +213,11 @@ public:
      */
     void RecalculateTangents();
 
+    /**
+     * @brief 获取网格内存使用量（字节）
+     */
+    size_t GetMemoryUsage() const;
+
 private:
     /**
      * @brief 设置顶点属性指针

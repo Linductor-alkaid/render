@@ -381,5 +381,18 @@ GLenum Mesh::ConvertDrawMode(DrawMode mode) const {
     }
 }
 
+size_t Mesh::GetMemoryUsage() const {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
+    // 顶点数据内存
+    size_t vertexMemory = m_Vertices.size() * sizeof(Vertex);
+    
+    // 索引数据内存
+    size_t indexMemory = m_Indices.size() * sizeof(uint32_t);
+    
+    // 总内存 = 顶点内存 + 索引内存
+    return vertexMemory + indexMemory;
+}
+
 } // namespace Render
 

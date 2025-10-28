@@ -158,6 +158,11 @@ public:
      */
     bool IsValid() const { return m_textureID != 0; }
 
+    /**
+     * @brief 获取纹理内存使用量（估算，字节）
+     */
+    size_t GetMemoryUsage() const;
+
 private:
     /**
      * @brief 转换纹理格式到 OpenGL 格式

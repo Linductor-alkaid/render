@@ -307,6 +307,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClCompile Include="G:\myproject\render\src\core\renderer.cpp" />
     <ClCompile Include="G:\myproject\render\src\core\opengl_context.cpp" />
     <ClCompile Include="G:\myproject\render\src\core\render_state.cpp" />
+    <ClCompile Include="G:\myproject\render\src\core\resource_manager.cpp" />
     <ClCompile Include="G:\myproject\render\src\rendering\shader.cpp" />
     <ClCompile Include="G:\myproject\render\src\rendering\uniform_manager.cpp" />
     <ClCompile Include="G:\myproject\render\src\rendering\shader_cache.cpp" />
@@ -322,6 +323,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClInclude Include="G:\myproject\render\include\render\opengl_context.h" />
     <ClInclude Include="G:\myproject\render\include\render\render_state.h" />
     <ClInclude Include="G:\myproject\render\include\render\types.h" />
+    <ClInclude Include="G:\myproject\render\include\render\resource_manager.h" />
     <ClInclude Include="G:\myproject\render\include\render\shader.h" />
     <ClInclude Include="G:\myproject\render\include\render\uniform_manager.h" />
     <ClInclude Include="G:\myproject\render\include\render\shader_cache.h" />

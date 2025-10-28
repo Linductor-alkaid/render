@@ -162,6 +162,7 @@ set(RENDER_SOURCES
     src/core/renderer.cpp
     src/core/opengl_context.cpp
     src/core/render_state.cpp
+    src/core/resource_manager.cpp
     
     # Rendering
     src/rendering/shader.cpp
@@ -187,6 +188,7 @@ set(RENDER_HEADERS
     include/render/opengl_context.h
     include/render/render_state.h
     include/render/types.h
+    include/render/resource_manager.h
     
     # Rendering
     include/render/shader.h
