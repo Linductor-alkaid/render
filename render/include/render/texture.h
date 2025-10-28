@@ -2,6 +2,7 @@
 
 #include <string>
 #include <memory>
+#include <mutex>
 #include <glad/glad.h>
 
 namespace Render {
@@ -41,6 +42,11 @@ enum class TextureFormat {
  * @brief 纹理类
  * 
  * 负责纹理的创建、加载、参数设置和释放
+ * 
+ * 线程安全：
+ * - 所有公共方法都是线程安全的
+ * - 使用互斥锁保护所有成员变量的访问
+ * - 注意：OpenGL 调用必须在创建上下文的线程中执行
  */
 class Texture {
 public:
@@ -179,6 +185,7 @@ private:
     int m_height;                ///< 纹理高度
     TextureFormat m_format;      ///< 纹理格式
     bool m_hasMipmap;            ///< 是否有 Mipmap
+    mutable std::mutex m_mutex;  ///< 线程安全互斥锁
 };
 
 /**

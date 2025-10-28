@@ -189,12 +189,23 @@ long TextureLoader::GetReferenceCount(const std::string& name) const {
 void TextureLoader::PrintStatistics() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     
+    // 计算总内存使用（内部实现，避免重复加锁）
+    size_t totalBytes = 0;
+    for (const auto& pair : m_textures) {
+        const TexturePtr& texture = pair.second;
+        int width = texture->GetWidth();
+        int height = texture->GetHeight();
+        size_t baseSize = width * height * 4;
+        size_t totalSize = baseSize * 4 / 3; // 包含 Mipmap
+        totalBytes += totalSize;
+    }
+    
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("纹理缓存统计信息");
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("缓存纹理数量: " + std::to_string(m_textures.size()));
     Logger::GetInstance().Info("总内存使用量（估算）: " + 
-                std::to_string(GetTotalMemoryUsage() / 1024 / 1024) + " MB");
+                std::to_string(totalBytes / 1024 / 1024) + " MB");
     
     if (!m_textures.empty()) {
         Logger::GetInstance().Info("----------------------------------------");
@@ -268,7 +279,8 @@ size_t TextureLoader::CleanupUnused() {
 }
 
 size_t TextureLoader::GetTotalMemoryUsage() const {
-    // 注意：不需要额外加锁，因为调用者已经加锁（或者是 const 方法从已加锁的方法调用）
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
     size_t totalBytes = 0;
     
     for (const auto& pair : m_textures) {

@@ -512,15 +512,40 @@ LOG_INFO("清理了 " + std::to_string(cleaned) + " 个纹理");  // 会清理 "
 
 ## 线程安全
 
-`TextureLoader` 是线程安全的，可以在多线程环境中使用。内部使用 `std::mutex` 保护 `m_textures` 访问。
+**✅ `TextureLoader` 和 `Texture` 都是线程安全的**（自 2025-10-28 更新）。
+
+### 线程安全保证
+
+#### TextureLoader
+- 所有公共方法都使用 `std::mutex` 保护缓存访问
+- 多个线程可以安全地调用 `LoadTexture()`、`GetTexture()` 等方法
+- 异步加载使用正确的双重检查锁定模式
+- 支持并发读取纹理属性和统计信息
+
+#### Texture
+- 所有公共方法都使用互斥锁保护
+- 可以从多个线程安全地访问纹理属性
+- 移动操作使用 `std::scoped_lock` 避免死锁
+
+### 线程安全使用模式
+
+#### 模式 1: 并发加载（安全）
 
 ```cpp
-// 在多个线程中加载纹理（安全）
+auto& loader = TextureLoader::GetInstance();
 std::vector<std::thread> threads;
 
-for (const auto& path : texturePaths) {
-    threads.emplace_back([&loader, path]() {
-        loader.LoadTexture(path, path, true);
+for (int i = 0; i < 10; ++i) {
+    threads.emplace_back([&loader, i]() {
+        std::string name = "texture_" + std::to_string(i);
+        std::string path = "textures/tex_" + std::to_string(i) + ".png";
+        
+        auto texture = loader.LoadTexture(name, path, true);  // 线程安全
+        if (texture) {
+            // 安全地读取属性
+            int width = texture->GetWidth();
+            int height = texture->GetHeight();
+        }
     });
 }
 
@@ -528,6 +553,131 @@ for (auto& thread : threads) {
     thread.join();
 }
 ```
+
+#### 模式 2: 并发访问已加载的纹理（安全）
+
+```cpp
+// 主线程中预加载
+auto& loader = TextureLoader::GetInstance();
+loader.LoadTexture("shared_texture", "textures/shared.png", true);
+
+// 多个工作线程中使用
+std::vector<std::thread> workers;
+for (int i = 0; i < 5; ++i) {
+    workers.emplace_back([&loader]() {
+        // 从缓存获取（线程安全）
+        auto texture = loader.GetTexture("shared_texture");
+        
+        if (texture) {
+            // 安全地访问纹理
+            texture->Bind(0);           // 线程安全（但 OpenGL 调用需要在主线程）
+            int w = texture->GetWidth(); // 线程安全
+        }
+    });
+}
+
+for (auto& worker : workers) {
+    worker.join();
+}
+```
+
+#### 模式 3: 并发统计查询（安全）
+
+```cpp
+// 监控线程
+std::thread monitor([&loader]() {
+    while (running) {
+        // 所有这些调用都是线程安全的
+        size_t count = loader.GetTextureCount();
+        size_t memory = loader.GetTotalMemoryUsage();
+        long refCount = loader.GetReferenceCount("my_texture");
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+});
+```
+
+#### 模式 4: 异步加载（安全）
+
+```cpp
+auto& loader = TextureLoader::GetInstance();
+std::vector<std::future<AsyncTextureResult>> futures;
+
+// 启动多个异步加载
+for (int i = 0; i < 5; ++i) {
+    std::string name = "async_tex_" + std::to_string(i);
+    std::string path = "textures/tex_" + std::to_string(i) + ".png";
+    
+    futures.push_back(loader.LoadTextureAsync(name, path, true));
+}
+
+// 等待所有加载完成
+for (auto& future : futures) {
+    AsyncTextureResult result = future.get();
+    if (result.success) {
+        // 使用纹理...
+    }
+}
+```
+
+### 重要限制
+
+#### ⚠️ OpenGL 上下文限制
+
+虽然类本身是线程安全的，但 **OpenGL 调用必须在创建上下文的线程中执行**（通常是主线程）：
+
+```cpp
+// ✅ 正确：在主线程中加载和绑定
+void MainThread() {
+    auto& loader = TextureLoader::GetInstance();
+    auto texture = loader.LoadTexture("tex", "test.png", true);
+    texture->Bind(0);              // OpenGL 调用 - 在主线程中安全
+    glDrawArrays(...);             // OpenGL 调用 - 在主线程中安全
+}
+
+// ✅ 正确：工作线程中读取属性
+void WorkerThread() {
+    auto& loader = TextureLoader::GetInstance();
+    auto texture = loader.GetTexture("tex");
+    
+    if (texture) {
+        int width = texture->GetWidth();   // 安全：只读取数据
+        int height = texture->GetHeight(); // 安全：只读取数据
+        // 不进行 OpenGL 调用
+    }
+}
+
+// ❌ 错误：不要在工作线程中进行 OpenGL 调用
+void BadWorkerThread() {
+    auto& loader = TextureLoader::GetInstance();
+    auto texture = loader.GetTexture("tex");
+    
+    texture->Bind(0);              // 危险！OpenGL 调用不在主线程
+    texture->SetFilter(...);       // 危险！会调用 glTexParameteri
+}
+```
+
+### 性能考虑
+
+1. **锁的开销**: 互斥锁操作有一定开销，但相对于纹理加载和 OpenGL 操作通常可以忽略
+2. **缓存优势**: 多线程同时请求同一纹理时，只会加载一次，其他线程从缓存获取
+3. **避免锁竞争**: 预加载纹理可以减少运行时的锁竞争
+
+### 测试
+
+项目包含专门的线程安全测试程序：
+
+```bash
+# 运行纹理系统线程安全测试
+./build/bin/Release/09_texture_thread_safe_test.exe
+```
+
+测试内容包括：
+1. 多线程并发加载同一纹理
+2. 多线程并发使用纹理
+3. 多线程并发创建不同纹理
+4. 多线程并发访问 TextureLoader 方法
+5. 多线程异步加载
 
 ---
 
@@ -595,9 +745,13 @@ if (refCount == 1) {
 }
 ```
 
-### Q: 异步加载如何在线程间安全使用？
+### Q: 如何在多线程环境中安全地使用纹理系统？
 
-A: 当前实现中，异步加载在后台线程中进行，但 OpenGL 对象必须在主线程创建。对于复杂的多线程场景，建议在主线程中进行所有纹理加载。
+A: 详见上方**线程安全**章节。简要总结：
+- `TextureLoader` 和 `Texture` 都是线程安全的
+- 可以从多个线程并发加载和访问纹理
+- OpenGL 调用必须在创建上下文的线程中执行
+- 参考测试程序 `09_texture_thread_safe_test.cpp`
 
 ---
 

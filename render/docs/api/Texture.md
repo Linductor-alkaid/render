@@ -509,14 +509,41 @@ TexCoord = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
 
 ### 3. 线程安全
 
-`Texture` 类本身不是线程安全的。在多线程环境中使用 `TextureLoader` 来管理纹理。
+**✅ `Texture` 类现在是线程安全的**（自 2025-10-28 更新）。
+
+- 所有公共方法都使用互斥锁保护
+- 可以在多线程环境中安全地访问纹理属性（`GetWidth`、`GetHeight`等）
+- 可以从不同线程安全地调用 `Bind()`、`SetFilter()` 等方法
+- 移动构造和赋值使用 `std::scoped_lock` 避免死锁
+
+**注意事项**:
+1. **OpenGL 上下文限制**: 虽然类本身是线程安全的，但 OpenGL 调用必须在创建上下文的线程中执行（通常是主线程）
+2. **推荐使用 TextureLoader**: 在多线程环境中，建议通过 `TextureLoader` 管理纹理，它提供了更高级的缓存和管理功能
+
+**线程安全示例**:
+```cpp
+// 主线程中加载纹理
+auto texture = std::make_shared<Texture>();
+texture->LoadFromFile("test.png", true);
+
+// 工作线程中安全读取属性
+std::thread worker([texture]() {
+    int width = texture->GetWidth();   // 线程安全
+    int height = texture->GetHeight(); // 线程安全
+    bool valid = texture->IsValid();   // 线程安全
+    
+    // 注意：不要在工作线程中进行 OpenGL 调用
+});
+
+worker.join();
+```
 
 ### 4. 生命周期管理
 
 使用 `std::shared_ptr<Texture>`（`TexturePtr`）来管理纹理生命周期：
 
 ```cpp
-出处 h::shared_ptr<Texture> texture = std::make_shared<Texture>();
+std::shared_ptr<Texture> texture = std::make_shared<Texture>();
 ```
 
 ### 5. 2D 渲染设置

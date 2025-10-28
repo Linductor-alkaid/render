@@ -18,13 +18,15 @@ Texture::~Texture() {
     Release();
 }
 
-Texture::Texture(Texture&& other) noexcept
-    : m_textureID(other.m_textureID)
-    , m_width(other.m_width)
-    , m_height(other.m_height)
-    , m_format(other.m_format)
-    , m_hasMipmap(other.m_hasMipmap)
-{
+Texture::Texture(Texture&& other) noexcept {
+    std::lock_guard<std::mutex> lock(other.m_mutex);
+    
+    m_textureID = other.m_textureID;
+    m_width = other.m_width;
+    m_height = other.m_height;
+    m_format = other.m_format;
+    m_hasMipmap = other.m_hasMipmap;
+    
     other.m_textureID = 0;
     other.m_width = 0;
     other.m_height = 0;
@@ -32,7 +34,14 @@ Texture::Texture(Texture&& other) noexcept
 
 Texture& Texture::operator=(Texture&& other) noexcept {
     if (this != &other) {
-        Release();
+        // 使用 scoped_lock 同时锁定两个互斥锁，避免死锁
+        std::scoped_lock lock(m_mutex, other.m_mutex);
+        
+        // 释放当前纹理（内部实现，已持有锁）
+        if (m_textureID != 0) {
+            glDeleteTextures(1, &m_textureID);
+            Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
+        }
 
         m_textureID = other.m_textureID;
         m_width = other.m_width;
@@ -48,9 +57,17 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 }
 
 bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
-    // 释放旧纹理
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 释放旧纹理（内部方法，无需再加锁）
     if (m_textureID != 0) {
-        Release();
+        // 直接释放，不调用 Release()，因为已经持有锁
+        glDeleteTextures(1, &m_textureID);
+        Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
+        m_textureID = 0;
+        m_width = 0;
+        m_height = 0;
+        m_hasMipmap = false;
     }
 
     // 使用 SDL_image 加载图片
@@ -89,26 +106,95 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
         format = TextureFormat::RGBA;
     }
 
-    // 创建 OpenGL 纹理
-    bool success = CreateFromData(surface->pixels, surface->w, surface->h, format, generateMipmap);
+    // 创建纹理数据（内部实现，无需调用 CreateFromData 以避免重复加锁）
+    const void* data = surface->pixels;
+    int width = surface->w;
+    int height = surface->h;
+    
+    if (width <= 0 || height <= 0) {
+        Logger::GetInstance().Error("无效的纹理尺寸: " + 
+                     std::to_string(width) + "x" + std::to_string(height));
+        SDL_DestroySurface(surface);
+        return false;
+    }
+
+    m_width = width;
+    m_height = height;
+    m_format = format;
+
+    // 生成纹理
+    glGenTextures(1, &m_textureID);
+    glBindTexture(GL_TEXTURE_2D, m_textureID);
+
+    // 设置纹理数据
+    GLenum glFormat = ToGLFormat(format);
+    GLenum glInternalFormat = ToGLInternalFormat(format);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 
+                 0, glFormat, GL_UNSIGNED_BYTE, data);
+    
+    // 验证纹理数据是否上传成功
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        Logger::GetInstance().Error("glTexImage2D 失败，OpenGL 错误: " + std::to_string(err));
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glDeleteTextures(1, &m_textureID);
+        m_textureID = 0;
+        SDL_DestroySurface(surface);
+        return false;
+    }
+
+    // 设置默认过滤参数
+    if (generateMipmap) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+
+    // 设置默认环绕模式
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    
+    // 生成 Mipmap（必须在所有参数设置后）
+    if (generateMipmap) {
+        glGenerateMipmap(GL_TEXTURE_2D);
+        m_hasMipmap = true;
+        Logger::GetInstance().Debug("为纹理生成 Mipmap，ID: " + std::to_string(m_textureID));
+    }
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    Logger::GetInstance().Debug("从文件创建纹理: " + std::to_string(width) + "x" + 
+                 std::to_string(height) + ", ID: " + std::to_string(m_textureID) + 
+                 ", 格式: " + std::to_string(static_cast<int>(format)) + 
+                 ", Mipmap: " + (m_hasMipmap ? "是" : "否"));
 
     // 释放 SDL Surface
     SDL_DestroySurface(surface);
 
-    return success;
+    return true;
 }
 
 bool Texture::CreateFromData(const void* data, int width, int height, 
                              TextureFormat format, bool generateMipmap) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
     if (width <= 0 || height <= 0) {
         Logger::GetInstance().Error("无效的纹理尺寸: " + 
                      std::to_string(width) + "x" + std::to_string(height));
         return false;
     }
 
-    // 释放旧纹理
+    // 释放旧纹理（内部方法，无需再加锁）
     if (m_textureID != 0) {
-        Release();
+        glDeleteTextures(1, &m_textureID);
+        Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
+        m_textureID = 0;
+        m_width = 0;
+        m_height = 0;
+        m_hasMipmap = false;
     }
 
     m_width = width;
@@ -171,6 +257,8 @@ bool Texture::CreateEmpty(int width, int height, TextureFormat format) {
 }
 
 void Texture::Bind(unsigned int unit) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
     if (m_textureID == 0) {
         Logger::GetInstance().Warning("尝试绑定无效纹理");
         return;
@@ -190,6 +278,8 @@ void Texture::Unbind() const {
 }
 
 void Texture::SetFilter(TextureFilter minFilter, TextureFilter magFilter) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
     if (m_textureID == 0) {
         Logger::GetInstance().Warning("无法为无效纹理设置过滤器");
         return;
@@ -204,6 +294,8 @@ void Texture::SetFilter(TextureFilter minFilter, TextureFilter magFilter) {
 }
 
 void Texture::SetWrap(TextureWrap wrapS, TextureWrap wrapT) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
     if (m_textureID == 0) {
         Logger::GetInstance().Warning("无法为无效纹理设置环绕模式");
         return;
@@ -216,6 +308,8 @@ void Texture::SetWrap(TextureWrap wrapS, TextureWrap wrapT) {
 }
 
 void Texture::GenerateMipmap() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
     if (m_textureID == 0) {
         Logger::GetInstance().Warning("无法为无效纹理生成 Mipmap");
         return;
@@ -230,6 +324,8 @@ void Texture::GenerateMipmap() {
 }
 
 void Texture::Release() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
     if (m_textureID != 0) {
         glDeleteTextures(1, &m_textureID);
         Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
