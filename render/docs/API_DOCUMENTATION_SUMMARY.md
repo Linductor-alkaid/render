@@ -28,6 +28,20 @@
 | [ShaderCache.md](api/ShaderCache.md) | `ShaderCache` | ✅ 完成 | 着色器缓存系统（单例） |
 | [UniformManager.md](api/UniformManager.md) | `UniformManager` | ✅ 完成 | Uniform 变量管理 |
 
+### 纹理系统
+
+| 文档 | 类名 | 状态 | 说明 |
+|-----|------|------|------|
+| [Texture.md](api/Texture.md) | `Texture` | ✅ 完成 | 纹理对象管理 🔒 线程安全 |
+| [TextureLoader.md](api/TextureLoader.md) | `TextureLoader` | ✅ 完成 | 纹理加载器和缓存（单例） 🔒 线程安全 |
+
+### 网格系统
+
+| 文档 | 类名 | 状态 | 说明 |
+|-----|------|------|------|
+| [Mesh.md](api/Mesh.md) | `Mesh` | ✅ 完成 | 网格对象管理（VAO/VBO/EBO） 🔒 线程安全 |
+| [MeshLoader.md](api/MeshLoader.md) | `MeshLoader` | ✅ 完成 | 几何形状生成器 🔒 线程安全 |
+
 ### 工具类
 
 | 文档 | 类名 | 状态 | 说明 |
@@ -72,26 +86,31 @@
 
 ### 总体数据
 
-- **API 文档数量**: 10 个
-- **总字数**: 约 55,000 字
-- **代码示例**: 165+ 个
-- **涵盖方法**: 115+ 个公共方法
-- **参考的示例程序**: 4 个
+- **API 文档数量**: 14 个
+- **总字数**: 约 85,000 字
+- **代码示例**: 245+ 个
+- **涵盖方法**: 175+ 个公共方法
+- **参考的示例程序**: 10 个
+- **线程安全模块**: 8 个 🔒
 
 ### 各文档详情
 
-| 文档 | 章节数 | 方法数 | 示例数 |
-|-----|--------|--------|--------|
-| Renderer.md | 10 | 25 | 15 |
-| OpenGLContext.md | 6 | 15 | 8 |
-| RenderState.md | 9 | 28 | 20 |
-| Shader.md | 8 | 12 | 20 |
-| ShaderCache.md | 9 | 12 | 18 |
-| UniformManager.md | 10 | 22 | 25 |
-| Logger.md | 4 | 8 | 5 |
-| FileUtils.md | 3 | 5 | 4 |
-| Types.md | 5 | 15 | 8 |
-| README.md | - | - | - |
+| 文档 | 章节数 | 方法数 | 示例数 | 线程安全 |
+|-----|--------|--------|--------|---------|
+| Renderer.md | 10 | 25 | 15 | 🔒 |
+| OpenGLContext.md | 6 | 15 | 8 | - |
+| RenderState.md | 9 | 28 | 20 | 🔒 |
+| Shader.md | 8 | 12 | 20 | 🔒 |
+| ShaderCache.md | 9 | 12 | 18 | 🔒 |
+| UniformManager.md | 10 | 22 | 25 | 🔒 |
+| Texture.md | 8 | 18 | 15 | 🔒 |
+| TextureLoader.md | 9 | 14 | 18 | 🔒 |
+| Mesh.md | 10 | 16 | 12 | 🔒 |
+| MeshLoader.md | 6 | 10 | 10 | 🔒 |
+| Logger.md | 4 | 8 | 5 | - |
+| FileUtils.md | 3 | 5 | 4 | - |
+| Types.md | 5 | 15 | 8 | - |
+| README.md | - | - | - | - |
 
 ---
 
@@ -115,6 +134,10 @@ README.md
 Renderer.md → OpenGLContext.md → RenderState.md
     ↓
 Shader.md → ShaderCache.md → UniformManager.md
+    ↓
+Texture.md → TextureLoader.md
+    ↓
+Mesh.md → MeshLoader.md
     ↓
 Logger.md → FileUtils.md → Types.md
 ```
@@ -143,6 +166,9 @@ Logger.md → FileUtils.md → Types.md
 
 | 日期 | 版本 | 更新内容 |
 |-----|------|---------|
+| 2025-10-28 | 1.4.0 | 🔒 **网格系统线程安全优化** - 新增 Mesh 和 MeshLoader API 文档，完整线程安全说明 |
+| 2025-10-28 | 1.3.0 | 🔒 **纹理系统线程安全优化** - 新增 Texture 和 TextureLoader API 文档，完整线程安全说明 |
+| 2025-10-28 | 1.2.0 | 🔒 **Renderer 线程安全优化** - 更新 Renderer API 文档，添加线程安全指南 |
 | 2025-10-27 | 1.1.0 | 更新 RenderState API，新增 OpenGL 状态封装功能（纹理/缓冲区/着色器程序管理） |
 | 2025-10-27 | 1.0.0 | 初始版本，完成所有已实现模块的 API 文档 |
 
@@ -154,11 +180,13 @@ Logger.md → FileUtils.md → Types.md
 
 随着引擎功能的扩展，以下模块的 API 文档将陆续添加：
 
+#### Phase 1 已完成 ✅
+- [x] **Mesh** - 网格管理 ✅ 已完成（v1.4.0）🔒 线程安全
+- [x] **Texture** - 纹理系统 ✅ 已完成（v1.3.0）🔒 线程安全
+
 #### Phase 1 后续（待实现）
 - [ ] **VertexBuffer / VertexArray** - 顶点缓冲抽象
 - [ ] **IndexBuffer** - 索引缓冲
-- [ ] **Mesh** - 网格管理
-- [ ] **Texture** - 纹理系统
 - [ ] **Material** - 材质系统
 - [ ] **Camera** - 相机系统
 - [ ] **Light** - 光照系统
@@ -201,10 +229,21 @@ Logger.md → FileUtils.md → Types.md
 
 ### 示例程序
 
+#### 基础示例
 - [01_basic_window.cpp](../examples/01_basic_window.cpp) - 基础窗口创建和渲染循环
 - [02_shader_test.cpp](../examples/02_shader_test.cpp) - 着色器编译和 Uniform 管理
 - [03_geometry_shader_test.cpp](../examples/03_geometry_shader_test.cpp) - 几何着色器和缓存系统
 - [04_state_management_test.cpp](../examples/04_state_management_test.cpp) - OpenGL 状态管理和三角形渲染
+
+#### 高级功能
+- [05_texture_test.cpp](../examples/05_texture_test.cpp) - 纹理加载和渲染
+- [06_mesh_test.cpp](../examples/06_mesh_test.cpp) - 网格系统和几何形状生成
+
+#### 线程安全测试 🔒
+- [07_thread_safe_test.cpp](../examples/07_thread_safe_test.cpp) - 着色器系统线程安全测试
+- [08_renderer_thread_safe_test.cpp](../examples/08_renderer_thread_safe_test.cpp) - Renderer 线程安全测试
+- [09_texture_thread_safe_test.cpp](../examples/09_texture_thread_safe_test.cpp) - 纹理系统线程安全测试
+- [10_mesh_thread_safe_test.cpp](../examples/10_mesh_thread_safe_test.cpp) - 网格系统线程安全测试
 
 ---
 
@@ -220,8 +259,9 @@ Logger.md → FileUtils.md → Types.md
 ---
 
 **API 文档状态**: ✅ **完成**  
-**最后更新**: 2025-10-27  
-**版本**: 1.1.0  
+**最后更新**: 2025-10-28  
+**版本**: 1.4.0  
+**线程安全模块**: 8/14 (57%) 🔒  
 
 ---
 

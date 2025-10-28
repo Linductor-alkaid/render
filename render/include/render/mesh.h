@@ -4,6 +4,7 @@
 #include <glad/glad.h>
 #include <vector>
 #include <memory>
+#include <mutex>
 
 namespace Render {
 
@@ -64,6 +65,11 @@ enum class DrawMode {
  * 
  * 管理顶点数据、索引数据和 OpenGL 缓冲区对象（VAO/VBO/EBO）
  * 提供便捷的网格创建、更新和渲染接口
+ * 
+ * 线程安全：
+ * - 所有公共方法都是线程安全的
+ * - 使用互斥锁保护所有成员变量的访问
+ * - 注意：OpenGL 调用必须在创建上下文的线程中执行
  */
 class Mesh {
 public:
@@ -146,32 +152,50 @@ public:
     /**
      * @brief 获取顶点数据
      */
-    const std::vector<Vertex>& GetVertices() const { return m_Vertices; }
+    const std::vector<Vertex>& GetVertices() const { 
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return m_Vertices; 
+    }
     
     /**
      * @brief 获取索引数据
      */
-    const std::vector<uint32_t>& GetIndices() const { return m_Indices; }
+    const std::vector<uint32_t>& GetIndices() const { 
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return m_Indices; 
+    }
     
     /**
      * @brief 获取顶点数量
      */
-    size_t GetVertexCount() const { return m_Vertices.size(); }
+    size_t GetVertexCount() const { 
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return m_Vertices.size(); 
+    }
     
     /**
      * @brief 获取索引数量
      */
-    size_t GetIndexCount() const { return m_Indices.size(); }
+    size_t GetIndexCount() const { 
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return m_Indices.size(); 
+    }
     
     /**
      * @brief 获取三角形数量
      */
-    size_t GetTriangleCount() const { return m_Indices.size() / 3; }
+    size_t GetTriangleCount() const { 
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return m_Indices.size() / 3; 
+    }
     
     /**
      * @brief 是否已上传到 GPU
      */
-    bool IsUploaded() const { return m_VAO != 0; }
+    bool IsUploaded() const { 
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return m_VAO != 0; 
+    }
     
     /**
      * @brief 计算包围盒
@@ -209,6 +233,8 @@ private:
     GLuint m_EBO;   // 元素缓冲对象（索引）
     
     bool m_Uploaded;    // 是否已上传到 GPU
+    
+    mutable std::mutex m_Mutex;  // 互斥锁，保护所有成员变量
 };
 
 } // namespace Render

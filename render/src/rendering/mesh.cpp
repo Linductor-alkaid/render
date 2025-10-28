@@ -31,14 +31,16 @@ Mesh::~Mesh() {
     Clear();
 }
 
-Mesh::Mesh(Mesh&& other) noexcept
-    : m_Vertices(std::move(other.m_Vertices))
-    , m_Indices(std::move(other.m_Indices))
-    , m_VAO(other.m_VAO)
-    , m_VBO(other.m_VBO)
-    , m_EBO(other.m_EBO)
-    , m_Uploaded(other.m_Uploaded)
-{
+Mesh::Mesh(Mesh&& other) noexcept {
+    std::lock_guard<std::mutex> lock(other.m_Mutex);
+    
+    m_Vertices = std::move(other.m_Vertices);
+    m_Indices = std::move(other.m_Indices);
+    m_VAO = other.m_VAO;
+    m_VBO = other.m_VBO;
+    m_EBO = other.m_EBO;
+    m_Uploaded = other.m_Uploaded;
+    
     other.m_VAO = 0;
     other.m_VBO = 0;
     other.m_EBO = 0;
@@ -47,7 +49,22 @@ Mesh::Mesh(Mesh&& other) noexcept
 
 Mesh& Mesh::operator=(Mesh&& other) noexcept {
     if (this != &other) {
-        Clear();
+        // 使用 scoped_lock 同时锁定两个互斥锁，避免死锁
+        std::scoped_lock lock(m_Mutex, other.m_Mutex);
+        
+        // 释放当前网格资源（内部实现，已持有锁）
+        if (m_VAO != 0) {
+            glDeleteVertexArrays(1, &m_VAO);
+            m_VAO = 0;
+        }
+        if (m_VBO != 0) {
+            glDeleteBuffers(1, &m_VBO);
+            m_VBO = 0;
+        }
+        if (m_EBO != 0) {
+            glDeleteBuffers(1, &m_EBO);
+            m_EBO = 0;
+        }
         
         m_Vertices = std::move(other.m_Vertices);
         m_Indices = std::move(other.m_Indices);
@@ -65,22 +82,27 @@ Mesh& Mesh::operator=(Mesh&& other) noexcept {
 }
 
 void Mesh::SetVertices(const std::vector<Vertex>& vertices) {
+    std::lock_guard<std::mutex> lock(m_Mutex);
     m_Vertices = vertices;
     m_Uploaded = false;  // 需要重新上传
 }
 
 void Mesh::SetIndices(const std::vector<uint32_t>& indices) {
+    std::lock_guard<std::mutex> lock(m_Mutex);
     m_Indices = indices;
     m_Uploaded = false;  // 需要重新上传
 }
 
 void Mesh::SetData(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
+    std::lock_guard<std::mutex> lock(m_Mutex);
     m_Vertices = vertices;
     m_Indices = indices;
     m_Uploaded = false;  // 需要重新上传
 }
 
 void Mesh::UpdateVertices(const std::vector<Vertex>& vertices, size_t offset) {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
     if (!m_Uploaded) {
         Logger::GetInstance().Error("Mesh::UpdateVertices - Mesh not uploaded yet");
         return;
@@ -104,14 +126,28 @@ void Mesh::UpdateVertices(const std::vector<Vertex>& vertices, size_t offset) {
 }
 
 void Mesh::Upload() {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
     if (m_Vertices.empty()) {
         Logger::GetInstance().Warning("Mesh::Upload - No vertices to upload");
         return;
     }
     
-    // 如果已经上传过，先清理旧资源
+    // 如果已经上传过，先清理旧资源（内部实现，已持有锁）
     if (m_Uploaded) {
-        Clear();
+        if (m_VAO != 0) {
+            glDeleteVertexArrays(1, &m_VAO);
+            m_VAO = 0;
+        }
+        if (m_VBO != 0) {
+            glDeleteBuffers(1, &m_VBO);
+            m_VBO = 0;
+        }
+        if (m_EBO != 0) {
+            glDeleteBuffers(1, &m_EBO);
+            m_EBO = 0;
+        }
+        m_Uploaded = false;
     }
     
     // 创建 VAO
@@ -151,6 +187,8 @@ void Mesh::Upload() {
 }
 
 void Mesh::Draw(DrawMode mode) const {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
     if (!m_Uploaded) {
         Logger::GetInstance().Error("Mesh::Draw - Mesh not uploaded yet");
         return;
@@ -172,6 +210,8 @@ void Mesh::Draw(DrawMode mode) const {
 }
 
 void Mesh::DrawInstanced(uint32_t instanceCount, DrawMode mode) const {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
     if (!m_Uploaded) {
         Logger::GetInstance().Error("Mesh::DrawInstanced - Mesh not uploaded yet");
         return;
@@ -194,6 +234,8 @@ void Mesh::DrawInstanced(uint32_t instanceCount, DrawMode mode) const {
 }
 
 void Mesh::Clear() {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
     if (m_VAO != 0) {
         glDeleteVertexArrays(1, &m_VAO);
         m_VAO = 0;
@@ -213,6 +255,8 @@ void Mesh::Clear() {
 }
 
 AABB Mesh::CalculateBounds() const {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
     if (m_Vertices.empty()) {
         return AABB();
     }
@@ -230,6 +274,8 @@ AABB Mesh::CalculateBounds() const {
 }
 
 void Mesh::RecalculateNormals() {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    
     if (m_Indices.size() < 3) {
         Logger::GetInstance().Warning("Mesh::RecalculateNormals - Not enough indices for triangles");
         return;
@@ -288,6 +334,7 @@ void Mesh::RecalculateNormals() {
 }
 
 void Mesh::RecalculateTangents() {
+    std::lock_guard<std::mutex> lock(m_Mutex);
     // TODO: 实现切线计算（用于法线贴图）
     Logger::GetInstance().Warning("Mesh::RecalculateTangents - Not implemented yet");
 }

@@ -21,8 +21,8 @@
 - **[TextureLoader](TextureLoader.md)** - 纹理加载器和缓存管理 🔒 **线程安全**
 
 ### 网格系统
-- **[Mesh](Mesh.md)** - 网格对象管理（VAO/VBO/EBO）
-- **[MeshLoader](MeshLoader.md)** - 几何形状生成器
+- **[Mesh](Mesh.md)** - 网格对象管理（VAO/VBO/EBO） 🔒 **线程安全**
+- **[MeshLoader](MeshLoader.md)** - 几何形状生成器 🔒 **线程安全**
 
 ### 工具类
 - **[Logger](Logger.md)** - 日志系统
@@ -47,6 +47,8 @@
 - [OpenGL 状态封装（纹理/VAO/着色器）](RenderState.md#opengl-状态封装)
 - [着色器热重载](ShaderCache.md#热重载)
 - [加载纹理](TextureLoader.md#基本使用)
+- [创建几何形状](MeshLoader.md#几何形状生成方法)
+- [网格管理](Mesh.md#公共方法)
 - [日志记录](Logger.md#基本使用)
 - [多线程渲染](Renderer.md#线程安全) 🔒
 
@@ -83,13 +85,21 @@ FileUtils (静态工具类)
 
 ## API 版本
 
-- **Engine Version**: 1.3.0
-- **API Version**: 1.3.0
+- **Engine Version**: 1.4.0
+- **API Version**: 1.4.0
 - **OpenGL Version**: 4.5+
 - **C++ Standard**: C++17
 - **Last Updated**: 2025-10-28
 
 ### 版本更新记录
+- **v1.4.0** (2025-10-28): 🔒 **网格系统线程安全优化**
+  - `Mesh` 和 `MeshLoader` 全面线程安全
+  - 所有公共方法使用互斥锁保护
+  - 移动操作使用 `std::scoped_lock` 避免死锁
+  - 所有 getter 方法添加线程安全保护
+  - 新增网格系统线程安全测试程序 (10_mesh_thread_safe_test)
+  - 新增完整的网格线程安全使用指南文档
+  - 更新 API 文档，添加详细线程安全说明
 - **v1.3.0** (2025-10-28): 🔒 **纹理系统线程安全优化**
   - `Texture` 和 `TextureLoader` 全面线程安全
   - 所有公共方法使用互斥锁保护
@@ -116,9 +126,10 @@ FileUtils (静态工具类)
 - [04_state_management_test.cpp](../../examples/04_state_management_test.cpp) - 状态管理和 OpenGL 状态封装
 - [05_texture_test.cpp](../../examples/05_texture_test.cpp) - 纹理加载和渲染
 - [06_mesh_test.cpp](../../examples/06_mesh_test.cpp) - 网格系统和几何形状生成
-- [07_thread_safe_test.cpp](../../examples/07_thread_safe_test.cpp) - 着色器系统线程安全测试
+- [07_thread_safe_test.cpp](../../examples/07_thread_safe_test.cpp) - 着色器系统线程安全测试 🔒
 - [08_renderer_thread_safe_test.cpp](../../examples/08_renderer_thread_safe_test.cpp) - Renderer 线程安全测试 🔒
-- [09_texture_thread_safe_test.cpp](../../examples/09_texture_thread_safe_test.cpp) - **纹理系统线程安全测试** 🔒
+- [09_texture_thread_safe_test.cpp](../../examples/09_texture_thread_safe_test.cpp) - 纹理系统线程安全测试 🔒
+- [10_mesh_thread_safe_test.cpp](../../examples/10_mesh_thread_safe_test.cpp) - **网格系统线程安全测试** 🔒
 
 ## 相关文档
 
@@ -131,6 +142,7 @@ FileUtils (静态工具类)
 ### 线程安全 🔒
 - [Renderer 线程安全指南](../RENDERER_THREAD_SAFETY.md)
 - [RenderState 线程安全文档](../THREAD_SAFETY.md)
+- [网格系统线程安全指南](../MESH_THREAD_SAFETY.md) ⭐ **新增**
 - [整体线程安全总结](../THREAD_SAFETY_SUMMARY.md)
 
 ### 项目管理

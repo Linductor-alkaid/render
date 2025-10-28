@@ -210,6 +210,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{E8737A16-4D71-3C99-BB11-02C1B4FA5797}</Project>
       <Name>09_texture_thread_safe_test</Name>
     </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\10_mesh_thread_safe_test.vcxproj">
+      <Project>{0F40D490-F750-35CA-8C73-CEA39E3F65FD}</Project>
+      <Name>10_mesh_thread_safe_test</Name>
+    </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>
       <Name>RenderEngine</Name>

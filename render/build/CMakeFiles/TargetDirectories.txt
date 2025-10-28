@@ -21,6 +21,7 @@ G:/myproject/render/build/examples/CMakeFiles/06_mesh_test.dir
 G:/myproject/render/build/examples/CMakeFiles/07_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/08_renderer_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/09_texture_thread_safe_test.dir
+G:/myproject/render/build/examples/CMakeFiles/10_mesh_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/RUN_TESTS.dir
 G:/myproject/render/build/examples/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/tests/CMakeFiles/RUN_TESTS.dir
