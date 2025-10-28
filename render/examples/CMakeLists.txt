@@ -13,6 +13,8 @@ set(EXAMPLES
     09_texture_thread_safe_test
     10_mesh_thread_safe_test
     11_model_loader_test
+    12_material_test
+    13_material_thread_safe_test
 )
 
 # 批量创建示例程序

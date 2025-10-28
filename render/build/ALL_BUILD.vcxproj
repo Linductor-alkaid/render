@@ -218,6 +218,14 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{CEC4C72A-72E9-3827-B72E-F0B0DDAF90FE}</Project>
       <Name>11_model_loader_test</Name>
     </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\12_material_test.vcxproj">
+      <Project>{201477C3-7558-355A-A350-3AA81BD37C0C}</Project>
+      <Name>12_material_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\13_material_thread_safe_test.vcxproj">
+      <Project>{4506DD44-F249-33CB-9A15-52926E5E0C08}</Project>
+      <Name>13_material_thread_safe_test</Name>
+    </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>
       <Name>RenderEngine</Name>
