@@ -18,6 +18,7 @@ set(EXAMPLES
     14_model_material_loader_test
     15_resource_manager_test
     16_resource_manager_thread_safe_test
+    17_model_with_resource_manager_test
 )
 
 # 批量创建示例程序

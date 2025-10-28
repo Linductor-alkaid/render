@@ -179,6 +179,7 @@ FileUtils (静态工具类)
 - [14_model_material_loader_test.cpp](../../examples/14_model_material_loader_test.cpp) - **模型材质纹理加载测试**
 - [15_resource_manager_test.cpp](../../examples/15_resource_manager_test.cpp) - **资源管理器测试** ⭐ **新增**
 - [16_resource_manager_thread_safe_test.cpp](../../examples/16_resource_manager_thread_safe_test.cpp) - **资源管理器线程安全测试** 🔒 ⭐ **新增**
+- [17_model_with_resource_manager_test.cpp](../../examples/17_model_with_resource_manager_test.cpp) - **使用资源管理器加载模型** ⭐ **新增**
 
 ## 相关文档
 

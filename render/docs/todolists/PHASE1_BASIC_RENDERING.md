@@ -340,6 +340,7 @@
 - [x] 材质系统测试 (12_material_test) - 材质属性、纹理、渲染状态测试 ✅ 已完成
 - [x] 资源管理器测试 (15_resource_manager_test) - 统一资源管理、引用计数、自动清理 ✅ 已完成
 - [x] 资源管理器线程安全测试 (16_resource_manager_thread_safe_test) - 多线程并发访问测试 ✅ 已完成
+- [x] 资源管理器实战测试 (17_model_with_resource_manager_test) - 使用资源管理器加载和管理完整模型 ✅ 已完成
 - [ ] 光照测试
 
 ### 综合示例

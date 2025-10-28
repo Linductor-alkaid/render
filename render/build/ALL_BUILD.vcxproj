@@ -238,6 +238,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{E766B8B8-76FE-3CC6-99A7-4FE477FC2BB0}</Project>
       <Name>16_resource_manager_thread_safe_test</Name>
     </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\17_model_with_resource_manager_test.vcxproj">
+      <Project>{532E28B3-00ED-348C-ADAD-03ED998853CE}</Project>
+      <Name>17_model_with_resource_manager_test</Name>
+    </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>
       <Name>RenderEngine</Name>
