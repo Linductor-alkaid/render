@@ -5,6 +5,8 @@
 #include "render/render_state.h"
 #include <memory>
 #include <string>
+#include <mutex>
+#include <atomic>
 
 namespace Render {
 
@@ -29,6 +31,12 @@ struct RenderStats {
  * @brief 主渲染器类
  * 
  * 提供高层渲染接口，管理渲染上下文和状态
+ * 
+ * 线程安全：
+ * - 所有公共方法都是线程安全的
+ * - 使用互斥锁保护内部状态
+ * - 注意：OpenGL 调用需要在创建上下文的线程中执行
+ *   （通常是主线程）
  */
 class Renderer {
 public:
@@ -124,27 +132,44 @@ public:
     /**
      * @brief 获取帧时间（秒）
      */
-    float GetDeltaTime() const { return m_deltaTime; }
+    float GetDeltaTime() const { 
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_deltaTime; 
+    }
     
     /**
      * @brief 获取 FPS
      */
-    float GetFPS() const { return m_stats.fps; }
+    float GetFPS() const { 
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_stats.fps; 
+    }
     
     /**
-     * @brief 获取渲染统计信息
+     * @brief 获取渲染统计信息（返回副本以保证线程安全）
      */
-    const RenderStats& GetStats() const { return m_stats; }
+    RenderStats GetStats() const { 
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_stats; 
+    }
     
     /**
      * @brief 获取 OpenGL 上下文
+     * 注意：返回的指针在其他线程调用 Shutdown 时可能失效
      */
-    OpenGLContext* GetContext() { return m_context.get(); }
+    OpenGLContext* GetContext() { 
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_context.get(); 
+    }
     
     /**
      * @brief 获取渲染状态管理器
+     * RenderState 本身是线程安全的
      */
-    RenderState* GetRenderState() { return m_renderState.get(); }
+    RenderState* GetRenderState() { 
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_renderState.get(); 
+    }
     
     /**
      * @brief 检查是否已初始化
@@ -157,7 +182,7 @@ private:
     std::unique_ptr<OpenGLContext> m_context;
     std::unique_ptr<RenderState> m_renderState;
     
-    bool m_initialized;
+    std::atomic<bool> m_initialized;
     RenderStats m_stats;
     
     // 时间统计
@@ -165,6 +190,9 @@ private:
     float m_lastFrameTime;
     float m_fpsUpdateTimer;
     uint32_t m_frameCount;
+    
+    // 线程安全
+    mutable std::mutex m_mutex;  // 保护所有可变状态
 };
 
 } // namespace Render

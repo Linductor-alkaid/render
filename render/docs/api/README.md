@@ -7,13 +7,13 @@
 ## 核心模块
 
 ### 渲染核心
-- **[Renderer](Renderer.md)** - 主渲染器类，提供高层渲染接口
+- **[Renderer](Renderer.md)** - 主渲染器类，提供高层渲染接口 🔒 **线程安全**
 - **[OpenGLContext](OpenGLContext.md)** - OpenGL 上下文管理
-- **[RenderState](RenderState.md)** - 渲染状态管理（包含 OpenGL 状态封装：纹理/缓冲区/着色器程序管理）
+- **[RenderState](RenderState.md)** - 渲染状态管理（包含 OpenGL 状态封装：纹理/缓冲区/着色器程序管理） 🔒 **线程安全**
 
 ### 着色器系统
 - **[Shader](Shader.md)** - 着色器程序管理
-- **[ShaderCache](ShaderCache.md)** - 着色器缓存系统
+- **[ShaderCache](ShaderCache.md)** - 着色器缓存系统 🔒 **线程安全**
 - **[UniformManager](UniformManager.md)** - Uniform 变量管理
 
 ### 纹理系统
@@ -48,6 +48,7 @@
 - [着色器热重载](ShaderCache.md#热重载)
 - [加载纹理](TextureLoader.md#基本使用)
 - [日志记录](Logger.md#基本使用)
+- [多线程渲染](Renderer.md#线程安全) 🔒
 
 ---
 
@@ -82,13 +83,18 @@ FileUtils (静态工具类)
 
 ## API 版本
 
-- **Engine Version**: 1.1.0
-- **API Version**: 1.1.0
+- **Engine Version**: 1.2.0
+- **API Version**: 1.2.0
 - **OpenGL Version**: 4.5+
 - **C++ Standard**: C++17
-- **Last Updated**: 2025-10-27
+- **Last Updated**: 2025-10-28
 
 ### 版本更新记录
+- **v1.2.0** (2025-10-28): 🔒 **Renderer 类线程安全优化**
+  - 所有公共方法都是线程安全的
+  - 添加互斥锁保护所有可变状态
+  - 初始化状态使用原子操作
+  - 新增 Renderer 线程安全测试程序
 - **v1.1.0** (2025-10-27): 新增 OpenGL 状态封装（纹理/缓冲区/着色器程序管理）
 - **v1.0.0** (2025-10-27): 初始版本，基础渲染系统
 
@@ -100,16 +106,26 @@ FileUtils (静态工具类)
 - [01_basic_window.cpp](../../examples/01_basic_window.cpp) - 基础窗口和渲染循环
 - [02_shader_test.cpp](../../examples/02_shader_test.cpp) - 着色器系统使用
 - [03_geometry_shader_test.cpp](../../examples/03_geometry_shader_test.cpp) - 几何着色器和缓存
-- [04_state_management_test.cpp](../../examples/04_state_management_test.cpp) - **状态管理和 OpenGL 状态封装**
-- [05_texture_test.cpp](../../examples/05_texture_test.cpp) - **纹理加载和渲染**
-- [06_mesh_test.cpp](../../examples/06_mesh_test.cpp) - **网格系统和几何形状生成**
+- [04_state_management_test.cpp](../../examples/04_state_management_test.cpp) - 状态管理和 OpenGL 状态封装
+- [05_texture_test.cpp](../../examples/05_texture_test.cpp) - 纹理加载和渲染
+- [06_mesh_test.cpp](../../examples/06_mesh_test.cpp) - 网格系统和几何形状生成
+- [07_thread_safe_test.cpp](../../examples/07_thread_safe_test.cpp) - 着色器系统线程安全测试
+- [08_renderer_thread_safe_test.cpp](../../examples/08_renderer_thread_safe_test.cpp) - **Renderer 线程安全测试** 🔒
 
 ## 相关文档
 
+### 使用指南
 - [开发指南](../DEVELOPMENT_GUIDE.md)
 - [着色器缓存使用指南](../SHADER_CACHE_GUIDE.md)
 - [纹理系统使用指南](../TEXTURE_SYSTEM.md)
 - [架构文档](../ARCHITECTURE.md)
+
+### 线程安全 🔒
+- [Renderer 线程安全指南](../RENDERER_THREAD_SAFETY.md)
+- [RenderState 线程安全文档](../THREAD_SAFETY.md)
+- [整体线程安全总结](../THREAD_SAFETY_SUMMARY.md)
+
+### 项目管理
 - [Phase 1 进度](../todolists/PHASE1_BASIC_RENDERING.md)
 - [API 文档完成总结](../API_DOCUMENTATION_SUMMARY.md)
 

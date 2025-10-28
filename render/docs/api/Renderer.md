@@ -11,6 +11,12 @@
 **头文件**: `render/renderer.h`  
 **命名空间**: `Render`
 
+### 🔒 线程安全
+
+**所有公共方法都是线程安全的**，可以从多个线程安全调用。内部使用互斥锁保护所有可变状态。
+
+⚠️ **重要限制**：虽然 `Renderer` 类本身是线程安全的，但 OpenGL 调用必须在创建上下文的线程（通常是主线程）中执行。详见 [线程安全使用指南](#线程安全)
+
 ---
 
 ## 类定义
@@ -387,10 +393,12 @@ LOG_INFO("Current FPS: " + std::to_string(fps));
 获取渲染统计信息。
 
 ```cpp
-const RenderStats& GetStats() const;
+RenderStats GetStats() const;
 ```
 
-**返回值**: 渲染统计结构
+**返回值**: 渲染统计结构的副本（线程安全）
+
+**🔒 线程安全**: 返回副本而非引用，确保多线程访问安全
 
 **RenderStats 结构**:
 ```cpp
@@ -405,7 +413,7 @@ struct RenderStats {
 
 **示例**:
 ```cpp
-const RenderStats& stats = renderer->GetStats();
+RenderStats stats = renderer->GetStats();
 LOG_INFO("Draw Calls: " + std::to_string(stats.drawCalls));
 LOG_INFO("Triangles: " + std::to_string(stats.triangles));
 ```
@@ -421,6 +429,10 @@ OpenGLContext* GetContext();
 ```
 
 **返回值**: OpenGL 上下文指针
+
+**🔒 线程安全**: 获取指针本身是线程安全的，但：
+- ⚠️ OpenGL 调用必须在创建上下文的线程中执行
+- ⚠️ 其他线程调用 `Shutdown()` 后指针可能失效
 
 **示例**:
 ```cpp
@@ -439,6 +451,8 @@ RenderState* GetRenderState();
 ```
 
 **返回值**: 渲染状态管理器指针
+
+**🔒 线程安全**: `RenderState` 本身是线程安全的，可以从多个线程安全调用其方法
 
 **示例**:
 ```cpp
@@ -558,21 +572,176 @@ state->SetViewport(0, 0, renderer->GetWidth(), renderer->GetHeight());
 
 ---
 
+## 线程安全
+
+### 概述
+
+从 v1.0 版本起，`Renderer` 类已全面实现线程安全，所有公共方法都可以从多个线程安全调用。
+
+### 保证
+
+✅ **线程安全保证**：
+- 所有公共方法都使用互斥锁保护
+- 初始化状态使用原子操作
+- 可以从多个线程同时调用不同方法
+- 不会出现数据竞争
+
+### 限制
+
+⚠️ **OpenGL 限制**：
+- OpenGL 调用必须在创建上下文的线程（通常是主线程）中执行
+- 这是 OpenGL 的固有限制，不是 `Renderer` 的限制
+
+### 最佳实践
+
+#### 单线程使用（推荐）
+
+最简单和推荐的方式是在主线程中使用 Renderer：
+
+```cpp
+int main() {
+    Renderer* renderer = Renderer::Create();
+    renderer->Initialize("My App", 1280, 720);
+    
+    while (running) {
+        renderer->BeginFrame();
+        // 所有渲染代码在主线程
+        renderer->Clear();
+        // ... 绘制操作 ...
+        renderer->EndFrame();
+        renderer->Present();
+    }
+    
+    Renderer::Destroy(renderer);
+    return 0;
+}
+```
+
+#### 多线程查询（安全）
+
+可以从其他线程安全地查询统计信息：
+
+```cpp
+// 监控线程
+void MonitorThread(Renderer* renderer) {
+    while (running) {
+        // ✅ 安全：查询统计信息
+        RenderStats stats = renderer->GetStats();
+        float fps = renderer->GetFPS();
+        
+        LOG_INFO("FPS: " + std::to_string(fps));
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+// 主线程渲染
+int main() {
+    Renderer* renderer = Renderer::Create();
+    renderer->Initialize("Multi-threaded App", 1280, 720);
+    
+    // 启动监控线程
+    std::thread monitor(MonitorThread, renderer);
+    
+    // 主线程渲染循环
+    while (running) {
+        renderer->BeginFrame();
+        renderer->Clear();
+        // ... 渲染 ...
+        renderer->EndFrame();
+        renderer->Present();
+    }
+    
+    running = false;
+    monitor.join();
+    Renderer::Destroy(renderer);
+    return 0;
+}
+```
+
+#### 多线程设置修改（谨慎）
+
+可以从其他线程修改设置，但需谨慎：
+
+```cpp
+// 设置线程
+void SettingsThread(Renderer* renderer) {
+    while (running) {
+        // ✅ 安全：修改渲染设置
+        renderer->SetClearColor(r, g, b, 1.0f);
+        
+        // ✅ 安全：RenderState 本身是线程安全的
+        auto* renderState = renderer->GetRenderState();
+        renderState->SetDepthTest(true);
+        renderState->SetBlendMode(BlendMode::Alpha);
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+```
+
+#### 禁止的操作 ❌
+
+```cpp
+// ❌ 错误：不要在非主线程中进行 OpenGL 调用
+void WorkerThread(Renderer* renderer) {
+    auto* context = renderer->GetContext();  // ✅ 获取指针安全
+    
+    // ❌ 错误：在非主线程中调用 OpenGL
+    glDrawArrays(...);  // 会导致未定义行为
+}
+```
+
+### 测试
+
+项目包含专门的线程安全测试：
+
+```bash
+# 运行 Renderer 线程安全测试
+./build/bin/Release/08_renderer_thread_safe_test.exe
+```
+
+测试覆盖：
+- 多线程并发状态查询
+- 多线程并发设置修改
+- 渲染循环 + 并发操作
+- 压力测试（20+ 个线程）
+
+### 更多信息
+
+详细的线程安全使用指南，请参阅：
+- [Renderer 线程安全文档](../RENDERER_THREAD_SAFETY.md)
+- [RenderState 线程安全](RenderState.md#线程安全)
+- [线程安全总结](../THREAD_SAFETY_SUMMARY.md)
+
+---
+
 ## 注意事项
 
-1. **单例模式**: 虽然可以创建多个 `Renderer` 实例，但通常只需要一个
-2. **初始化顺序**: 必须先调用 `Create()` 再调用 `Initialize()`
-3. **清理顺序**: 确保在销毁渲染器前清理所有 OpenGL 资源
-4. **帧循环**: `BeginFrame()` → 渲染 → `EndFrame()` → `Present()` 的顺序不能打乱
-5. **性能**: 使用 `GetStats()` 监控渲染性能
+1. **线程安全**: 所有方法都是线程安全的，但 OpenGL 调用必须在主线程中执行
+2. **单例模式**: 虽然可以创建多个 `Renderer` 实例，但通常只需要一个
+3. **初始化顺序**: 必须先调用 `Create()` 再调用 `Initialize()`
+4. **清理顺序**: 确保在销毁渲染器前清理所有 OpenGL 资源
+5. **帧循环**: `BeginFrame()` → 渲染 → `EndFrame()` → `Present()` 的顺序不能打乱
+6. **性能**: 使用 `GetStats()` 监控渲染性能
+7. **多线程**: 查询和设置可以多线程，但实际渲染应在主线程
 
 ---
 
 ## 相关文档
 
+### API 文档
 - [OpenGLContext API](OpenGLContext.md)
 - [RenderState API](RenderState.md)
-- [示例程序: 01_basic_window](../../examples/01_basic_window.cpp)
+
+### 示例程序
+- [基础窗口示例](../../examples/01_basic_window.cpp)
+- [线程安全测试](../../examples/08_renderer_thread_safe_test.cpp)
+
+### 线程安全
+- [Renderer 线程安全指南](../RENDERER_THREAD_SAFETY.md)
+- [RenderState 线程安全](../THREAD_SAFETY.md)
+- [整体线程安全总结](../THREAD_SAFETY_SUMMARY.md)
 
 ---
 

@@ -32,7 +32,7 @@ if(MSVC)
     target_compile_options(06_mesh_test PRIVATE /utf-8)
 endif()
 
-# 07 - 线程安全测试
+# 07 - 着色器系统线程安全测试
 add_executable(07_thread_safe_test 07_thread_safe_test.cpp)
 target_link_libraries(07_thread_safe_test RenderEngine)
 # 设置 UTF-8 编码
@@ -40,12 +40,20 @@ if(MSVC)
     target_compile_options(07_thread_safe_test PRIVATE /utf-8)
 endif()
 
+# 08 - Renderer 线程安全测试
+add_executable(08_renderer_thread_safe_test 08_renderer_thread_safe_test.cpp)
+target_link_libraries(08_renderer_thread_safe_test RenderEngine)
+# 设置 UTF-8 编码
+if(MSVC)
+    target_compile_options(08_renderer_thread_safe_test PRIVATE /utf-8)
+endif()
+
 # 复制 SDL3 DLL 到输出目录（Windows）
 if(WIN32 AND SDL3_LIBRARY)
     get_filename_component(SDL3_DLL_DIR ${SDL3_LIBRARY} DIRECTORY)
     file(GLOB SDL3_DLLS "${SDL3_DLL_DIR}/*.dll")
     
-    set(ALL_EXAMPLES 01_basic_window 02_shader_test 03_geometry_shader_test 04_state_management_test 05_texture_test 06_mesh_test 07_thread_safe_test)
+    set(ALL_EXAMPLES 01_basic_window 02_shader_test 03_geometry_shader_test 04_state_management_test 05_texture_test 06_mesh_test 07_thread_safe_test 08_renderer_thread_safe_test)
     
     foreach(example ${ALL_EXAMPLES})
         foreach(dll ${SDL3_DLLS})

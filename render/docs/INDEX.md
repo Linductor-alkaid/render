@@ -6,15 +6,18 @@
 
 ```
 docs/
-├── README.md              - 项目概述和快速开始
-├── INDEX.md               - 文档索引（本文件）
-├── ARCHITECTURE.md        - 系统架构设计
-├── API_REFERENCE.md       - API 完整参考
-├── RENDERING_LAYERS.md    - 渲染层级管理
-├── ECS_INTEGRATION.md     - ECS 集成指南
-├── DEVELOPMENT_GUIDE.md   - 开发指南
-├── FEATURE_LIST.md        - 功能特性列表
-└── CONTRIBUTING.md        - 贡献指南
+├── README.md                    - 项目概述和快速开始
+├── INDEX.md                     - 文档索引（本文件）
+├── ARCHITECTURE.md              - 系统架构设计
+├── API_REFERENCE.md             - API 完整参考
+├── RENDERING_LAYERS.md          - 渲染层级管理
+├── ECS_INTEGRATION.md           - ECS 集成指南
+├── DEVELOPMENT_GUIDE.md         - 开发指南
+├── FEATURE_LIST.md              - 功能特性列表
+├── CONTRIBUTING.md              - 贡献指南
+├── THREAD_SAFETY.md             - RenderState 线程安全
+├── THREAD_SAFETY_SUMMARY.md     - 整体线程安全总结
+└── RENDERER_THREAD_SAFETY.md    - Renderer 线程安全（新）
 ```
 
 ## 推荐阅读顺序
@@ -52,6 +55,11 @@ docs/
 - [项目结构](DEVELOPMENT_GUIDE.md#项目结构)
 - [性能优化](DEVELOPMENT_GUIDE.md#性能优化技巧)
 - [调试工具](DEVELOPMENT_GUIDE.md#调试工具)
+
+### 线程安全
+- [Renderer 线程安全](RENDERER_THREAD_SAFETY.md) - Renderer 类多线程使用指南
+- [RenderState 线程安全](THREAD_SAFETY.md) - RenderState 类线程安全实现
+- [线程安全总结](THREAD_SAFETY_SUMMARY.md) - 整体架构的线程安全概述
 
 ## 文档维护
 
