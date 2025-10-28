@@ -104,9 +104,12 @@ void UniformManager::SetMatrix4Array(const std::string& name, const Matrix4* val
 }
 
 bool UniformManager::HasUniform(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    
     // 先检查缓存
-    if (m_uniformLocationCache.find(name) != m_uniformLocationCache.end()) {
-        return m_uniformLocationCache[name] != -1;
+    auto it = m_uniformLocationCache.find(name);
+    if (it != m_uniformLocationCache.end()) {
+        return it->second != -1;
     }
     
     // 查询 OpenGL
@@ -120,6 +123,7 @@ int UniformManager::GetUniformLocation(const std::string& name) {
 }
 
 void UniformManager::ClearCache() {
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
     m_uniformLocationCache.clear();
 }
 
@@ -180,6 +184,12 @@ void UniformManager::PrintUniformInfo() const {
 }
 
 int UniformManager::GetOrFindUniformLocation(const std::string& name) {
+    // 使用静态局部变量和互斥锁保护警告映射
+    static std::mutex warnedMutex;
+    static std::unordered_map<std::string, bool> warnedUniforms;
+    
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    
     // 检查缓存
     auto it = m_uniformLocationCache.find(name);
     if (it != m_uniformLocationCache.end()) {
@@ -191,7 +201,7 @@ int UniformManager::GetOrFindUniformLocation(const std::string& name) {
     
     if (location == -1) {
         // 只在首次查找时警告，避免重复警告
-        static std::unordered_map<std::string, bool> warnedUniforms;
+        std::lock_guard<std::mutex> warnLock(warnedMutex);
         if (warnedUniforms.find(name) == warnedUniforms.end()) {
             LOG_WARNING("Uniform '" + name + "' not found in shader program " + std::to_string(m_programID));
             warnedUniforms[name] = true;

@@ -24,12 +24,7 @@ bool Shader::LoadFromFile(const std::string& vertexPath,
         LOG_INFO("  Geometry: " + geometryPath);
     }
     
-    // 保存路径用于重载
-    m_vertexPath = vertexPath;
-    m_fragmentPath = fragmentPath;
-    m_geometryPath = geometryPath;
-    
-    // 读取文件
+    // 读取文件（在锁外进行，避免长时间持锁）
     std::string vertexSource = FileUtils::ReadFile(vertexPath);
     if (vertexSource.empty()) {
         LOG_ERROR("Failed to read vertex shader: " + vertexPath);
@@ -51,15 +46,30 @@ bool Shader::LoadFromFile(const std::string& vertexPath,
         }
     }
     
-    // 从源码加载
-    return LoadFromSource(vertexSource, fragmentSource, geometrySource);
+    // 加锁保护路径更新和着色器加载
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 保存路径用于重载
+    m_vertexPath = vertexPath;
+    m_fragmentPath = fragmentPath;
+    m_geometryPath = geometryPath;
+    
+    // 从源码加载（内部不需要锁，因为已经持有锁）
+    return LoadFromSource_Locked(vertexSource, fragmentSource, geometrySource);
 }
 
 bool Shader::LoadFromSource(const std::string& vertexSource,
                             const std::string& fragmentSource,
                             const std::string& geometrySource) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return LoadFromSource_Locked(vertexSource, fragmentSource, geometrySource);
+}
+
+bool Shader::LoadFromSource_Locked(const std::string& vertexSource,
+                                    const std::string& fragmentSource,
+                                    const std::string& geometrySource) {
     // 删除旧程序
-    DeleteProgram();
+    DeleteProgram_Locked();
     
     LOG_INFO("Compiling shaders...");
     
@@ -118,6 +128,7 @@ bool Shader::LoadFromSource(const std::string& vertexSource,
 }
 
 void Shader::Use() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (m_programID != 0) {
         glUseProgram(m_programID);
     }
@@ -128,13 +139,22 @@ void Shader::Unuse() const {
 }
 
 bool Shader::Reload() {
-    if (m_vertexPath.empty() || m_fragmentPath.empty()) {
-        LOG_WARNING("Cannot reload shader: no source paths available");
-        return false;
+    // 先获取路径的副本（需要持有锁）
+    std::string vertexPath, fragmentPath, geometryPath;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_vertexPath.empty() || m_fragmentPath.empty()) {
+            LOG_WARNING("Cannot reload shader: no source paths available");
+            return false;
+        }
+        vertexPath = m_vertexPath;
+        fragmentPath = m_fragmentPath;
+        geometryPath = m_geometryPath;
     }
     
+    // 在锁外重新加载（LoadFromFile 内部会加锁）
     LOG_INFO("Reloading shader...");
-    return LoadFromFile(m_vertexPath, m_fragmentPath, m_geometryPath);
+    return LoadFromFile(vertexPath, fragmentPath, geometryPath);
 }
 
 uint32_t Shader::CompileShader(const std::string& source, ShaderType type) {
@@ -255,6 +275,11 @@ bool Shader::CheckLinkErrors(uint32_t program) {
 }
 
 void Shader::DeleteProgram() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    DeleteProgram_Locked();
+}
+
+void Shader::DeleteProgram_Locked() {
     if (m_programID != 0) {
         glDeleteProgram(m_programID);
         m_programID = 0;

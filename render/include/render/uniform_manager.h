@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <mutex>
 
 namespace Render {
 
@@ -113,6 +114,7 @@ private:
     
     // Uniform 位置缓存
     mutable std::unordered_map<std::string, int> m_uniformLocationCache;
+    mutable std::mutex m_cacheMutex;  // 保护缓存的互斥锁
     
     /**
      * @brief 获取或查找 uniform 位置

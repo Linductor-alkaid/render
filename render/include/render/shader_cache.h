@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <shared_mutex>
 
 namespace Render {
 
@@ -109,6 +110,7 @@ private:
     ShaderCache& operator=(const ShaderCache&) = delete;
     
     std::unordered_map<std::string, std::shared_ptr<Shader>> m_shaders;
+    mutable std::shared_mutex m_mutex;  // 读写锁，支持多读单写
 };
 
 } // namespace Render

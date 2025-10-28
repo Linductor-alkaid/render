@@ -4,6 +4,7 @@
 #include "render/uniform_manager.h"
 #include <string>
 #include <unordered_map>
+#include <mutex>
 
 namespace Render {
 
@@ -125,6 +126,20 @@ protected:
      */
     void DeleteProgram();
     
+    /**
+     * @brief 从源码加载着色器（内部方法，不加锁）
+     * @note 调用此方法前必须已持有 m_mutex 锁
+     */
+    bool LoadFromSource_Locked(const std::string& vertexSource,
+                                const std::string& fragmentSource,
+                                const std::string& geometrySource);
+    
+    /**
+     * @brief 删除着色器程序（内部方法，不加锁）
+     * @note 调用此方法前必须已持有 m_mutex 锁
+     */
+    void DeleteProgram_Locked();
+    
 private:
     uint32_t m_programID;
     std::string m_name;
@@ -136,6 +151,9 @@ private:
     
     // Uniform 管理器
     std::unique_ptr<UniformManager> m_uniformManager;
+    
+    // 线程安全保护
+    mutable std::mutex m_mutex;
 };
 
 } // namespace Render

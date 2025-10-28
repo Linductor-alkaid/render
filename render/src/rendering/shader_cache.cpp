@@ -12,15 +12,18 @@ std::shared_ptr<Shader> ShaderCache::LoadShader(const std::string& name,
                                                  const std::string& vertexPath,
                                                  const std::string& fragmentPath,
                                                  const std::string& geometryPath) {
-    // 检查是否已缓存
-    auto it = m_shaders.find(name);
-    if (it != m_shaders.end()) {
-        LOG_INFO("Shader '" + name + "' found in cache (RefCount: " + 
-                 std::to_string(it->second.use_count()) + ")");
-        return it->second;
+    // 先尝试读锁检查是否已缓存
+    {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        auto it = m_shaders.find(name);
+        if (it != m_shaders.end()) {
+            LOG_INFO("Shader '" + name + "' found in cache (RefCount: " + 
+                     std::to_string(it->second.use_count()) + ")");
+            return it->second;
+        }
     }
     
-    // 创建新着色器
+    // 创建新着色器（不需要锁，因为还没有加入缓存）
     LOG_INFO("Loading new shader: " + name);
     auto shader = std::make_shared<Shader>();
     
@@ -31,9 +34,18 @@ std::shared_ptr<Shader> ShaderCache::LoadShader(const std::string& name,
     
     shader->SetName(name);
     
-    // 添加到缓存
-    m_shaders[name] = shader;
-    LOG_INFO("Shader '" + name + "' cached successfully");
+    // 使用写锁添加到缓存
+    {
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
+        // 双重检查，防止其他线程已经加载了同名着色器
+        auto it = m_shaders.find(name);
+        if (it != m_shaders.end()) {
+            LOG_INFO("Shader '" + name + "' was loaded by another thread");
+            return it->second;
+        }
+        m_shaders[name] = shader;
+        LOG_INFO("Shader '" + name + "' cached successfully");
+    }
     
     return shader;
 }
@@ -42,15 +54,18 @@ std::shared_ptr<Shader> ShaderCache::LoadShaderFromSource(const std::string& nam
                                                            const std::string& vertexSource,
                                                            const std::string& fragmentSource,
                                                            const std::string& geometrySource) {
-    // 检查是否已缓存
-    auto it = m_shaders.find(name);
-    if (it != m_shaders.end()) {
-        LOG_INFO("Shader '" + name + "' found in cache (RefCount: " + 
-                 std::to_string(it->second.use_count()) + ")");
-        return it->second;
+    // 先尝试读锁检查是否已缓存
+    {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        auto it = m_shaders.find(name);
+        if (it != m_shaders.end()) {
+            LOG_INFO("Shader '" + name + "' found in cache (RefCount: " + 
+                     std::to_string(it->second.use_count()) + ")");
+            return it->second;
+        }
     }
     
-    // 创建新着色器
+    // 创建新着色器（不需要锁，因为还没有加入缓存）
     LOG_INFO("Loading new shader from source: " + name);
     auto shader = std::make_shared<Shader>();
     
@@ -61,14 +76,24 @@ std::shared_ptr<Shader> ShaderCache::LoadShaderFromSource(const std::string& nam
     
     shader->SetName(name);
     
-    // 添加到缓存
-    m_shaders[name] = shader;
-    LOG_INFO("Shader '" + name + "' cached successfully");
+    // 使用写锁添加到缓存
+    {
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
+        // 双重检查，防止其他线程已经加载了同名着色器
+        auto it = m_shaders.find(name);
+        if (it != m_shaders.end()) {
+            LOG_INFO("Shader '" + name + "' was loaded by another thread");
+            return it->second;
+        }
+        m_shaders[name] = shader;
+        LOG_INFO("Shader '" + name + "' cached successfully");
+    }
     
     return shader;
 }
 
 std::shared_ptr<Shader> ShaderCache::GetShader(const std::string& name) {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     auto it = m_shaders.find(name);
     if (it != m_shaders.end()) {
         return it->second;
@@ -79,23 +104,38 @@ std::shared_ptr<Shader> ShaderCache::GetShader(const std::string& name) {
 }
 
 bool ShaderCache::ReloadShader(const std::string& name) {
-    auto it = m_shaders.find(name);
-    if (it == m_shaders.end()) {
-        LOG_WARNING("Cannot reload shader '" + name + "': not found in cache");
-        return false;
+    std::shared_ptr<Shader> shader;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        auto it = m_shaders.find(name);
+        if (it == m_shaders.end()) {
+            LOG_WARNING("Cannot reload shader '" + name + "': not found in cache");
+            return false;
+        }
+        shader = it->second;
     }
     
+    // 在锁外调用 Reload，因为 Reload 内部有自己的同步机制
     LOG_INFO("Reloading shader: " + name);
-    return it->second->Reload();
+    return shader->Reload();
 }
 
 void ShaderCache::ReloadAll() {
-    LOG_INFO("Reloading all shaders (" + std::to_string(m_shaders.size()) + " shaders)...");
+    // 先复制一份着色器列表，避免长时间持有锁
+    std::vector<std::pair<std::string, std::shared_ptr<Shader>>> shadersCopy;
+    {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        LOG_INFO("Reloading all shaders (" + std::to_string(m_shaders.size()) + " shaders)...");
+        shadersCopy.reserve(m_shaders.size());
+        for (const auto& pair : m_shaders) {
+            shadersCopy.push_back(pair);
+        }
+    }
     
     size_t successCount = 0;
     size_t failCount = 0;
     
-    for (auto& pair : m_shaders) {
+    for (auto& pair : shadersCopy) {
         if (pair.second->Reload()) {
             successCount++;
         } else {
@@ -109,6 +149,7 @@ void ShaderCache::ReloadAll() {
 }
 
 void ShaderCache::RemoveShader(const std::string& name) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     auto it = m_shaders.find(name);
     if (it != m_shaders.end()) {
         LOG_INFO("Removing shader from cache: " + name + 
@@ -118,11 +159,13 @@ void ShaderCache::RemoveShader(const std::string& name) {
 }
 
 void ShaderCache::Clear() {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     LOG_INFO("Clearing shader cache (" + std::to_string(m_shaders.size()) + " shaders)");
     m_shaders.clear();
 }
 
 long ShaderCache::GetReferenceCount(const std::string& name) const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     auto it = m_shaders.find(name);
     if (it != m_shaders.end()) {
         return it->second.use_count();
@@ -131,6 +174,7 @@ long ShaderCache::GetReferenceCount(const std::string& name) const {
 }
 
 void ShaderCache::PrintStatistics() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     LOG_INFO("========================================");
     LOG_INFO("Shader Cache Statistics");
     LOG_INFO("========================================");
@@ -155,6 +199,7 @@ size_t ShaderCache::PrecompileShaders(const std::vector<std::tuple<std::string, 
     
     size_t successCount = 0;
     
+    // LoadShader 内部已经有锁保护，这里不需要额外加锁
     for (const auto& shaderDef : shaderList) {
         const std::string& name = std::get<0>(shaderDef);
         const std::string& vertPath = std::get<1>(shaderDef);
