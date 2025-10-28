@@ -2,6 +2,7 @@
 
 #include "render/types.h"
 #include <array>
+#include <shared_mutex>
 
 namespace Render {
 
@@ -54,6 +55,11 @@ enum class BufferTarget {
  * @brief 渲染状态管理类
  * 
  * 缓存和管理 OpenGL 渲染状态，减少不必要的状态切换
+ * 
+ * 线程安全：
+ * - 所有公共方法都是线程安全的
+ * - 使用读写锁支持并发读取和独占写入
+ * - 注意：OpenGL 调用本身需要在创建上下文的线程中执行
  */
 class RenderState {
 public:
@@ -122,12 +128,12 @@ public:
     /**
      * @brief 获取当前混合模式
      */
-    BlendMode GetBlendMode() const { return m_blendMode; }
+    BlendMode GetBlendMode() const;
     
     /**
      * @brief 获取当前面剔除模式
      */
-    CullFace GetCullFace() const { return m_cullFace; }
+    CullFace GetCullFace() const;
     
     // ========================================================================
     // 纹理绑定管理
@@ -180,7 +186,7 @@ public:
     /**
      * @brief 获取当前绑定的 VAO
      */
-    uint32_t GetBoundVertexArray() const { return m_boundVAO; }
+    uint32_t GetBoundVertexArray() const;
     
     /**
      * @brief 获取当前绑定的缓冲区
@@ -201,7 +207,7 @@ public:
     /**
      * @brief 获取当前使用的着色器程序
      */
-    uint32_t GetCurrentProgram() const { return m_currentProgram; }
+    uint32_t GetCurrentProgram() const;
     
 private:
     void ApplyDepthTest();
@@ -251,6 +257,11 @@ private:
     // 着色器程序状态
     // ========================================================================
     uint32_t m_currentProgram;
+    
+    // ========================================================================
+    // 线程安全
+    // ========================================================================
+    mutable std::shared_mutex m_mutex;  // 读写锁，支持多读单写
 };
 
 } // namespace Render

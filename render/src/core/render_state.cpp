@@ -33,6 +33,7 @@ RenderState::RenderState()
 }
 
 void RenderState::SetDepthTest(bool enable) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_depthTest != enable) {
         m_depthTest = enable;
         m_depthTestDirty = true;
@@ -41,6 +42,7 @@ void RenderState::SetDepthTest(bool enable) {
 }
 
 void RenderState::SetDepthFunc(DepthFunc func) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_depthFunc != func) {
         m_depthFunc = func;
         m_depthFuncDirty = true;
@@ -49,6 +51,7 @@ void RenderState::SetDepthFunc(DepthFunc func) {
 }
 
 void RenderState::SetDepthWrite(bool enable) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_depthWrite != enable) {
         m_depthWrite = enable;
         m_depthWriteDirty = true;
@@ -57,6 +60,7 @@ void RenderState::SetDepthWrite(bool enable) {
 }
 
 void RenderState::SetBlendMode(BlendMode mode) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_blendMode != mode) {
         m_blendMode = mode;
         m_blendModeDirty = true;
@@ -65,6 +69,7 @@ void RenderState::SetBlendMode(BlendMode mode) {
 }
 
 void RenderState::SetBlendFunc(uint32_t srcFactor, uint32_t dstFactor) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     m_blendSrcFactor = srcFactor;
     m_blendDstFactor = dstFactor;
     m_blendMode = BlendMode::Custom;
@@ -73,6 +78,7 @@ void RenderState::SetBlendFunc(uint32_t srcFactor, uint32_t dstFactor) {
 }
 
 void RenderState::SetCullFace(CullFace mode) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_cullFace != mode) {
         m_cullFace = mode;
         m_cullFaceDirty = true;
@@ -81,10 +87,12 @@ void RenderState::SetCullFace(CullFace mode) {
 }
 
 void RenderState::SetViewport(int x, int y, int width, int height) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     glViewport(x, y, width, height);
 }
 
 void RenderState::SetScissorTest(bool enable) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (enable) {
         glEnable(GL_SCISSOR_TEST);
     } else {
@@ -93,15 +101,18 @@ void RenderState::SetScissorTest(bool enable) {
 }
 
 void RenderState::SetScissorRect(int x, int y, int width, int height) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     glScissor(x, y, width, height);
 }
 
 void RenderState::SetClearColor(const Color& color) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     m_clearColor = color;
     glClearColor(color.r, color.g, color.b, color.a);
 }
 
 void RenderState::Clear(bool colorBuffer, bool depthBuffer, bool stencilBuffer) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     GLbitfield mask = 0;
     if (colorBuffer) mask |= GL_COLOR_BUFFER_BIT;
     if (depthBuffer) mask |= GL_DEPTH_BUFFER_BIT;
@@ -112,7 +123,29 @@ void RenderState::Clear(bool colorBuffer, bool depthBuffer, bool stencilBuffer) 
     }
 }
 
+BlendMode RenderState::GetBlendMode() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_blendMode;
+}
+
+CullFace RenderState::GetCullFace() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_cullFace;
+}
+
+uint32_t RenderState::GetBoundVertexArray() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_boundVAO;
+}
+
+uint32_t RenderState::GetCurrentProgram() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_currentProgram;
+}
+
 void RenderState::Reset() {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    
     // 重置所有状态为默认值
     m_depthTest = true;
     m_depthFunc = DepthFunc::Less;
@@ -236,6 +269,8 @@ void RenderState::BindTexture(uint32_t unit, uint32_t textureId, uint32_t target
         return;
     }
     
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    
     // 检查是否需要切换
     if (m_boundTextures[unit] != textureId) {
         // 激活纹理单元（如果需要）
@@ -261,6 +296,8 @@ void RenderState::SetActiveTextureUnit(uint32_t unit) {
         return;
     }
     
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    
     if (m_activeTextureUnit != unit) {
         glActiveTexture(GL_TEXTURE0 + unit);
         m_activeTextureUnit = unit;
@@ -273,6 +310,8 @@ uint32_t RenderState::GetBoundTexture(uint32_t unit) const {
                                     " exceeds maximum " + std::to_string(MAX_TEXTURE_UNITS));
         return 0;
     }
+    
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_boundTextures[unit];
 }
 
@@ -281,6 +320,7 @@ uint32_t RenderState::GetBoundTexture(uint32_t unit) const {
 // ============================================================================
 
 void RenderState::BindVertexArray(uint32_t vaoId) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_boundVAO != vaoId) {
         glBindVertexArray(vaoId);
         m_boundVAO = vaoId;
@@ -288,6 +328,8 @@ void RenderState::BindVertexArray(uint32_t vaoId) {
 }
 
 void RenderState::BindBuffer(BufferTarget target, uint32_t bufferId) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    
     GLenum glTarget = GetGLBufferTarget(target);
     
     // 根据目标检查缓存
@@ -314,6 +356,8 @@ void RenderState::BindBuffer(BufferTarget target, uint32_t bufferId) {
 }
 
 uint32_t RenderState::GetBoundBuffer(BufferTarget target) const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    
     switch (target) {
         case BufferTarget::ArrayBuffer:
             return m_boundArrayBuffer;
@@ -349,6 +393,7 @@ uint32_t RenderState::GetGLBufferTarget(BufferTarget target) const {
 // ============================================================================
 
 void RenderState::UseProgram(uint32_t programId) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_currentProgram != programId) {
         glUseProgram(programId);
         m_currentProgram = programId;
