@@ -4,6 +4,8 @@
 #include "render/render_state.h"
 #include "render/logger.h"
 #include <utility>
+#include <map>
+#include <unordered_map>
 
 namespace Render {
 
@@ -288,54 +290,91 @@ void Material::SetMatrix4(const std::string& name, const Matrix4& value) {
 // ============================================================================
 
 void Material::Bind(RenderState* renderState) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // 在锁内快速验证和拷贝数据
+    Ref<Shader> shader;
+    Color ambientColor, diffuseColor, specularColor, emissiveColor;
+    float shininess, opacity, metallic, roughness;
+    std::unordered_map<std::string, Ref<Texture>> textures;
+    std::unordered_map<std::string, int> intParams;
+    std::unordered_map<std::string, float> floatParams;
+    std::unordered_map<std::string, Vector2> vector2Params;
+    std::unordered_map<std::string, Vector3> vector3Params;
+    std::unordered_map<std::string, Vector4> vector4Params;
+    std::unordered_map<std::string, Matrix4> matrix4Params;
+    std::string name;
     
-    if (!m_shader || !m_shader->IsValid()) {
-        LOG_WARNING("Attempting to bind invalid material '" + m_name + "'");
-        return;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        if (!m_shader || !m_shader->IsValid()) {
+            LOG_WARNING("Attempting to bind invalid material '" + m_name + "'");
+            return;
+        }
+        
+        // 拷贝所有需要的数据
+        shader = m_shader;
+        ambientColor = m_ambientColor;
+        diffuseColor = m_diffuseColor;
+        specularColor = m_specularColor;
+        emissiveColor = m_emissiveColor;
+        shininess = m_shininess;
+        opacity = m_opacity;
+        metallic = m_metallic;
+        roughness = m_roughness;
+        textures = m_textures;
+        intParams = m_intParams;
+        floatParams = m_floatParams;
+        vector2Params = m_vector2Params;
+        vector3Params = m_vector3Params;
+        vector4Params = m_vector4Params;
+        matrix4Params = m_matrix4Params;
+        name = m_name;
     }
     
+    // 在锁外执行OpenGL调用
     // 1. 激活着色器
-    m_shader->Use();
+    shader->Use();
     
     // 2. 获取 UniformManager
-    auto* uniformMgr = m_shader->GetUniformManager();
+    auto* uniformMgr = shader->GetUniformManager();
     if (!uniformMgr) {
-        LOG_ERROR("UniformManager is null for material '" + m_name + "'");
+        LOG_ERROR("UniformManager is null for material '" + name + "'");
         return;
     }
     
     // 3. 设置材质颜色属性
     if (uniformMgr->HasUniform("material.ambient")) {
-        uniformMgr->SetColor("material.ambient", m_ambientColor);
+        uniformMgr->SetColor("material.ambient", ambientColor);
     }
     if (uniformMgr->HasUniform("material.diffuse")) {
-        uniformMgr->SetColor("material.diffuse", m_diffuseColor);
+        uniformMgr->SetColor("material.diffuse", diffuseColor);
     }
     if (uniformMgr->HasUniform("material.specular")) {
-        uniformMgr->SetColor("material.specular", m_specularColor);
+        uniformMgr->SetColor("material.specular", specularColor);
     }
     if (uniformMgr->HasUniform("material.emissive")) {
-        uniformMgr->SetColor("material.emissive", m_emissiveColor);
+        uniformMgr->SetColor("material.emissive", emissiveColor);
     }
     
-    // 4. 设置材质物理属性
+    // 4.输送材质物理属性
     if (uniformMgr->HasUniform("material.shininess")) {
-        uniformMgr->SetFloat("material.shininess", m_shininess);
+        uniformMgr->SetFloat("material.shininess", shininess);
     }
     if (uniformMgr->HasUniform("material.opacity")) {
-        uniformMgr->SetFloat("material.opacity", m_opacity);
+        uniformMgr->SetFloat("material.opacity", opacity);
     }
     if (uniformMgr->HasUniform("material.metallic")) {
-        uniformMgr->SetFloat("material.metallic", m_metallic);
+        uniformMgr->SetFloat("material.metallic", metallic);
     }
     if (uniformMgr->HasUniform("material.roughness")) {
-        uniformMgr->SetFloat("material.roughness", m_roughness);
+        uniformMgr->SetFloat("material.roughness", roughness);
     }
     
     // 5. 绑定纹理
     int textureUnit = 0;
-    for (const auto& pair : m_textures) {
+    bool hasDiffuse = false;
+    
+    for (const auto& pair : textures) {
         const std::string& texName = pair.first;
         auto texture = pair.second;
         
@@ -348,47 +387,57 @@ void Material::Bind(RenderState* renderState) {
                 uniformMgr->SetInt(texName, textureUnit);
             }
             
+            // 标记纹理类型
+            if (texName == "diffuseMap") {
+                hasDiffuse = true;
+            }
+            
             textureUnit++;
         }
     }
     
+    // 设置纹理存在标志
+    if (uniformMgr->HasUniform("hasDiffuseMap")) {
+        uniformMgr->SetBool("hasDiffuseMap", hasDiffuse);
+    }
+    
     // 6. 设置自定义整型参数
-    for (const auto& pair : m_intParams) {
+    for (const auto& pair : intParams) {
         if (uniformMgr->HasUniform(pair.first)) {
             uniformMgr->SetInt(pair.first, pair.second);
         }
     }
     
     // 7. 设置自定义浮点参数
-    for (const auto& pair : m_floatParams) {
+    for (const auto& pair : floatParams) {
         if (uniformMgr->HasUniform(pair.first)) {
             uniformMgr->SetFloat(pair.first, pair.second);
         }
     }
     
     // 8. 设置自定义向量2参数
-    for (const auto& pair : m_vector2Params) {
+    for (const auto& pair : vector2Params) {
         if (uniformMgr->HasUniform(pair.first)) {
             uniformMgr->SetVector2(pair.first, pair.second);
         }
     }
     
     // 9. 设置自定义向量3参数
-    for (const auto& pair : m_vector3Params) {
+    for (const auto& pair : vector3Params) {
         if (uniformMgr->HasUniform(pair.first)) {
             uniformMgr->SetVector3(pair.first, pair.second);
         }
     }
     
     // 10. 设置自定义向量4参数
-    for (const auto& pair : m_vector4Params) {
+    for (const auto& pair : vector4Params) {
         if (uniformMgr->HasUniform(pair.first)) {
             uniformMgr->SetVector4(pair.first, pair.second);
         }
     }
     
     // 11. 设置自定义矩阵4参数
-    for (const auto& pair : m_matrix4Params) {
+    for (const auto& pair : matrix4Params) {
         if (uniformMgr->HasUniform(pair.first)) {
             uniformMgr->SetMatrix4(pair.first, pair.second);
         }

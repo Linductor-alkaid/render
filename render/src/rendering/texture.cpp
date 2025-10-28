@@ -57,20 +57,7 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 }
 
 bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    // 释放旧纹理（内部方法，无需再加锁）
-    if (m_textureID != 0) {
-        // 直接释放，不调用 Release()，因为已经持有锁
-        glDeleteTextures(1, &m_textureID);
-        Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
-        m_textureID = 0;
-        m_width = 0;
-        m_height = 0;
-        m_hasMipmap = false;
-    }
-
-    // 使用 SDL_image 加载图片
+    // 在锁外加载图片文件（避免长时间持锁）
     SDL_Surface* surface = IMG_Load(filepath.c_str());
     if (!surface) {
         Logger::GetInstance().Error("从文件加载纹理失败: " + filepath + " - " + SDL_GetError());
@@ -104,6 +91,20 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
         
         surface = convertedSurface;
         format = TextureFormat::RGBA;
+    }
+    
+    // 现在在锁内创建 OpenGL 纹理
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 释放旧纹理（内部方法，无需再加锁）
+    if (m_textureID != 0) {
+        // 直接释放，不调用 Release()，因为已经持有锁
+        glDeleteTextures(1, &m_textureID);
+        Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
+        m_textureID = 0;
+        m_width = 0;
+        m_height = 0;
+        m_hasMipmap = false;
     }
 
     // 创建纹理数据（内部实现，无需调用 CreateFromData 以避免重复加锁）

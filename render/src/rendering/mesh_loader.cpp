@@ -1,9 +1,12 @@
 #include "render/mesh_loader.h"
+#include "render/material.h"
+#include "render/texture_loader.h"
 #include "render/logger.h"
 #include <cmath>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <filesystem>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -106,6 +109,229 @@ static void ProcessAssimpNode(aiNode* node, const aiScene* scene, std::vector<Re
 }
 
 // ============================================================================
+// 辅助函数 - Assimp 材质处理
+// ============================================================================
+
+/**
+ * @brief 从 Assimp 材质加载纹理
+ */
+static Ref<Texture> LoadMaterialTexture(
+    aiMaterial* mat,
+    aiTextureType type,
+    const std::string& basePath,
+    const std::string& textureName)
+{
+    if (mat->GetTextureCount(type) == 0) {
+        return nullptr;
+    }
+    
+    aiString texPath;
+    mat->GetTexture(type, 0, &texPath);
+    
+    std::string texPathStr(texPath.C_Str());
+    if (texPathStr.empty()) {
+        return nullptr;
+    }
+    
+    // 构建完整路径（简化处理，避免 filesystem 可能的中文路径问题）
+    std::string fullPathStr;
+    if (!basePath.empty()) {
+        fullPathStr = basePath + "/" + texPathStr;
+    } else {
+        fullPathStr = texPathStr;
+    }
+    
+    // 使用 TextureLoader 加载纹理（带缓存）
+    auto texture = TextureLoader::GetInstance().LoadTexture(textureName, fullPathStr);
+    
+    if (texture) {
+        Logger::GetInstance().Info("Loaded texture: " + texPathStr);
+    } else {
+        Logger::GetInstance().Warning("Failed to load texture: " + fullPathStr);
+    }
+    
+    return texture;
+}
+
+/**
+ * @brief 从 Assimp 材质创建 Material 对象
+ */
+static Ref<Material> ProcessAssimpMaterial(
+    aiMaterial* aiMat,
+    const aiScene* scene,
+    const std::string& basePath,
+    Ref<Shader> shader,
+    uint32_t materialIndex)
+{
+    auto material = CreateRef<Material>();
+    
+    // 设置材质名称
+    aiString materialName;
+    if (aiMat->Get(AI_MATKEY_NAME, materialName) == AI_SUCCESS) {
+        material->SetName(std::string(materialName.C_Str()));
+    } else {
+        material->SetName("Material_" + std::to_string(materialIndex));
+    }
+    
+    // 设置着色器
+    if (shader) {
+        material->SetShader(shader);
+    }
+    
+    // 获取颜色属性
+    aiColor3D color(0.0f, 0.0f, 0.0f);
+    
+    // 环境光颜色
+    if (aiMat->Get(AI_MATKEY_COLOR_AMBIENT, color) == AI_SUCCESS) {
+        material->SetAmbientColor(Color(color.r, color.g, color.b, 1.0f));
+    }
+    
+    // 漫反射颜色
+    if (aiMat->Get(AI_MATKEY_COLOR_DIFFUSE, color) == AI_SUCCESS) {
+        material->SetDiffuseColor(Color(color.r, color.g, color.b, 1.0f));
+    }
+    
+    // 镜面反射颜色
+    if (aiMat->Get(AI_MATKEY_COLOR_SPECULAR, color) == AI_SUCCESS) {
+        material->SetSpecularColor(Color(color.r, color.g, color.b, 1.0f));
+    }
+    
+    // 自发光颜色
+    if (aiMat->Get(AI_MATKEY_COLOR_EMISSIVE, color) == AI_SUCCESS) {
+        material->SetEmissiveColor(Color(color.r, color.g, color.b, 1.0f));
+    }
+    
+    // 镜面反射强度（光泽度）
+    float shininess = 32.0f;
+    if (aiMat->Get(AI_MATKEY_SHININESS, shininess) == AI_SUCCESS) {
+        material->SetShininess(shininess);
+    }
+    
+    // 不透明度
+    float opacity = 1.0f;
+    if (aiMat->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS) {
+        material->SetOpacity(opacity);
+        if (opacity < 1.0f) {
+            material->SetBlendMode(BlendMode::Alpha);
+            material->SetDepthWrite(false);
+        }
+    }
+    
+    // PBR 属性（如果可用）
+    float metallic = 0.0f;
+    if (aiMat->Get(AI_MATKEY_METALLIC_FACTOR, metallic) == AI_SUCCESS) {
+        material->SetMetallic(metallic);
+    }
+    
+    float roughness = 0.5f;
+    if (aiMat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == AI_SUCCESS) {
+        material->SetRoughness(roughness);
+    }
+    
+    // 加载纹理贴图
+    std::string matNameStr = material->GetName();
+    if (matNameStr.empty()) {
+        matNameStr = "Material_" + std::to_string(materialIndex);
+        material->SetName(matNameStr);
+    }
+    
+    // 漫反射贴图（使用纹理路径作为唯一标识，而不是材质名）
+    // 先获取纹理路径，用作缓存键
+    std::string diffuseTexName;
+    if (aiMat->GetTextureCount(aiTextureType_DIFFUSE) > 0) {
+        aiString texPath;
+        aiMat->GetTexture(aiTextureType_DIFFUSE, 0, &texPath);
+        std::string texPathStr(texPath.C_Str());
+        // 使用完整路径作为纹理标识
+        diffuseTexName = basePath + "/" + texPathStr;
+    }
+    
+    auto diffuseMap = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE, basePath, 
+                                          diffuseTexName.empty() ? (matNameStr + "_diffuse") : diffuseTexName);
+    if (diffuseMap) {
+        material->SetTexture("diffuseMap", diffuseMap);
+    }
+    
+    // 镜面反射贴图
+    auto specularMap = LoadMaterialTexture(aiMat, aiTextureType_SPECULAR, basePath,
+                                           matNameStr + "_specular");
+    if (specularMap) {
+        material->SetTexture("specularMap", specularMap);
+    }
+    
+    // 法线贴图
+    auto normalMap = LoadMaterialTexture(aiMat, aiTextureType_NORMALS, basePath,
+                                         matNameStr + "_normal");
+    if (!normalMap) {
+        // 有些格式使用 HEIGHT 代替 NORMALS
+        normalMap = LoadMaterialTexture(aiMat, aiTextureType_HEIGHT, basePath,
+                                       matNameStr + "_normal");
+    }
+    if (normalMap) {
+        material->SetTexture("normalMap", normalMap);
+    }
+    
+    // 环境遮蔽贴图
+    auto aoMap = LoadMaterialTexture(aiMat, aiTextureType_AMBIENT_OCCLUSION, basePath,
+                                     matNameStr + "_ao");
+    if (aoMap) {
+        material->SetTexture("aoMap", aoMap);
+    }
+    
+    // 自发光贴图
+    auto emissiveMap = LoadMaterialTexture(aiMat, aiTextureType_EMISSIVE, basePath,
+                                           matNameStr + "_emissive");
+    if (emissiveMap) {
+        material->SetTexture("emissiveMap", emissiveMap);
+    }
+    
+    Logger::GetInstance().Info("Processed material: " + material->GetName());
+    
+    return material;
+}
+
+/**
+ * @brief 递归处理节点（包含材质）
+ */
+static void ProcessAssimpNodeWithMaterials(
+    aiNode* node,
+    const aiScene* scene,
+    const std::string& basePath,
+    Ref<Shader> shader,
+    std::vector<MeshWithMaterial>& results)
+{
+    // 处理当前节点的所有网格
+    for (uint32_t i = 0; i < node->mNumMeshes; i++) {
+        aiMesh* assimpMesh = scene->mMeshes[node->mMeshes[i]];
+        
+        // 处理网格
+        auto mesh = ProcessAssimpMesh(assimpMesh, scene);
+        
+        // 处理材质（如果有）
+        Ref<Material> material = nullptr;
+        if (assimpMesh->mMaterialIndex >= 0 && 
+            assimpMesh->mMaterialIndex < scene->mNumMaterials) {
+            aiMaterial* aiMat = scene->mMaterials[assimpMesh->mMaterialIndex];
+            material = ProcessAssimpMaterial(aiMat, scene, basePath, shader, 
+                                             assimpMesh->mMaterialIndex);
+        }
+        
+        // 获取网格名称
+        std::string meshName = assimpMesh->mName.C_Str();
+        if (meshName.empty()) {
+            meshName = "Mesh_" + std::to_string(i);
+        }
+        
+        results.push_back(MeshWithMaterial(mesh, material, meshName));
+    }
+    
+    // 递归处理子节点
+    for (uint32_t i = 0; i < node->mNumChildren; i++) {
+        ProcessAssimpNodeWithMaterials(node->mChildren[i], scene, basePath, shader, results);
+    }
+}
+
+// ============================================================================
 // MeshLoader - 文件加载实现
 // ============================================================================
 
@@ -168,6 +394,79 @@ Ref<Mesh> MeshLoader::LoadMeshFromFile(const std::string& filepath, uint32_t mes
     }
     
     return meshes[meshIndex];
+}
+
+std::vector<MeshWithMaterial> MeshLoader::LoadFromFileWithMaterials(
+    const std::string& filepath,
+    const std::string& basePath,
+    bool flipUVs,
+    Ref<Shader> shader)
+{
+    std::vector<MeshWithMaterial> results;
+    
+    Logger::GetInstance().Info("Loading model with materials from file: " + filepath);
+    
+    // 确定纹理搜索基础路径
+    std::string actualBasePath = basePath;
+    if (actualBasePath.empty()) {
+        // 使用模型文件所在目录作为基础路径（简化处理）
+        size_t lastSlash = filepath.find_last_of("/\\");
+        if (lastSlash != std::string::npos) {
+            actualBasePath = filepath.substr(0, lastSlash);
+        } else {
+            actualBasePath = ".";
+        }
+    }
+    
+    Logger::GetInstance().Info("Texture base path: " + actualBasePath);
+    
+    // 创建 Assimp 导入器
+    Assimp::Importer importer;
+    
+    // 设置后处理标志
+    unsigned int postProcessFlags = 
+        aiProcess_Triangulate |           // 转换为三角形
+        aiProcess_GenSmoothNormals |      // 生成平滑法线
+        aiProcess_CalcTangentSpace |      // 计算切线空间（法线贴图）
+        aiProcess_JoinIdenticalVertices | // 合并相同顶点
+        aiProcess_SortByPType |           // 按原始类型排序
+        aiProcess_ImproveCacheLocality |  // 改善顶点缓存局部性
+        aiProcess_OptimizeMeshes |        // 优化网格
+        aiProcess_ValidateDataStructure;  // 验证数据结构
+    
+    if (flipUVs) {
+        postProcessFlags |= aiProcess_FlipUVs;
+    }
+    
+    // 读取文件
+    const aiScene* scene = importer.ReadFile(filepath, postProcessFlags);
+    
+    // 检查加载错误
+    if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+        Logger::GetInstance().Error("Assimp failed to load model: " + std::string(importer.GetErrorString()));
+        return results;
+    }
+    
+    Logger::GetInstance().Info("Model loaded successfully.");
+    Logger::GetInstance().Info("Materials in scene: " + std::to_string(scene->mNumMaterials));
+    Logger::GetInstance().Info("Processing meshes with materials...");
+    
+    // 递归处理场景中的所有节点、网格和材质
+    ProcessAssimpNodeWithMaterials(scene->mRootNode, scene, actualBasePath, shader, results);
+    
+    Logger::GetInstance().Info("Model loading complete. Total meshes: " + std::to_string(results.size()));
+    
+    // 统计材质数量
+    int materialsLoaded = 0;
+    for (const auto& item : results) {
+        if (item.material) {
+            materialsLoaded++;
+        }
+    }
+    Logger::GetInstance().Info("Materials loaded: " + std::to_string(materialsLoaded) + " / " + 
+                               std::to_string(results.size()));
+    
+    return results;
 }
 
 // ============================================================================

@@ -519,11 +519,13 @@ LOG_INFO("清理了 " + std::to_string(cleaned) + " 个纹理");  // 会清理 "
 #### TextureLoader
 - 所有公共方法都使用 `std::mutex` 保护缓存访问
 - 多个线程可以安全地调用 `LoadTexture()`、`GetTexture()` 等方法
+- **双重检查锁定优化**: `LoadTexture()` 和 `CreateTexture()` 使用双重检查锁定模式，将耗时的文件 IO 操作移到锁外执行，大幅提升并发性能
 - 异步加载使用正确的双重检查锁定模式
 - 支持并发读取纹理属性和统计信息
 
 #### Texture
 - 所有公共方法都使用互斥锁保护
+- `LoadFromFile()` 将文件 IO 操作移到锁外，只在创建 OpenGL 纹理时持锁
 - 可以从多个线程安全地访问纹理属性
 - 移动操作使用 `std::scoped_lock` 避免死锁
 

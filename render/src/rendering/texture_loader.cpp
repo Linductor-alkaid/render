@@ -12,28 +12,40 @@ TextureLoader& TextureLoader::GetInstance() {
 TexturePtr TextureLoader::LoadTexture(const std::string& name,
                                       const std::string& filepath,
                                       bool generateMipmap) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    // 检查是否已缓存
-    auto it = m_textures.find(name);
-    if (it != m_textures.end()) {
-        Logger::GetInstance().Info("纹理 '" + name + "' 从缓存中获取 (引用计数: " + 
-                 std::to_string(it->second.use_count()) + ")");
-        return it->second;
+    // 第一次检查缓存
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_textures.find(name);
+        if (it != m_textures.end()) {
+            Logger::GetInstance().Info("纹理 '" + name + "' 从缓存中获取 (引用计数: " + 
+                     std::to_string(it->second.use_count()) + ")");
+            return it->second;
+        }
     }
     
-    // 加载新纹理
+    // 在锁外加载纹理（避免长时间持锁）
     Logger::GetInstance().Info("加载新纹理: " + name + " (路径: " + filepath + ")");
-    
     auto texture = LoadTextureInternal(filepath, generateMipmap);
+    
     if (!texture) {
         Logger::GetInstance().Error("加载纹理失败: " + name);
         return nullptr;
     }
     
-    // 添加到缓存
-    m_textures[name] = texture;
-    Logger::GetInstance().Info("纹理 '" + name + "' 缓存成功");
+    // 第二次检查并添加到缓存（双重检查锁定模式）
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // 再次检查是否已被其他线程添加
+        auto it = m_textures.find(name);
+        if (it != m_textures.end()) {
+            Logger::GetInstance().Info("纹理 '" + name + "' 已被其他线程加载");
+            return it->second;
+        }
+        
+        m_textures[name] = texture;
+        Logger::GetInstance().Info("纹理 '" + name + "' 缓存成功");
+    }
     
     return texture;
 }
@@ -44,17 +56,18 @@ TexturePtr TextureLoader::CreateTexture(const std::string& name,
                                        int height,
                                        TextureFormat format,
                                        bool generateMipmap) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    // 检查是否已缓存
-    auto it = m_textures.find(name);
-    if (it != m_textures.end()) {
-        Logger::GetInstance().Info("纹理 '" + name + "' 从缓存中获取 (引用计数: " + 
-                 std::to_string(it->second.use_count()) + ")");
-        return it->second;
+    // 第一次检查缓存
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_textures.find(name);
+        if (it != m_textures.end()) {
+            Logger::GetInstance().Info("纹理 '" + name + "' 从缓存中获取 (引用计数: " + 
+                     std::to_string(it->second.use_count()) + ")");
+            return it->second;
+        }
     }
     
-    // 创建新纹理
+    // 在锁外创建纹理（避免长时间持锁）
     Logger::GetInstance().Info("创建新纹理: " + name + " (" + 
                 std::to_string(width) + "x" + std::to_string(height) + ")");
     
@@ -64,9 +77,20 @@ TexturePtr TextureLoader::CreateTexture(const std::string& name,
         return nullptr;
     }
     
-    // 添加到缓存
-    m_textures[name] = texture;
-    Logger::GetInstance().Info("纹理 '" + name + "' 缓存成功");
+    // 第二次检查并添加到缓存
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // 再次检查是否已被其他线程添加
+        auto it = m_textures.find(name);
+        if (it != m_textures.end()) {
+            Logger::GetInstance().Info("纹理 '" + name + "' 已被其他线程添加");
+            return it->second;
+        }
+        
+        m_textures[name] = texture;
+        Logger::GetInstance().Info("纹理 '" + name + "' 缓存成功");
+    }
     
     return texture;
 }

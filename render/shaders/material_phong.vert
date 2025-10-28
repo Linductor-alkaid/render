@@ -9,6 +9,7 @@ layout(location = 3) in vec4 aColor;
 // 输出到片段着色器
 out vec3 FragPos;
 out vec3 Normal;
+out vec2 TexCoord;
 out vec4 VertexColor;
 
 // Uniforms
@@ -22,6 +23,9 @@ void main() {
     
     // 世界空间法线（需要法线矩阵，这里简化处理）
     Normal = mat3(transpose(inverse(uModel))) * aNormal;
+    
+    // 传递纹理坐标
+    TexCoord = aTexCoord;
     
     // 传递顶点颜色
     VertexColor = aColor;

@@ -1,16 +1,41 @@
 #pragma once
 
 #include "mesh.h"
+#include "material.h"
 #include "types.h"
 #include <memory>
+#include <vector>
 
 namespace Render {
+
+// 前向声明
+class Material;
+
+/**
+ * @brief 网格与材质数据结构
+ * 
+ * 用于从文件加载时返回网格和关联的材质
+ */
+struct MeshWithMaterial {
+    Ref<Mesh> mesh;           ///< 网格数据
+    Ref<Material> material;   ///< 材质数据（可能为 nullptr）
+    std::string name;         ///< 网格名称
+    
+    MeshWithMaterial() = default;
+    MeshWithMaterial(Ref<Mesh> m, Ref<Material> mat = nullptr, const std::string& n = "")
+        : mesh(m), material(mat), name(n) {}
+};
 
 /**
  * @brief 网格加载器
  * 
  * 提供创建基本几何形状的工具函数和外部模型文件加载功能
  * 支持的格式：OBJ, FBX, GLTF/GLB, Collada, Blender, PMX/PMD (MMD), 3DS, PLY, STL 等
+ * 
+ * 材质加载：
+ * - 使用 LoadFromFileWithMaterials() 可以同时加载网格和材质
+ * - 自动加载漫反射、镜面反射、法线等纹理贴图
+ * - 支持 Phong 和 PBR 材质参数
  */
 class MeshLoader {
 public:
@@ -59,6 +84,31 @@ public:
         const std::string& filepath,
         uint32_t meshIndex = 0,
         bool flipUVs = true
+    );
+    
+    /**
+     * @brief 从文件加载模型（包含网格和材质）
+     * @param filepath 模型文件路径
+     * @param basePath 纹理文件搜索基础路径（默认为模型文件所在目录）
+     * @param flipUVs 是否翻转 UV 坐标（默认 true）
+     * @param shader 材质使用的着色器（如果为 nullptr，材质将不包含着色器）
+     * @return 网格与材质列表
+     * 
+     * 此方法会：
+     * 1. 加载所有网格数据
+     * 2. 解析材质属性（颜色、光泽度等）
+     * 3. 加载纹理贴图（漫反射、镜面反射、法线等）
+     * 4. 创建 Material 对象并关联网格
+     * 
+     * 注意：
+     * - 必须在 OpenGL 上下文的线程中调用
+     * - 纹理路径相对于 basePath
+     */
+    static std::vector<MeshWithMaterial> LoadFromFileWithMaterials(
+        const std::string& filepath,
+        const std::string& basePath = "",
+        bool flipUVs = true,
+        Ref<Shader> shader = nullptr
     );
     
     // ========================================================================
