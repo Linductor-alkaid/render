@@ -9,11 +9,61 @@ namespace Render {
 /**
  * @brief 网格加载器
  * 
- * 提供创建基本几何形状的工具函数
- * 后续可扩展文件加载功能（如 OBJ, FBX 等）
+ * 提供创建基本几何形状的工具函数和外部模型文件加载功能
+ * 支持的格式：OBJ, FBX, GLTF/GLB, Collada, Blender, PMX/PMD (MMD), 3DS, PLY, STL 等
  */
 class MeshLoader {
 public:
+    // ========================================================================
+    // 文件加载功能
+    // ========================================================================
+    
+    /**
+     * @brief 从文件加载模型（可能包含多个网格）
+     * @param filepath 模型文件路径
+     * @param flipUVs 是否翻转 UV 坐标（默认 true，适用于 OpenGL）
+     * @return 网格列表（如果加载失败返回空列表）
+     * 
+     * 支持的格式：
+     * - .obj - Wavefront OBJ
+     * - .fbx - Autodesk FBX
+     * - .gltf, .glb - GL Transmission Format
+     * - .dae - Collada
+     * - .blend - Blender
+     * - .pmx, .pmd - MikuMikuDance (MMD)
+     * - .3ds - 3D Studio
+     * - .ply - Polygon File Format
+     * - .stl - Stereolithography
+     * 
+     * 注意：
+     * - 此方法必须在 OpenGL 上下文的线程中调用（因为会调用 Upload()）
+     * - 返回的网格已自动上传到 GPU
+     * - 模型会自动三角化
+     * - 法线会自动生成（如果文件中不包含）
+     */
+    static std::vector<Ref<Mesh>> LoadFromFile(
+        const std::string& filepath,
+        bool flipUVs = true
+    );
+    
+    /**
+     * @brief 从文件加载单个网格
+     * @param filepath 模型文件路径
+     * @param meshIndex 网格索引（默认 0，第一个网格）
+     * @param flipUVs 是否翻转 UV 坐标（默认 true）
+     * @return 网格对象（如果加载失败返回 nullptr）
+     * 
+     * 如果模型包含多个网格，只返回指定索引的网格
+     */
+    static Ref<Mesh> LoadMeshFromFile(
+        const std::string& filepath,
+        uint32_t meshIndex = 0,
+        bool flipUVs = true
+    );
+    
+    // ========================================================================
+    // 基本几何形状生成
+    // ========================================================================
     /**
      * @brief 创建平面（Plane）
      * @param width 宽度

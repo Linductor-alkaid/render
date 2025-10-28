@@ -6,16 +6,40 @@
 
 ## 概述
 
-`MeshLoader` 提供创建基本几何形状的工具函数，所有生成的网格都已自动上传到 GPU，可直接使用。
+`MeshLoader` 提供两大功能：
+1. **外部模型文件加载** - 支持 OBJ, FBX, GLTF/GLB, Collada, Blender, PMX/PMD (MMD), 3DS, PLY, STL 等格式
+2. **基本几何形状生成** - 创建立方体、球体、圆柱等基本几何形状
+
+所有生成/加载的网格都已自动上传到 GPU，可直接使用。
 
 **头文件**: `render/mesh_loader.h`  
-**命名空间**: `Render`
+**命名空间**: `Render`  
+**依赖**: Assimp 5.x（用于文件加载）
+
+### ⚠️ 当前实现状态
+
+**✅ 已实现**：
+- 几何数据加载（顶点位置、法线、UV 坐标、顶点颜色）
+- 多网格模型支持
+- 自动三角化和法线生成
+- 网格优化（顶点合并、缓存优化）
+
+**⏳ 部分实现**：
+- 顶点颜色（已提取，但着色器需要支持）
+
+**❌ 尚未实现**：
+- 材质信息提取（漫反射颜色、镜面反射、透明度等）
+- 纹理加载（diffuse、normal、specular 等贴图）
+- 骨骼和蒙皮权重
+- 动画数据
+
+**注意**：目前加载的模型将使用统一的着色器颜色渲染，不会显示原始材质和纹理。对于 PMX/MMD 模型，Toon 着色、Sphere Map 等特殊效果需要未来版本支持。
 
 ### 线程安全
 
 - ✅ **所有静态方法都是线程安全的**（因为返回的 `Mesh` 对象本身是线程安全的）
 - ⚠️ **注意**：方法内部会调用 `Upload()`（涉及 OpenGL 调用），必须在创建 OpenGL 上下文的线程中调用
-- 建议在主渲染线程调用 `MeshLoader` 的创建方法
+- 建议在主渲染线程调用 `MeshLoader` 的加载/创建方法
 - 如需在工作线程创建网格数据，请使用 `Mesh` 构造函数创建网格对象，然后在渲染线程调用 `Upload()`
 
 ---
@@ -25,6 +49,25 @@
 ```cpp
 class MeshLoader {
 public:
+    // ========================================================================
+    // 文件加载功能
+    // ========================================================================
+    
+    static std::vector<Ref<Mesh>> LoadFromFile(
+        const std::string& filepath,
+        bool flipUVs = true
+    );
+    
+    static Ref<Mesh> LoadMeshFromFile(
+        const std::string& filepath,
+        uint32_t meshIndex = 0,
+        bool flipUVs = true
+    );
+    
+    // ========================================================================
+    // 基本几何形状生成
+    // ========================================================================
+    
     static Ref<Mesh> CreatePlane(float width = 1.0f, float height = 1.0f,
                                  uint32_t widthSegments = 1, uint32_t heightSegments = 1,
                                  const Color& color = Color::White());
@@ -58,6 +101,115 @@ public:
     static Ref<Mesh> CreateCircle(float radius = 0.5f, uint32_t segments = 32,
                                   const Color& color = Color::White());
 };
+```
+
+---
+
+## 文件加载方法
+
+### LoadFromFile
+
+从文件加载 3D 模型（可能包含多个网格）。
+
+```cpp
+static std::vector<Ref<Mesh>> LoadFromFile(
+    const std::string& filepath,
+    bool flipUVs = true
+);
+```
+
+**参数**:
+- `filepath` - 模型文件路径（相对或绝对路径）
+- `flipUVs` - 是否翻转 UV 坐标（默认 `true`，适用于 OpenGL）
+
+**返回值**:
+- 网格列表（如果加载失败返回空列表）
+
+**支持的格式**:
+- `.obj` - Wavefront OBJ（最常用，推荐）
+- `.fbx` - Autodesk FBX
+- `.gltf`, `.glb` - GL Transmission Format（现代标准，推荐）
+- `.dae` - Collada
+- `.blend` - Blender 原生格式
+- `.pmx`, `.pmd` - MikuMikuDance (MMD) 模型格式
+- `.3ds` - 3D Studio
+- `.ply` - Polygon File Format
+- `.stl` - Stereolithography
+
+**特性**:
+- ✅ 自动三角化（所有多边形转换为三角形）
+- ✅ 自动生成法线（如果文件中不包含）
+- ✅ 自动优化（合并相同顶点、改善缓存局部性）
+- ✅ 自动上传到 GPU（返回的网格可直接渲染）
+- ✅ 支持多网格模型（返回网格列表）
+
+**当前限制**:
+- ⚠️ 仅提取几何数据（位置、法线、UV、顶点颜色）
+- ⚠️ 不加载材质和纹理（需要手动设置着色器颜色）
+- ⚠️ 不支持骨骼动画
+- ⚠️ PMX 模型的特殊效果（Toon、Sphere Map）暂不支持
+
+**使用场景**: 加载外部 3D 模型文件
+
+**示例**:
+```cpp
+// 加载模型文件
+auto meshes = MeshLoader::LoadFromFile("models/character.fbx");
+
+if (meshes.empty()) {
+    LOG_ERROR("Failed to load model");
+    return;
+}
+
+// 渲染所有网格
+shader->Bind();
+for (auto& mesh : meshes) {
+    // 设置 uniforms...
+    mesh->Draw();
+}
+```
+
+---
+
+### LoadMeshFromFile
+
+从文件加载单个网格。
+
+```cpp
+static Ref<Mesh> LoadMeshFromFile(
+    const std::string& filepath,
+    uint32_t meshIndex = 0,
+    bool flipUVs = true
+);
+```
+
+**参数**:
+- `filepath` - 模型文件路径
+- `meshIndex` - 网格索引（默认 0，第一个网格）
+- `flipUVs` - 是否翻转 UV 坐标（默认 `true`）
+
+**返回值**:
+- 网格对象（如果加载失败返回 `nullptr`）
+
+**特性**:
+- 如果模型包含多个网格，只返回指定索引的网格
+- 如果索引超出范围，会返回第一个网格并输出警告
+
+**使用场景**: 加载只包含单个网格的模型，或只需要模型中的特定网格
+
+**示例**:
+```cpp
+// 加载第一个网格
+auto mesh = MeshLoader::LoadMeshFromFile("models/cube.obj");
+
+if (!mesh) {
+    LOG_ERROR("Failed to load mesh");
+    return;
+}
+
+// 直接渲染
+shader->Bind();
+mesh->Draw();
 ```
 
 ---
@@ -582,11 +734,265 @@ RenderMesh(hat, TranslateMatrix(0, 2.2f, 0));
 
 ---
 
+## 文件加载使用示例
+
+### 基本加载
+
+```cpp
+#include <render/mesh_loader.h>
+
+// 加载模型文件（自动上传到 GPU）
+auto meshes = MeshLoader::LoadFromFile("models/my_model.obj");
+
+// 设置着色器和渲染状态
+shader->Use();
+
+// 设置统一的材质颜色（因为暂不支持材质提取）
+auto* uniformMgr = shader->GetUniformManager();
+uniformMgr->SetColor("uColor", Color(0.8f, 0.8f, 0.9f, 1.0f));
+uniformMgr->SetVector3("uLightDir", Vector3(-0.3f, -0.8f, -0.5f).normalized());
+
+// 渲染所有网格（多网格模型的各部件会叠加形成完整模型）
+for (auto& mesh : meshes) {
+    mesh->Draw();
+}
+
+shader->Unuse();
+```
+
+---
+
+### 加载多种格式
+
+```cpp
+// Wavefront OBJ（最简单，推荐）
+auto objMeshes = MeshLoader::LoadFromFile("models/cube.obj");
+
+// Autodesk FBX（常用于游戏资产）
+auto fbxMeshes = MeshLoader::LoadFromFile("models/character.fbx");
+
+// GLTF（现代标准）
+auto gltfMeshes = MeshLoader::LoadFromFile("models/scene.gltf");
+auto glbMeshes = MeshLoader::LoadFromFile("models/scene.glb");
+
+// MikuMikuDance PMX（日系角色模型）
+auto pmxMeshes = MeshLoader::LoadFromFile("models/miku.pmx");
+
+// Blender 原生格式
+auto blendMeshes = MeshLoader::LoadFromFile("models/asset.blend");
+
+// 注意：所有格式都只提取几何数据，材质和纹理需要手动设置
+```
+
+---
+
+### 完整示例：PMX 模型查看器
+
+这是一个完整的示例，展示如何加载和渲染 PMX 模型：
+
+```cpp
+#include <render/renderer.h>
+#include <render/logger.h>
+#include <render/mesh_loader.h>
+#include <render/shader_cache.h>
+#include <SDL3/SDL.h>
+#include <cmath>
+
+using namespace Render;
+
+int main() {
+    // 初始化渲染器
+    Renderer renderer;
+    renderer.Initialize("PMX 模型查看器", 800, 600);
+    
+    // 设置渲染状态
+    auto* state = renderer.GetRenderState();
+    state->SetDepthTest(true);
+    state->SetCullFace(CullFace::Back);
+    state->SetClearColor(Color(0.1f, 0.1f, 0.15f, 1.0f));
+    
+    // 加载着色器
+    auto& shaderCache = ShaderCache::GetInstance();
+    auto shader = shaderCache.LoadShader("mesh_test", 
+        "shaders/mesh_test.vert", "shaders/mesh_test.frag");
+    
+    // 加载 PMX 模型
+    auto meshes = MeshLoader::LoadFromFile("models/miku.pmx");
+    if (meshes.empty()) {
+        // 回退到立方体
+        meshes.push_back(MeshLoader::CreateCube());
+    }
+    
+    // PMX 模型缩放（根据实际大小调整）
+    float scale = 0.08f;
+    Matrix4 scaleMatrix = Matrix4::Identity();
+    scaleMatrix(0, 0) = scale;
+    scaleMatrix(1, 1) = scale;
+    scaleMatrix(2, 2) = scale;
+    
+    // 自动计算相机位置（基于模型包围盒）
+    Vector3 center, modelSize;
+    // ... 计算模型包围盒 ...
+    
+    // 主循环
+    bool running = true;
+    float rotation = 0.0f;
+    
+    while (running) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT || 
+                (event.type == SDL_EVENT_KEY_DOWN && event.key.keysym.sym == SDLK_ESCAPE)) {
+                running = false;
+            }
+        }
+        
+        renderer.BeginFrame();
+        renderer.Clear();
+        
+        // 更新旋转
+        rotation += 0.01f;
+        Matrix4 rotateMatrix = Matrix4::Identity()
+            .rotate(Vector3(0, 1, 0), rotation);
+        
+        // 计算 MVP 矩阵
+        Matrix4 mvp = /* ... 你的 MVP 计算 ... */;
+        
+        // 渲染
+        shader->Use();
+        auto* uniformMgr = shader->GetUniformManager();
+        uniformMgr->SetMatrix4("uMVP", mvp);
+        uniformMgr->SetColor("uColor", Color::White());
+        
+        for (auto& mesh : meshes) {
+            mesh->Draw();
+        }
+        
+        shader->Unuse();
+        renderer.EndFrame();
+    }
+    
+    return 0;
+}
+```
+
+更完整的实现请参考 `examples/11_model_loader_test.cpp`。
+
+---
+
+### 错误处理
+
+```cpp
+auto meshes = MeshLoader::LoadFromFile("models/model.obj");
+
+if (meshes.empty()) {
+    Logger::GetInstance().Error("Failed to load model");
+    // 使用默认网格
+    auto defaultMesh = MeshLoader::CreateCube();
+    meshes.push_back(defaultMesh);
+}
+
+// 安全渲染
+for (auto& mesh : meshes) {
+    if (mesh && mesh->IsUploaded()) {
+        mesh->Draw();
+    }
+}
+```
+
+---
+
+### 加载并检查网格信息
+
+```cpp
+auto meshes = MeshLoader::LoadFromFile("models/complex_model.fbx");
+
+for (size_t i = 0; i < meshes.size(); i++) {
+    auto& mesh = meshes[i];
+    
+    LOG_INFO("Mesh " + std::to_string(i));
+    LOG_INFO("  Vertices: " + std::to_string(mesh->GetVertexCount()));
+    LOG_INFO("  Triangles: " + std::to_string(mesh->GetTriangleCount()));
+    
+    // 计算包围盒
+    AABB bounds = mesh->CalculateBounds();
+    // ... 用于剔除等
+}
+```
+
+---
+
+### 组合文件加载和几何生成
+
+```cpp
+// 尝试加载外部模型
+auto meshes = MeshLoader::LoadFromFile("models/character.obj");
+
+// 如果加载失败，使用程序生成的网格
+if (meshes.empty()) {
+    LOG_WARNING("Using fallback geometry");
+    meshes.push_back(MeshLoader::CreateCapsule(0.5f, 1.8f));
+}
+
+// 添加地面
+auto ground = MeshLoader::CreatePlane(50.0f, 50.0f, 10, 10);
+
+// 渲染场景
+for (auto& mesh : meshes) {
+    mesh->Draw();
+}
+ground->Draw();
+```
+
+---
+
+## PMX/MMD 模型特殊说明
+
+**支持的 MMD 格式**：
+- `.pmx` - PMX 2.0/2.1（推荐）
+- `.pmd` - PMD（旧版）
+- `.vmd` - 动作数据（暂不支持）
+
+**当前 PMX 加载状态**：
+- ✅ 几何数据（顶点、法线、UV）
+- ✅ 多网格部件（头发、身体、衣服等）
+- ❌ 材质和纹理（需要手动设置颜色）
+- ❌ Toon 着色（卡通渲染效果）
+- ❌ Sphere Map（环境映射）
+- ❌ 骨骼和变形器
+- ❌ 物理模拟
+
+**渲染 PMX 的建议**：
+```cpp
+// 加载 PMX 模型
+auto meshes = MeshLoader::LoadFromFile("models/miku.pmx");
+
+// PMX 模型通常较大，需要缩放
+float scale = 0.08f;  // 根据实际情况调整
+
+// 渲染所有部件
+shader->Use();
+for (auto& mesh : meshes) {
+    // 所有部件使用相同的变换矩阵
+    uniformMgr->SetMatrix4("uMVP", mvpMatrix);
+    uniformMgr->SetColor("uColor", Color::White());
+    mesh->Draw();
+}
+```
+
+---
+
 ## 扩展功能
 
-未来版本计划支持：
+**已完成**：
+- [x] 从文件加载网格几何（OBJ, FBX, GLTF, PMX/PMD 等）✅
 
-- [ ] 从文件加载网格（OBJ, FBX, GLTF）
+**计划中**：
+- [ ] 材质信息提取（纹理路径、颜色、反射属性）
+- [ ] 纹理自动加载和绑定
+- [ ] PMX Toon 着色支持
+- [ ] 骨骼动画支持
+- [ ] 变形器（Morph）支持
 - [ ] 更复杂的几何形状（多面体、齿轮等）
 - [ ] 程序化地形生成
 - [ ] 网格合并和优化工具
@@ -604,7 +1010,20 @@ RenderMesh(hat, TranslateMatrix(0, 2.2f, 0));
 ## 示例程序
 
 完整示例请参考：
-- [06_mesh_test.cpp](../../examples/06_mesh_test.cpp) - 网格系统测试
+- [06_mesh_test.cpp](../../examples/06_mesh_test.cpp) - 基本几何形状生成测试
+- [11_model_loader_test.cpp](../../examples/11_model_loader_test.cpp) - 外部模型文件加载测试
+
+---
+
+## 获取测试模型
+
+您可以从以下来源获取免费的 3D 模型用于测试：
+
+1. **Blender** - 自带简单模型（立方体、球体等），导出为 OBJ/FBX/GLTF
+2. **Sketchfab** - https://sketchfab.com/ （大量免费模型）
+3. **Free3D** - https://free3d.com/
+4. **TurboSquid** - https://www.turbosquid.com/ （有免费分类）
+5. **glTF Sample Models** - https://github.com/KhronosGroup/glTF-Sample-Models （官方示例）
 
 ---
 

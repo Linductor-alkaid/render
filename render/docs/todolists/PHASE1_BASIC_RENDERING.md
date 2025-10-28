@@ -101,7 +101,7 @@
 - [x] MeshLoader
   - [x] 基础网格创建接口
   - [x] 几何形状生成（立方体、球体、圆柱、圆锥、圆环、胶囊、平面、四边形、三角形、圆形）
-  - [ ] 文件加载（后续扩展）
+  - [x] 文件加载（OBJ, FBX, GLTF, Collada, Blender, 3DS, PLY, STL）✅ 已完成
 
 ### 材质管理
 - [ ] Material 类
@@ -331,6 +331,7 @@
 - [x] OpenGL 状态管理测试 (04_state_management_test) - 展示状态缓存和三角形渲染
 - [x] 纹理加载和渲染测试 (05_texture_test) - 纹理系统和 TextureLoader
 - [x] 网格管理系统测试 (06_mesh_test) - 10种几何形状生成和渲染（立方体、球体、圆柱、圆锥等）
+- [x] 模型文件加载测试 (11_model_loader_test) - 外部模型加载（OBJ/FBX/GLTF等）✅ 已完成
 - [ ] 光照测试
 
 ### 综合示例
@@ -402,6 +403,12 @@
 - [x] 向量运算
 - [x] 四元数运算
 - [x] 线性代数功能
+
+### ✅ Assimp
+- [x] 外部模型文件加载（OBJ, FBX, GLTF, Collada, Blender, 3DS, PLY, STL）
+- [x] 自动三角化和法线生成
+- [x] 网格优化和后处理
+- [x] 多网格模型支持
 
 ---
 

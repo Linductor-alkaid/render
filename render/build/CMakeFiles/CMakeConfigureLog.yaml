@@ -3271,3 +3271,573 @@ events:
         - "C:/Program Files/CMake"
         - "C:/Program Files/RenderEngine"
 ...
+
+---
+events:
+  -
+    kind: "find-v1"
+    backtrace:
+      - "third_party/assimp/CMakeLists.txt:88 (find_program)"
+    mode: "program"
+    variable: "CCACHE_PATH"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "ccache"
+    candidate_directories:
+      - "D:/python/Scripts/"
+      - "D:/python/"
+      - "C:/Windows/System32/"
+      - "C:/Program Files/Git/cmd/"
+      - "C:/Program Files/Go/bin/"
+      - "C:/Program Files/Neovim/bin/"
+      - "C:/Program Files (x86)/NetSarang/Xshell 7/"
+      - "C:/Program Files/dotnet/"
+      - "C:/Program Files/NVIDIA Corporation/NVIDIA NvDLISR/"
+      - "C:/Program Files (x86)/NVIDIA Corporation/PhysX/Common/"
+      - "C:/Program Files/CMake/bin/"
+      - "E:/MATLAB/R2023a/bin/"
+      - "C:/Windows/"
+      - "C:/Windows/System32/wbem/"
+      - "C:/Windows/System32/WindowsPowerShell/v1.0/"
+      - "C:/Windows/System32/OpenSSH/"
+      - "C:/Program Files/OpenSSL-Win64/bin/"
+      - "G:/mingw64/w64devkit/bin/"
+      - "G:/Sunshine/"
+      - "G:/Sunshine/tools/"
+      - "F:/Microsoft VS Code/bin/"
+      - "C:/Users/ALKAi/.dotnet/tools/"
+      - "C:/Users/ALKAi/AppData/Local/Programs/MiKTeX/miktex/bin/x64/"
+      - "C:/Users/ALKAi/AppData/Local/Microsoft/WindowsApps/"
+      - "C:/Users/ALKAi/AppData/Local/Project Graph/"
+      - "G:/cursor/resources/app/bin/"
+      - "G:/myproject/vcpkg/"
+      - "C:/Program Files/NSIS/"
+      - "C:/Program Files/bin/"
+      - "C:/Program Files/sbin/"
+      - "C:/Program Files/"
+      - "C:/Program Files (x86)/bin/"
+      - "C:/Program Files (x86)/sbin/"
+      - "C:/Program Files (x86)/"
+      - "C:/Program Files/CMake/bin/"
+      - "C:/Program Files/CMake/sbin/"
+      - "C:/Program Files/CMake/"
+      - "C:/Program Files/RenderEngine/bin/"
+      - "C:/Program Files/RenderEngine/sbin/"
+      - "C:/Program Files/RenderEngine/"
+    searched_directories:
+      - "D:/python/Scripts/ccache.com"
+      - "D:/python/Scripts/ccache.exe"
+      - "D:/python/Scripts/ccache"
+      - "D:/python/ccache.com"
+      - "D:/python/ccache.exe"
+      - "D:/python/ccache"
+      - "C:/Windows/System32/ccache.com"
+      - "C:/Windows/System32/ccache.exe"
+      - "C:/Windows/System32/ccache"
+      - "C:/Program Files/Git/cmd/ccache.com"
+      - "C:/Program Files/Git/cmd/ccache.exe"
+      - "C:/Program Files/Git/cmd/ccache"
+      - "C:/Program Files/Go/bin/ccache.com"
+      - "C:/Program Files/Go/bin/ccache.exe"
+      - "C:/Program Files/Go/bin/ccache"
+      - "C:/Program Files/Neovim/bin/ccache.com"
+      - "C:/Program Files/Neovim/bin/ccache.exe"
+      - "C:/Program Files/Neovim/bin/ccache"
+      - "C:/Program Files (x86)/NetSarang/Xshell 7/ccache.com"
+      - "C:/Program Files (x86)/NetSarang/Xshell 7/ccache.exe"
+      - "C:/Program Files (x86)/NetSarang/Xshell 7/ccache"
+      - "C:/Program Files/dotnet/ccache.com"
+      - "C:/Program Files/dotnet/ccache.exe"
+      - "C:/Program Files/dotnet/ccache"
+      - "C:/Program Files/NVIDIA Corporation/NVIDIA NvDLISR/ccache.com"
+      - "C:/Program Files/NVIDIA Corporation/NVIDIA NvDLISR/ccache.exe"
+      - "C:/Program Files/NVIDIA Corporation/NVIDIA NvDLISR/ccache"
+      - "C:/Program Files (x86)/NVIDIA Corporation/PhysX/Common/ccache.com"
+      - "C:/Program Files (x86)/NVIDIA Corporation/PhysX/Common/ccache.exe"
+      - "C:/Program Files (x86)/NVIDIA Corporation/PhysX/Common/ccache"
+      - "C:/Program Files/CMake/bin/ccache.com"
+      - "C:/Program Files/CMake/bin/ccache.exe"
+      - "C:/Program Files/CMake/bin/ccache"
+      - "E:/MATLAB/R2023a/bin/ccache.com"
+      - "E:/MATLAB/R2023a/bin/ccache.exe"
+      - "E:/MATLAB/R2023a/bin/ccache"
+      - "C:/Windows/ccache.com"
+      - "C:/Windows/ccache.exe"
+      - "C:/Windows/ccache"
+      - "C:/Windows/System32/wbem/ccache.com"
+      - "C:/Windows/System32/wbem/ccache.exe"
+      - "C:/Windows/System32/wbem/ccache"
+      - "C:/Windows/System32/WindowsPowerShell/v1.0/ccache.com"
+      - "C:/Windows/System32/WindowsPowerShell/v1.0/ccache.exe"
+      - "C:/Windows/System32/WindowsPowerShell/v1.0/ccache"
+      - "C:/Windows/System32/OpenSSH/ccache.com"
+      - "C:/Windows/System32/OpenSSH/ccache.exe"
+      - "C:/Windows/System32/OpenSSH/ccache"
+      - "C:/Program Files/OpenSSL-Win64/bin/ccache.com"
+      - "C:/Program Files/OpenSSL-Win64/bin/ccache.exe"
+      - "C:/Program Files/OpenSSL-Win64/bin/ccache"
+      - "G:/mingw64/w64devkit/bin/ccache.com"
+      - "G:/mingw64/w64devkit/bin/ccache.exe"
+      - "G:/mingw64/w64devkit/bin/ccache"
+      - "G:/Sunshine/ccache.com"
+      - "G:/Sunshine/ccache.exe"
+      - "G:/Sunshine/ccache"
+      - "G:/Sunshine/tools/ccache.com"
+      - "G:/Sunshine/tools/ccache.exe"
+      - "G:/Sunshine/tools/ccache"
+      - "F:/Microsoft VS Code/bin/ccache.com"
+      - "F:/Microsoft VS Code/bin/ccache.exe"
+      - "F:/Microsoft VS Code/bin/ccache"
+      - "C:/Users/ALKAi/.dotnet/tools/ccache.com"
+      - "C:/Users/ALKAi/.dotnet/tools/ccache.exe"
+      - "C:/Users/ALKAi/.dotnet/tools/ccache"
+      - "C:/Users/ALKAi/AppData/Local/Programs/MiKTeX/miktex/bin/x64/ccache.com"
+      - "C:/Users/ALKAi/AppData/Local/Programs/MiKTeX/miktex/bin/x64/ccache.exe"
+      - "C:/Users/ALKAi/AppData/Local/Programs/MiKTeX/miktex/bin/x64/ccache"
+      - "C:/Users/ALKAi/AppData/Local/Microsoft/WindowsApps/ccache.com"
+      - "C:/Users/ALKAi/AppData/Local/Microsoft/WindowsApps/ccache.exe"
+      - "C:/Users/ALKAi/AppData/Local/Microsoft/WindowsApps/ccache"
+      - "C:/Users/ALKAi/AppData/Local/Project Graph/ccache.com"
+      - "C:/Users/ALKAi/AppData/Local/Project Graph/ccache.exe"
+      - "C:/Users/ALKAi/AppData/Local/Project Graph/ccache"
+      - "G:/cursor/resources/app/bin/ccache.com"
+      - "G:/cursor/resources/app/bin/ccache.exe"
+      - "G:/cursor/resources/app/bin/ccache"
+      - "G:/myproject/vcpkg/ccache.com"
+      - "G:/myproject/vcpkg/ccache.exe"
+      - "G:/myproject/vcpkg/ccache"
+      - "C:/Program Files/NSIS/ccache.com"
+      - "C:/Program Files/NSIS/ccache.exe"
+      - "C:/Program Files/NSIS/ccache"
+      - "C:/Program Files/bin/ccache.com"
+      - "C:/Program Files/bin/ccache.exe"
+      - "C:/Program Files/bin/ccache"
+      - "C:/Program Files/sbin/ccache.com"
+      - "C:/Program Files/sbin/ccache.exe"
+      - "C:/Program Files/sbin/ccache"
+      - "C:/Program Files/ccache.com"
+      - "C:/Program Files/ccache.exe"
+      - "C:/Program Files/ccache"
+      - "C:/Program Files (x86)/bin/ccache.com"
+      - "C:/Program Files (x86)/bin/ccache.exe"
+      - "C:/Program Files (x86)/bin/ccache"
+      - "C:/Program Files (x86)/sbin/ccache.com"
+      - "C:/Program Files (x86)/sbin/ccache.exe"
+      - "C:/Program Files (x86)/sbin/ccache"
+      - "C:/Program Files (x86)/ccache.com"
+      - "C:/Program Files (x86)/ccache.exe"
+      - "C:/Program Files (x86)/ccache"
+      - "C:/Program Files/CMake/bin/ccache.com"
+      - "C:/Program Files/CMake/bin/ccache.exe"
+      - "C:/Program Files/CMake/bin/ccache"
+      - "C:/Program Files/CMake/sbin/ccache.com"
+      - "C:/Program Files/CMake/sbin/ccache.exe"
+      - "C:/Program Files/CMake/sbin/ccache"
+      - "C:/Program Files/CMake/ccache.com"
+      - "C:/Program Files/CMake/ccache.exe"
+      - "C:/Program Files/CMake/ccache"
+      - "C:/Program Files/RenderEngine/bin/ccache.com"
+      - "C:/Program Files/RenderEngine/bin/ccache.exe"
+      - "C:/Program Files/RenderEngine/bin/ccache"
+      - "C:/Program Files/RenderEngine/sbin/ccache.com"
+      - "C:/Program Files/RenderEngine/sbin/ccache.exe"
+      - "C:/Program Files/RenderEngine/sbin/ccache"
+      - "C:/Program Files/RenderEngine/ccache.com"
+      - "C:/Program Files/RenderEngine/ccache.exe"
+      - "C:/Program Files/RenderEngine/ccache"
+    found: false
+    search_context:
+      ENV{PATH}:
+        - "D:\\python\\Scripts\\"
+        - "D:\\python\\"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\Program Files\\Neovim\\bin"
+        - "C:\\Program Files (x86)\\NetSarang\\Xshell 7\\"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\NVIDIA Corporation\\NVIDIA NvDLISR"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\CMake\\bin"
+        - "E:\\MATLAB\\R2023a\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\OpenSSL-Win64\\bin"
+        - "G:\\mingw64\\w64devkit\\bin"
+        - "G:\\Sunshine"
+        - "G:\\Sunshine\\tools"
+        - "F:\\Microsoft VS Code\\bin"
+        - "C:\\Users\\ALKAi\\.dotnet\\tools"
+        - "C:\\Users\\ALKAi\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\"
+        - "C:\\Users\\ALKAi\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\ALKAi\\AppData\\Local\\Project Graph"
+        - "G:\\cursor\\resources\\app\\bin"
+        - "G:\\myproject\\vcpkg"
+        - "C:\\Program Files\\NSIS"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files/RenderEngine"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "C:/Program Files"
+        - "C:/Program Files (x86)"
+        - "C:/Program Files/CMake"
+        - "C:/Program Files/RenderEngine"
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CheckIncludeFile.cmake:165 (try_compile)"
+      - "third_party/assimp/contrib/zlib/CMakeLists.txt:35 (check_include_file)"
+    checks:
+      - "Looking for sys/types.h"
+    directories:
+      source: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-3y85ay"
+      binary: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-3y85ay"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "G:/myproject/render/third_party/assimp/cmake-modules"
+      CMAKE_POSITION_INDEPENDENT_CODE: "ON"
+    buildResult:
+      variable: "HAVE_SYS_TYPES_H"
+      cached: true
+      stdout: |
+        Change Dir: 'G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-3y85ay'
+        
+        Run Build Command(s): "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_8f693.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.18+a338add32 for .NET Framework
+        Build started 2025/10/28 20:56:45.
+        
+        Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3y85ay\\cmTC_8f693.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_8f693.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3y85ay\\Debug\\".
+          Creating directory "cmTC_8f693.dir\\Debug\\cmTC_8f693.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_8f693.dir\\Debug\\cmTC_8f693.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_8f693.dir\\Debug\\cmTC_8f693.tlog\\unsuccessfulbuild".
+        ClCompile:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_8f693.dir\\Debug\\\\" /Fd"cmTC_8f693.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3y85ay\\CheckIncludeFile.c"
+          鐢ㄤ簬 x64 鐨?Microsoft (R) C/C++ 浼樺寲缂栬瘧鍣?19.44.35214 鐗?
+          鐗堟潈鎵€鏈?C) Microsoft Corporation銆備繚鐣欐墍鏈夋潈鍒┿€?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_8f693.dir\\Debug\\\\" /Fd"cmTC_8f693.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3y85ay\\CheckIncludeFile.c"
+          CheckIncludeFile.c
+        Link:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /OUT:"G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3y85ay\\Debug\\cmTC_8f693.exe" /INCREMENTAL /ILK:"cmTC_8f693.dir\\Debug\\cmTC_8f693.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-3y85ay/Debug/cmTC_8f693.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-3y85ay/Debug/cmTC_8f693.lib" /MACHINE:X64  /machine:x64 cmTC_8f693.dir\\Debug\\CheckIncludeFile.obj
+          cmTC_8f693.vcxproj -> G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3y85ay\\Debug\\cmTC_8f693.exe
+        FinalizeBuildStatus:
+          Deleting file "cmTC_8f693.dir\\Debug\\cmTC_8f693.tlog\\unsuccessfulbuild".
+          Touching "cmTC_8f693.dir\\Debug\\cmTC_8f693.tlog\\cmTC_8f693.lastbuildstate".
+        Done Building Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3y85ay\\cmTC_8f693.vcxproj" (default targets).
+        
+        Build succeeded.
+            0 Warning(s)
+            0 Error(s)
+        
+        Time Elapsed 00:00:00.81
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CheckIncludeFile.cmake:165 (try_compile)"
+      - "third_party/assimp/contrib/zlib/CMakeLists.txt:36 (check_include_file)"
+    checks:
+      - "Looking for stdint.h"
+    directories:
+      source: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-xoxcf7"
+      binary: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-xoxcf7"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "G:/myproject/render/third_party/assimp/cmake-modules"
+      CMAKE_POSITION_INDEPENDENT_CODE: "ON"
+    buildResult:
+      variable: "HAVE_STDINT_H"
+      cached: true
+      stdout: |
+        Change Dir: 'G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-xoxcf7'
+        
+        Run Build Command(s): "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_7948b.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.18+a338add32 for .NET Framework
+        Build started 2025/10/28 20:56:46.
+        
+        Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-xoxcf7\\cmTC_7948b.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_7948b.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-xoxcf7\\Debug\\".
+          Creating directory "cmTC_7948b.dir\\Debug\\cmTC_7948b.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_7948b.dir\\Debug\\cmTC_7948b.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_7948b.dir\\Debug\\cmTC_7948b.tlog\\unsuccessfulbuild".
+        ClCompile:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_7948b.dir\\Debug\\\\" /Fd"cmTC_7948b.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-xoxcf7\\CheckIncludeFile.c"
+          鐢ㄤ簬 x64 鐨?Microsoft (R) C/C++ 浼樺寲缂栬瘧鍣?19.44.35214 鐗?
+          鐗堟潈鎵€鏈?C) Microsoft Corporation銆備繚鐣欐墍鏈夋潈鍒┿€?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_7948b.dir\\Debug\\\\" /Fd"cmTC_7948b.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-xoxcf7\\CheckIncludeFile.c"
+          CheckIncludeFile.c
+        Link:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /OUT:"G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-xoxcf7\\Debug\\cmTC_7948b.exe" /INCREMENTAL /ILK:"cmTC_7948b.dir\\Debug\\cmTC_7948b.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-xoxcf7/Debug/cmTC_7948b.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-xoxcf7/Debug/cmTC_7948b.lib" /MACHINE:X64  /machine:x64 cmTC_7948b.dir\\Debug\\CheckIncludeFile.obj
+          cmTC_7948b.vcxproj -> G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-xoxcf7\\Debug\\cmTC_7948b.exe
+        FinalizeBuildStatus:
+          Deleting file "cmTC_7948b.dir\\Debug\\cmTC_7948b.tlog\\unsuccessfulbuild".
+          Touching "cmTC_7948b.dir\\Debug\\cmTC_7948b.tlog\\cmTC_7948b.lastbuildstate".
+        Done Building Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-xoxcf7\\cmTC_7948b.vcxproj" (default targets).
+        
+        Build succeeded.
+            0 Warning(s)
+            0 Error(s)
+        
+        Time Elapsed 00:00:00.50
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CheckIncludeFile.cmake:165 (try_compile)"
+      - "third_party/assimp/contrib/zlib/CMakeLists.txt:37 (check_include_file)"
+    checks:
+      - "Looking for stddef.h"
+    directories:
+      source: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-h6bh6h"
+      binary: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-h6bh6h"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "G:/myproject/render/third_party/assimp/cmake-modules"
+      CMAKE_POSITION_INDEPENDENT_CODE: "ON"
+    buildResult:
+      variable: "HAVE_STDDEF_H"
+      cached: true
+      stdout: |
+        Change Dir: 'G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-h6bh6h'
+        
+        Run Build Command(s): "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_e1747.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.18+a338add32 for .NET Framework
+        Build started 2025/10/28 20:56:46.
+        
+        Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-h6bh6h\\cmTC_e1747.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_e1747.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-h6bh6h\\Debug\\".
+          Creating directory "cmTC_e1747.dir\\Debug\\cmTC_e1747.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_e1747.dir\\Debug\\cmTC_e1747.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_e1747.dir\\Debug\\cmTC_e1747.tlog\\unsuccessfulbuild".
+        ClCompile:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_e1747.dir\\Debug\\\\" /Fd"cmTC_e1747.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-h6bh6h\\CheckIncludeFile.c"
+          鐢ㄤ簬 x64 鐨?Microsoft (R) C/C++ 浼樺寲缂栬瘧鍣?19.44.35214 鐗?
+          鐗堟潈鎵€鏈?C) Microsoft Corporation銆備繚鐣欐墍鏈夋潈鍒┿€?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_e1747.dir\\Debug\\\\" /Fd"cmTC_e1747.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-h6bh6h\\CheckIncludeFile.c"
+          CheckIncludeFile.c
+        Link:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /OUT:"G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-h6bh6h\\Debug\\cmTC_e1747.exe" /INCREMENTAL /ILK:"cmTC_e1747.dir\\Debug\\cmTC_e1747.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-h6bh6h/Debug/cmTC_e1747.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-h6bh6h/Debug/cmTC_e1747.lib" /MACHINE:X64  /machine:x64 cmTC_e1747.dir\\Debug\\CheckIncludeFile.obj
+          cmTC_e1747.vcxproj -> G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-h6bh6h\\Debug\\cmTC_e1747.exe
+        FinalizeBuildStatus:
+          Deleting file "cmTC_e1747.dir\\Debug\\cmTC_e1747.tlog\\unsuccessfulbuild".
+          Touching "cmTC_e1747.dir\\Debug\\cmTC_e1747.tlog\\cmTC_e1747.lastbuildstate".
+        Done Building Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-h6bh6h\\cmTC_e1747.vcxproj" (default targets).
+        
+        Build succeeded.
+            0 Warning(s)
+            0 Error(s)
+        
+        Time Elapsed 00:00:00.50
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CheckTypeSize.cmake:237 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CheckTypeSize.cmake:364 (__check_type_size_impl)"
+      - "third_party/assimp/contrib/zlib/CMakeLists.txt:55 (check_type_size)"
+    checks:
+      - "Check size of off64_t"
+    directories:
+      source: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-j7t9k1"
+      binary: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-j7t9k1"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "G:/myproject/render/third_party/assimp/cmake-modules"
+      CMAKE_POSITION_INDEPENDENT_CODE: "ON"
+    buildResult:
+      variable: "HAVE_OFF64_T"
+      cached: true
+      stdout: |
+        Change Dir: 'G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-j7t9k1'
+        
+        Run Build Command(s): "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_8ddb2.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.18+a338add32 for .NET Framework
+        Build started 2025/10/28 20:56:47.
+        
+        Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_8ddb2.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\Debug\\".
+          Creating directory "cmTC_8ddb2.dir\\Debug\\cmTC_8ddb2.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_8ddb2.dir\\Debug\\cmTC_8ddb2.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_8ddb2.dir\\Debug\\cmTC_8ddb2.tlog\\unsuccessfulbuild".
+        ClCompile:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D _LARGEFILE64_SOURCE=1 /D HAVE_SYS_TYPES_H /D HAVE_STDINT_H /D HAVE_STDDEF_H /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_8ddb2.dir\\Debug\\\\" /Fd"cmTC_8ddb2.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c"
+          鐢ㄤ簬 x64 鐨?Microsoft (R) C/C++ 浼樺寲缂栬瘧鍣?19.44.35214 鐗?
+          鐗堟潈鎵€鏈?C) Microsoft Corporation銆備繚鐣欐墍鏈夋潈鍒┿€?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D _LARGEFILE64_SOURCE=1 /D HAVE_SYS_TYPES_H /D HAVE_STDINT_H /D HAVE_STDDEF_H /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_8ddb2.dir\\Debug\\\\" /Fd"cmTC_8ddb2.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c"
+          OFF64_T.c
+        G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(29,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+        G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(30,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+        G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(31,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+        G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(32,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+        G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(33,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+        Done Building Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj" (default targets) -- FAILED.
+        
+        Build FAILED.
+        
+        "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj" (default target) (1) ->
+        (ClCompile target) -> 
+          G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(29,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+          G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(30,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+          G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(31,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+          G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(32,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+          G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\OFF64_T.c(33,12): error C2065: 鈥渙ff64_t鈥? 鏈０鏄庣殑鏍囪瘑绗?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-j7t9k1\\cmTC_8ddb2.vcxproj]
+        
+            0 Warning(s)
+            5 Error(s)
+        
+        Time Elapsed 00:00:00.30
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CheckFunctionExists.cmake:167 (try_compile)"
+      - "third_party/assimp/contrib/zlib/CMakeLists.txt:64 (check_function_exists)"
+    checks:
+      - "Looking for fseeko"
+    directories:
+      source: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-33sftv"
+      binary: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-33sftv"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "G:/myproject/render/third_party/assimp/cmake-modules"
+      CMAKE_POSITION_INDEPENDENT_CODE: "ON"
+    buildResult:
+      variable: "HAVE_FSEEKO"
+      cached: true
+      stdout: |
+        Change Dir: 'G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-33sftv'
+        
+        Run Build Command(s): "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_44e25.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.18+a338add32 for .NET Framework
+        Build started 2025/10/28 20:56:48.
+        
+        Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\cmTC_44e25.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_44e25.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\Debug\\".
+          Creating directory "cmTC_44e25.dir\\Debug\\cmTC_44e25.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_44e25.dir\\Debug\\cmTC_44e25.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_44e25.dir\\Debug\\cmTC_44e25.tlog\\unsuccessfulbuild".
+        ClCompile:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=fseeko /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_44e25.dir\\Debug\\\\" /Fd"cmTC_44e25.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\CheckFunctionExists.c"
+          鐢ㄤ簬 x64 鐨?Microsoft (R) C/C++ 浼樺寲缂栬瘧鍣?19.44.35214 鐗?
+          鐗堟潈鎵€鏈?C) Microsoft Corporation銆備繚鐣欐墍鏈夋潈鍒┿€?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=fseeko /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_44e25.dir\\Debug\\\\" /Fd"cmTC_44e25.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\CheckFunctionExists.c"
+          CheckFunctionExists.c
+        Link:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /OUT:"G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\Debug\\cmTC_44e25.exe" /INCREMENTAL /ILK:"cmTC_44e25.dir\\Debug\\cmTC_44e25.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-33sftv/Debug/cmTC_44e25.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-33sftv/Debug/cmTC_44e25.lib" /MACHINE:X64  /machine:x64 cmTC_44e25.dir\\Debug\\CheckFunctionExists.obj
+        CheckFunctionExists.obj : error LNK2019: 鏃犳硶瑙ｆ瀽鐨勫閮ㄧ鍙?fseeko锛屽嚱鏁?main 涓紩鐢ㄤ簡璇ョ鍙?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\cmTC_44e25.vcxproj]
+        G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\Debug\\cmTC_44e25.exe : fatal error LNK1120: 1 涓棤娉曡В鏋愮殑澶栭儴鍛戒护 [G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\cmTC_44e25.vcxproj]
+        Done Building Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\cmTC_44e25.vcxproj" (default targets) -- FAILED.
+        
+        Build FAILED.
+        
+        "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\cmTC_44e25.vcxproj" (default target) (1) ->
+        (Link target) -> 
+          CheckFunctionExists.obj : error LNK2019: 鏃犳硶瑙ｆ瀽鐨勫閮ㄧ鍙?fseeko锛屽嚱鏁?main 涓紩鐢ㄤ簡璇ョ鍙?[G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\cmTC_44e25.vcxproj]
+          G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\Debug\\cmTC_44e25.exe : fatal error LNK1120: 1 涓棤娉曡В鏋愮殑澶栭儴鍛戒护 [G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-33sftv\\cmTC_44e25.vcxproj]
+        
+            0 Warning(s)
+            2 Error(s)
+        
+        Time Elapsed 00:00:00.46
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CheckIncludeFile.cmake:165 (try_compile)"
+      - "third_party/assimp/contrib/zlib/CMakeLists.txt:72 (check_include_file)"
+    checks:
+      - "Looking for unistd.h"
+    directories:
+      source: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-jahnec"
+      binary: "G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-jahnec"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "G:/myproject/render/third_party/assimp/cmake-modules"
+      CMAKE_POSITION_INDEPENDENT_CODE: "ON"
+    buildResult:
+      variable: "Z_HAVE_UNISTD_H"
+      cached: true
+      stdout: |
+        Change Dir: 'G:/myproject/render/build/CMakeFiles/CMakeScratch/TryCompile-jahnec'
+        
+        Run Build Command(s): "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_00e99.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.18+a338add32 for .NET Framework
+        Build started 2025/10/28 20:56:48.
+        
+        Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\cmTC_00e99.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_00e99.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\Debug\\".
+          Creating directory "cmTC_00e99.dir\\Debug\\cmTC_00e99.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_00e99.dir\\Debug\\cmTC_00e99.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_00e99.dir\\Debug\\cmTC_00e99.tlog\\unsuccessfulbuild".
+        ClCompile:
+          C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_00e99.dir\\Debug\\\\" /Fd"cmTC_00e99.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\CheckIncludeFile.c"
+          鐢ㄤ簬 x64 鐨?Microsoft (R) C/C++ 浼樺寲缂栬瘧鍣?19.44.35214 鐗?
+          鐗堟潈鎵€鏈?C) Microsoft Corporation銆備繚鐣欐墍鏈夋潈鍒┿€?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_00e99.dir\\Debug\\\\" /Fd"cmTC_00e99.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\CheckIncludeFile.c"
+          CheckIncludeFile.c
+        G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\CheckIncludeFile.c(1,10): error C1083: 鏃犳硶鎵撳紑鍖呮嫭鏂囦欢: 鈥渦nistd.h鈥? No such file or directory [G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\cmTC_00e99.vcxproj]
+        Done Building Project "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\cmTC_00e99.vcxproj" (default targets) -- FAILED.
+        
+        Build FAILED.
+        
+        "G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\cmTC_00e99.vcxproj" (default target) (1) ->
+        (ClCompile target) -> 
+          G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\CheckIncludeFile.c(1,10): error C1083: 鏃犳硶鎵撳紑鍖呮嫭鏂囦欢: 鈥渦nistd.h鈥? No such file or directory [G:\\myproject\\render\\build\\CMakeFiles\\CMakeScratch\\TryCompile-jahnec\\cmTC_00e99.vcxproj]
+        
+            0 Warning(s)
+            1 Error(s)
+        
+        Time Elapsed 00:00:00.30
+        
+      exitCode: 1
+...

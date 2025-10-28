@@ -4,6 +4,9 @@
 		"G:/myproject/render/build/cmake_install.cmake",
 		"G:/myproject/render/build/SDL3/cmake_install.cmake",
 		"G:/myproject/render/build/SDL3_image/cmake_install.cmake",
+		"G:/myproject/render/build/assimp/cmake_install.cmake",
+		"G:/myproject/render/build/assimp/contrib/zlib/cmake_install.cmake",
+		"G:/myproject/render/build/assimp/code/cmake_install.cmake",
 		"G:/myproject/render/build/examples/cmake_install.cmake",
 		"G:/myproject/render/build/tests/cmake_install.cmake"
 	],

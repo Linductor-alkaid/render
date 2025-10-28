@@ -61,7 +61,7 @@ set_target_properties(SDL3::SDL3-static PROPERTIES
 set_property(TARGET SDL3::SDL3-static APPEND PROPERTY IMPORTED_CONFIGURATIONS DEBUG)
 set_target_properties(SDL3::SDL3-static PROPERTIES
   IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG "C;CXX"
-  IMPORTED_LOCATION_DEBUG "G:/myproject/render/build/lib/Debug/SDL3-static.lib"
+  IMPORTED_LOCATION_DEBUG "G:/myproject/render/build/lib/Debug/SDL3-staticd.lib"
   )
 
 # Import target "SDL3::SDL3-static" for configuration "Release"

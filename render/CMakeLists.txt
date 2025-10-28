@@ -6,15 +6,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 编译选项
+# 编译选项（仅用于变量保存，不全局应用）
 if(MSVC)
-    # UTF-8 编码支持
-    add_compile_options(/utf-8)
-    add_compile_options(/W4 /WX-)
+    set(PROJECT_COMPILE_OPTIONS /utf-8 /W4 /WX-)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic)
-    # UTF-8 编码支持
-    add_compile_options(-finput-charset=UTF-8 -fexec-charset=UTF-8)
+    set(PROJECT_COMPILE_OPTIONS -Wall -Wextra -Wpedantic -finput-charset=UTF-8 -fexec-charset=UTF-8)
 endif()
 
 # 设置输出目录
@@ -93,6 +89,43 @@ endif()
 message(STATUS "Using Eigen3 from: ${EIGEN3_INCLUDE_DIR}")
 
 # ============================================================================
+# Assimp 配置 - 作为子项目编译
+# ============================================================================
+set(ASSIMP_DIR ${THIRD_PARTY_DIR}/assimp)
+
+# 禁用 Assimp 的一些不需要的选项
+set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "Build Assimp tests" FORCE)
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "Build Assimp tools" FORCE)
+set(ASSIMP_INSTALL OFF CACHE BOOL "Enable Assimp install target" FORCE)
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "Build all importers by default" FORCE)
+set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "Build all exporters by default" FORCE)
+
+# 只启用常用的模型格式
+set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "Enable OBJ import" FORCE)
+set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "Enable FBX import" FORCE)
+set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE BOOL "Enable GLTF import" FORCE)
+set(ASSIMP_BUILD_COLLADA_IMPORTER ON CACHE BOOL "Enable Collada import" FORCE)
+set(ASSIMP_BUILD_BLEND_IMPORTER ON CACHE BOOL "Enable Blender import" FORCE)
+set(ASSIMP_BUILD_3DS_IMPORTER ON CACHE BOOL "Enable 3DS import" FORCE)
+set(ASSIMP_BUILD_PLY_IMPORTER ON CACHE BOOL "Enable PLY import" FORCE)
+set(ASSIMP_BUILD_STL_IMPORTER ON CACHE BOOL "Enable STL import" FORCE)
+set(ASSIMP_BUILD_MMD_IMPORTER ON CACHE BOOL "Enable MMD (PMX/PMD/VMD) import" FORCE)
+
+# 禁用导出器（我们只需要导入）
+set(ASSIMP_NO_EXPORT ON CACHE BOOL "Disable export functionality" FORCE)
+
+# 添加 Assimp 子项目
+if(EXISTS ${ASSIMP_DIR}/CMakeLists.txt)
+    message(STATUS "Adding Assimp as subdirectory: ${ASSIMP_DIR}")
+    add_subdirectory(${ASSIMP_DIR} ${CMAKE_BINARY_DIR}/assimp EXCLUDE_FROM_ALL)
+    set(ASSIMP_LIBRARY assimp)
+    set(ASSIMP_INCLUDE_DIRS ${ASSIMP_DIR}/include ${CMAKE_BINARY_DIR}/assimp/include)
+    message(STATUS "Assimp configured as subproject")
+else()
+    message(FATAL_ERROR "Assimp source not found at ${ASSIMP_DIR}")
+endif()
+
+# ============================================================================
 # GLAD 配置（OpenGL 加载库）
 # ============================================================================
 set(GLAD_DIR ${THIRD_PARTY_DIR}/glad)
@@ -116,6 +149,7 @@ include_directories(
     ${SDL3_INCLUDE_DIRS}
     ${SDL3_IMAGE_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
+    ${ASSIMP_INCLUDE_DIRS}
     ${GLAD_INCLUDE_DIR}
     ${OPENGL_INCLUDE_DIR}
 )
@@ -172,11 +206,15 @@ set(RENDER_HEADERS
 # ============================================================================
 add_library(RenderEngine STATIC ${RENDER_SOURCES} ${RENDER_HEADERS})
 
+# 设置编译选项（仅对 RenderEngine）
+target_compile_options(RenderEngine PRIVATE ${PROJECT_COMPILE_OPTIONS})
+
 # 链接库
 target_link_libraries(RenderEngine
     PUBLIC
         ${SDL3_LIBRARY}
         ${SDL3_IMAGE_LIBRARY}
+        ${ASSIMP_LIBRARY}
         ${OPENGL_LIBRARIES}
 )
 
@@ -223,6 +261,8 @@ message(STATUS "  SDL3 Library: ${SDL3_LIBRARY}")
 message(STATUS "  SDL3_image Include: ${SDL3_IMAGE_INCLUDE_DIRS}")
 message(STATUS "  SDL3_image Library: ${SDL3_IMAGE_LIBRARY}")
 message(STATUS "  Eigen3 Include: ${EIGEN3_INCLUDE_DIR}")
+message(STATUS "  Assimp Include: ${ASSIMP_INCLUDE_DIRS}")
+message(STATUS "  Assimp Library: ${ASSIMP_LIBRARY}")
 message(STATUS "  OpenGL Include: ${OPENGL_INCLUDE_DIR}")
 message(STATUS "  Build Examples: ${BUILD_EXAMPLES}")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")

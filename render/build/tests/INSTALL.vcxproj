@@ -196,7 +196,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </ProjectReference>
-    <ProjectReference Include="G:\myproject\render\build\SDL3_image\ALL_BUILD.vcxproj">
+    <ProjectReference Include="G:\myproject\render\build\assimp\contrib\zlib\ALL_BUILD.vcxproj">
       <Project>{D5BA6489-D02B-3E4F-98F2-E6A57822A349}</Project>
       <Name>ALL_BUILD</Name>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>

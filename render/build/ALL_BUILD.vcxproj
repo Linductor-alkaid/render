@@ -69,7 +69,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -79,7 +79,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -89,7 +89,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -99,7 +99,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -213,6 +213,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="G:\myproject\render\build\examples\10_mesh_thread_safe_test.vcxproj">
       <Project>{0F40D490-F750-35CA-8C73-CEA39E3F65FD}</Project>
       <Name>10_mesh_thread_safe_test</Name>
+    </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\examples\11_model_loader_test.vcxproj">
+      <Project>{CEC4C72A-72E9-3827-B72E-F0B0DDAF90FE}</Project>
+      <Name>11_model_loader_test</Name>
     </ProjectReference>
     <ProjectReference Include="G:\myproject\render\build\RenderEngine.vcxproj">
       <Project>{6973F818-CED1-379E-9180-87AB15A5366D}</Project>

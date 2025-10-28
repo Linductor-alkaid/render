@@ -12,6 +12,17 @@ G:/myproject/render/build/SDL3_image/CMakeFiles/SDL3_image-static.dir
 G:/myproject/render/build/SDL3_image/CMakeFiles/RUN_TESTS.dir
 G:/myproject/render/build/SDL3_image/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/SDL3_image/CMakeFiles/ALL_BUILD.dir
+G:/myproject/render/build/assimp/CMakeFiles/UpdateAssimpLibsDebugSymbolsAndDLLs.dir
+G:/myproject/render/build/assimp/CMakeFiles/RUN_TESTS.dir
+G:/myproject/render/build/assimp/CMakeFiles/INSTALL.dir
+G:/myproject/render/build/assimp/CMakeFiles/ALL_BUILD.dir
+G:/myproject/render/build/assimp/contrib/zlib/CMakeFiles/zlibstatic.dir
+G:/myproject/render/build/assimp/contrib/zlib/CMakeFiles/RUN_TESTS.dir
+G:/myproject/render/build/assimp/contrib/zlib/CMakeFiles/INSTALL.dir
+G:/myproject/render/build/assimp/contrib/zlib/CMakeFiles/ALL_BUILD.dir
+G:/myproject/render/build/assimp/code/CMakeFiles/assimp.dir
+G:/myproject/render/build/assimp/code/CMakeFiles/RUN_TESTS.dir
+G:/myproject/render/build/assimp/code/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/examples/CMakeFiles/01_basic_window.dir
 G:/myproject/render/build/examples/CMakeFiles/02_shader_test.dir
 G:/myproject/render/build/examples/CMakeFiles/03_geometry_shader_test.dir
@@ -22,6 +33,7 @@ G:/myproject/render/build/examples/CMakeFiles/07_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/08_renderer_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/09_texture_thread_safe_test.dir
 G:/myproject/render/build/examples/CMakeFiles/10_mesh_thread_safe_test.dir
+G:/myproject/render/build/examples/CMakeFiles/11_model_loader_test.dir
 G:/myproject/render/build/examples/CMakeFiles/RUN_TESTS.dir
 G:/myproject/render/build/examples/CMakeFiles/INSTALL.dir
 G:/myproject/render/build/tests/CMakeFiles/RUN_TESTS.dir

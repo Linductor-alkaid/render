@@ -1,12 +1,174 @@
 #include "render/mesh_loader.h"
 #include "render/logger.h"
 #include <cmath>
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 namespace Render {
+
+// ============================================================================
+// 辅助函数 - Assimp 网格处理
+// ============================================================================
+
+/**
+ * @brief 处理单个 Assimp 网格并转换为引擎网格对象
+ */
+static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene) {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    
+    // 提取顶点数据
+    vertices.reserve(assimpMesh->mNumVertices);
+    for (uint32_t i = 0; i < assimpMesh->mNumVertices; i++) {
+        Vertex vertex;
+        
+        // 位置（必须有）
+        vertex.position = Vector3(
+            assimpMesh->mVertices[i].x,
+            assimpMesh->mVertices[i].y,
+            assimpMesh->mVertices[i].z
+        );
+        
+        // 法线（可选）
+        if (assimpMesh->HasNormals()) {
+            vertex.normal = Vector3(
+                assimpMesh->mNormals[i].x,
+                assimpMesh->mNormals[i].y,
+                assimpMesh->mNormals[i].z
+            );
+        } else {
+            vertex.normal = Vector3(0.0f, 1.0f, 0.0f);  // 默认向上
+        }
+        
+        // 纹理坐标（可选，使用第一套 UV）
+        if (assimpMesh->mTextureCoords[0]) {
+            vertex.texCoord = Vector2(
+                assimpMesh->mTextureCoords[0][i].x,
+                assimpMesh->mTextureCoords[0][i].y
+            );
+        } else {
+            vertex.texCoord = Vector2(0.0f, 0.0f);
+        }
+        
+        // 顶点颜色（可选，使用第一套颜色）
+        if (assimpMesh->HasVertexColors(0)) {
+            vertex.color = Color(
+                assimpMesh->mColors[0][i].r,
+                assimpMesh->mColors[0][i].g,
+                assimpMesh->mColors[0][i].b,
+                assimpMesh->mColors[0][i].a
+            );
+        } else {
+            vertex.color = Color::White();
+        }
+        
+        vertices.push_back(vertex);
+    }
+    
+    // 提取索引数据
+    indices.reserve(assimpMesh->mNumFaces * 3);
+    for (uint32_t i = 0; i < assimpMesh->mNumFaces; i++) {
+        aiFace face = assimpMesh->mFaces[i];
+        for (uint32_t j = 0; j < face.mNumIndices; j++) {
+            indices.push_back(face.mIndices[j]);
+        }
+    }
+    
+    // 创建网格并上传到 GPU
+    auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->Upload();
+    
+    Logger::GetInstance().Info("Processed mesh: " + std::to_string(vertices.size()) + 
+                               " vertices, " + std::to_string(indices.size() / 3) + " triangles");
+    
+    return mesh;
+}
+
+/**
+ * @brief 递归处理 Assimp 场景节点
+ */
+static void ProcessAssimpNode(aiNode* node, const aiScene* scene, std::vector<Ref<Mesh>>& meshes) {
+    // 处理当前节点的所有网格
+    for (uint32_t i = 0; i < node->mNumMeshes; i++) {
+        aiMesh* assimpMesh = scene->mMeshes[node->mMeshes[i]];
+        meshes.push_back(ProcessAssimpMesh(assimpMesh, scene));
+    }
+    
+    // 递归处理子节点
+    for (uint32_t i = 0; i < node->mNumChildren; i++) {
+        ProcessAssimpNode(node->mChildren[i], scene, meshes);
+    }
+}
+
+// ============================================================================
+// MeshLoader - 文件加载实现
+// ============================================================================
+
+std::vector<Ref<Mesh>> MeshLoader::LoadFromFile(const std::string& filepath, bool flipUVs) {
+    std::vector<Ref<Mesh>> meshes;
+    
+    Logger::GetInstance().Info("Loading model from file: " + filepath);
+    
+    // 创建 Assimp 导入器
+    Assimp::Importer importer;
+    
+    // 设置后处理标志
+    unsigned int postProcessFlags = 
+        aiProcess_Triangulate |           // 转换为三角形
+        aiProcess_GenSmoothNormals |      // 生成平滑法线（如果没有）
+        aiProcess_CalcTangentSpace |      // 计算切线空间（用于法线贴图）
+        aiProcess_JoinIdenticalVertices | // 合并相同顶点（优化）
+        aiProcess_SortByPType |           // 按原始类型排序
+        aiProcess_ImproveCacheLocality |  // 改善顶点缓存局部性
+        aiProcess_OptimizeMeshes |        // 优化网格
+        aiProcess_ValidateDataStructure;  // 验证数据结构
+    
+    // 如果需要翻转 UV（OpenGL 约定）
+    if (flipUVs) {
+        postProcessFlags |= aiProcess_FlipUVs;
+    }
+    
+    // 读取文件
+    const aiScene* scene = importer.ReadFile(filepath, postProcessFlags);
+    
+    // 检查加载错误
+    if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+        Logger::GetInstance().Error("Assimp failed to load model: " + std::string(importer.GetErrorString()));
+        return meshes;
+    }
+    
+    Logger::GetInstance().Info("Model loaded successfully. Processing meshes...");
+    
+    // 递归处理场景中的所有节点和网格
+    ProcessAssimpNode(scene->mRootNode, scene, meshes);
+    
+    Logger::GetInstance().Info("Model loading complete. Total meshes: " + std::to_string(meshes.size()));
+    
+    return meshes;
+}
+
+Ref<Mesh> MeshLoader::LoadMeshFromFile(const std::string& filepath, uint32_t meshIndex, bool flipUVs) {
+    auto meshes = LoadFromFile(filepath, flipUVs);
+    
+    if (meshes.empty()) {
+        Logger::GetInstance().Error("No meshes found in file: " + filepath);
+        return nullptr;
+    }
+    
+    if (meshIndex >= meshes.size()) {
+        Logger::GetInstance().Warning("Mesh index " + std::to_string(meshIndex) + 
+                                      " out of range (total: " + std::to_string(meshes.size()) + 
+                                      "). Returning first mesh.");
+        return meshes[0];
+    }
+    
+    return meshes[meshIndex];
+}
 
 // ============================================================================
 // MeshLoader 实现

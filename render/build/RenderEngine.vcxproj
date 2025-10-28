@@ -61,7 +61,7 @@
     <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">G:\myproject\render\build\lib\Debug\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">RenderEngine.dir\Debug\</IntDir>
-    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">RenderEngine</TargetName>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">RenderEngined</TargetName>
     <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.lib</TargetExt>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">G:\myproject\render\build\lib\Release\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">RenderEngine.dir\Release\</IntDir>
@@ -78,7 +78,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /utf-8</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -104,10 +104,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -120,7 +120,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /utf-8</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -147,10 +147,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -163,7 +163,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /utf-8</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -190,10 +190,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -206,7 +206,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>%(AdditionalOptions) /utf-8</AdditionalOptions>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -232,10 +232,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>G:\myproject\render\include;G:\myproject\render\third_party\SDL\include;G:\myproject\render\third_party\SDL_image\include;G:\myproject\render\third_party\eigen-3.4.0;G:\myproject\render\third_party\assimp\include;G:\myproject\render\build\assimp\include;G:\myproject\render\third_party\glad\include;G:\myproject\render\build\SDL3\include-revision;G:\myproject\render\third_party\assimp\code\..\include;G:\myproject\render\build\assimp\code\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -346,6 +346,14 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ProjectReference Include="G:\myproject\render\build\SDL3_image\SDL3_image-static.vcxproj">
       <Project>{B138D6B7-7F7D-3382-AEB6-F5E87FE49AB9}</Project>
       <Name>SDL3_image-static</Name>
+    </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\assimp\code\assimp.vcxproj">
+      <Project>{E1D5A535-75C6-3811-BC75-71B3B0A491C4}</Project>
+      <Name>assimp</Name>
+    </ProjectReference>
+    <ProjectReference Include="G:\myproject\render\build\assimp\contrib\zlib\zlibstatic.vcxproj">
+      <Project>{A9407829-862D-3A63-839C-D8664008F8A7}</Project>
+      <Name>zlibstatic</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
