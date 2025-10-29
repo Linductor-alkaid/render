@@ -181,6 +181,7 @@ set(RENDER_SOURCES
     src/core/render_state.cpp
     src/core/resource_manager.cpp
     src/core/transform.cpp
+    src/core/camera.cpp
     
     # Rendering
     src/rendering/shader.cpp
@@ -208,6 +209,7 @@ set(RENDER_HEADERS
     include/render/types.h
     include/render/resource_manager.h
     include/render/transform.h
+    include/render/camera.h
     include/render/math_utils.h
     
     # Rendering

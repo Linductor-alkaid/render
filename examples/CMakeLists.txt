@@ -21,6 +21,7 @@ set(EXAMPLES
     17_model_with_resource_manager_test
     18_math_test
     19_math_benchmark
+    20_camera_test
 )
 
 # 批量创建示例程序
