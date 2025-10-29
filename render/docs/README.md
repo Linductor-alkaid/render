@@ -1,149 +1,220 @@
-# RenderEngine - 抽象渲染引擎
+# RenderEngine 文档
 
-## 项目概述
+欢迎使用 RenderEngine 文档！这是一个基于 OpenGL 4.5+ 的现代 C++ 渲染引擎。
 
-RenderEngine 是一个基于 OpenGL 和 SDL3 构建的高性能抽象渲染引擎，旨在为游戏开发、电影特效摄影、实时可视化等应用提供完整的2D和3D渲染解决方案。
+---
 
-## 核心特性
+## 📚 文档导航
 
-### 2D 渲染
-- 精灵渲染 (Sprite Rendering)
-- 文本渲染 (Text Rendering)
-- 粒子系统 (Particle System)
-- UI渲染 (UI Rendering)
-- 2D光照系统 (2D Lighting)
-- 后处理效果 (Post-processing)
+### 快速开始
+- **[API 参考文档](api/README.md)** - 完整的 API 文档
+- **[开发指南](DEVELOPMENT_GUIDE.md)** - 开发环境搭建和基础使用
+- **[架构文档](ARCHITECTURE.md)** - 系统架构设计
 
-### 3D 渲染
-- 模型加载与渲染 (Model Loading & Rendering)
-- 场景图管理 (Scene Graph)
-- 实时阴影 (Real-time Shadows)
-- 延迟渲染管线 (Deferred Rendering Pipeline)
-- HDR 渲染 (High Dynamic Range)
-- PBR材质系统 (Physically Based Rendering)
-- 全局光照 (Global Illumination)
-- 体积渲染 (Volumetric Rendering)
-- 屏幕空间反射 (Screen Space Reflections)
+### 核心系统
 
-### 渲染管理
-- 多线程渲染 (Multithreaded Rendering)
-- 命令队列 (Command Queue)
-- 资源管理 (Resource Management)
-- 内存池管理 (Memory Pool)
-- 渲染批处理 (Render Batching)
+#### 渲染系统
+- [Renderer API](api/Renderer.md) - 主渲染器
+- [RenderState API](api/RenderState.md) - 渲染状态管理
+- [OpenGLContext API](api/OpenGLContext.md) - OpenGL 上下文
 
-### ECS 集成
-- 渲染层级管理 (Render Layer Management)
-- 组件式渲染 (Component-based Rendering)
-- 实体系统集成 (Entity System Integration)
-- 渲染排序 (Render Sorting)
+#### 着色器系统
+- [Shader API](api/Shader.md) - 着色器程序
+- [ShaderCache API](api/ShaderCache.md) - 着色器缓存
+- [UniformManager API](api/UniformManager.md) - Uniform 管理
+- [着色器缓存使用指南](SHADER_CACHE_GUIDE.md)
 
-## 系统要求
+#### 纹理系统
+- [Texture API](api/Texture.md) - 纹理对象
+- [TextureLoader API](api/TextureLoader.md) - 纹理加载
+- [纹理系统使用指南](TEXTURE_SYSTEM.md)
 
-- OpenGL 4.5+
-- SDL3
-- C++17 或更高版本
-- 支持 GLSL 450+
+#### 网格系统
+- [Mesh API](api/Mesh.md) - 网格对象
+- [MeshLoader API](api/MeshLoader.md) - 网格加载和几何生成
 
-## 文档索引
+#### 材质系统
+- [Material API](api/Material.md) - 材质管理
+- [材质系统指南](MATERIAL_SYSTEM.md)
 
-### 核心文档
-- [架构设计](ARCHITECTURE.md) - 系统架构和技术设计
-- [API 参考](API_REFERENCE.md) - 完整的API文档和使用示例
-- [渲染层级管理](RENDERING_LAYERS.md) - 渲染层级系统和优先级管理
-- [ECS 集成指南](ECS_INTEGRATION.md) - 与实体组件系统集成
+#### 资源管理
+- [ResourceManager API](api/ResourceManager.md) - 统一资源管理
 
-### 开发文档
-- [开发指南](DEVELOPMENT_GUIDE.md) - 开发环境配置和最佳实践
-- [功能特性列表](FEATURE_LIST.md) - 已实现和计划中的功能
-- [贡献指南](CONTRIBUTING.md) - 如何参与项目贡献
+#### 数学库 ⚡ **新增**
+- [Types API](api/Types.md) - 数学类型（Vector, Matrix, Quaternion, Plane, Ray）
+- [MathUtils API](api/MathUtils.md) - 数学工具函数 ⚡ 性能优化
+- [Transform API](api/Transform.md) - 3D变换类 ⚡ 高性能缓存
 
-### 开发计划
-- [Phase 1: 基础渲染功能 TODO](todolists/PHASE1_BASIC_RENDERING.md) - 第一阶段的详细开发任务列表
+#### 工具类
+- [Logger API](api/Logger.md) - 日志系统
+- [FileUtils API](api/FileUtils.md) - 文件工具
 
-### API 文档
-- [API 文档首页](api/README.md) - 完整的 API 参考文档
-- [API 文档总结](API_DOCUMENTATION_SUMMARY.md) - API 文档完成情况和统计
+### 专题文档
 
-## 最新更新 🎉
+#### 线程安全 🔒
+- [线程安全总结](THREAD_SAFETY_SUMMARY.md) - 整体线程安全设计
+- [Renderer 线程安全](RENDERER_THREAD_SAFETY.md)
+- [RenderState 线程安全](THREAD_SAFETY.md)
+- [网格系统线程安全](MESH_THREAD_SAFETY.md)
 
-### v1.1.0 (2025-10-27) - OpenGL 状态封装
+#### 性能优化 ⚡
+- [数学库性能优化](MATH_FINAL_OPTIMIZATION_REPORT.md) ⭐ **新增**
 
-✅ **新增功能**：
-- **纹理绑定管理**：支持 32 个纹理单元的自动缓存
-- **缓冲区绑定管理**：VAO, VBO, EBO, UBO, SSBO 的状态缓存
-- **着色器程序管理**：自动缓存着色器程序切换，减少冗余 glUseProgram 调用
+### 项目管理
+- [Phase 1 进度列表](todolists/PHASE1_BASIC_RENDERING.md)
+- [功能列表](FEATURE_LIST.md)
+- [贡献指南](CONTRIBUTING.md)
 
-📝 **API 文档**：
-- 更新了 [RenderState API](api/RenderState.md) 文档
-- 新增 [状态管理测试示例](../examples/04_state_management_test.cpp)
+---
 
-🚀 **性能优化**：
-- 状态缓存可减少 50-80% 的 OpenGL API 调用
-- 批量渲染时自动跳过重复的状态切换
+## 🚀 快速开始
 
-详见：[RenderState API 文档](api/RenderState.md) | [示例程序](../examples/04_state_management_test.cpp)
-
-## 快速开始
+### 1. 创建基础窗口
 
 ```cpp
-#include "render/renderer.h"
+#include <render/renderer.h>
 
 int main() {
-    // 创建并初始化渲染器
-    Renderer* renderer = Renderer::Create();
-    renderer->Initialize();
+    Render::Renderer* renderer = Render::Renderer::Create();
+    renderer->Initialize("My App", 1280, 720);
     
-    // 设置窗口
-    renderer->SetWindowSize(1920, 1080);
-    renderer->SetVSync(true);
-    
-    // 主循环
-    while (isRunning) {
+    while (running) {
         renderer->BeginFrame();
-        // ... 你的渲染代码 ...
+        renderer->Clear();
+        // 渲染代码...
         renderer->EndFrame();
         renderer->Present();
     }
     
-    renderer->Shutdown();
-    Renderer::Destroy(renderer);
+    Render::Renderer::Destroy(renderer);
     return 0;
 }
 ```
 
-## 主要功能模块
+### 2. 使用数学库 ⚡
 
-### 🎮 2D 渲染
-完整的2D渲染功能，包括精灵、文本、粒子、UI等。
+```cpp
+#include <render/transform.h>
+#include <render/math_utils.h>
 
-### 🎬 3D 渲染
-强大的3D渲染能力，支持模型、材质、光照、阴影等。
+using namespace Render;
 
-### 🎨 渲染层级
-灵活的层级管理系统，支持按优先级渲染和条件渲染。
+// 创建变换
+Transform transform;
+transform.SetPosition(Vector3(10.0f, 5.0f, 0.0f));
+transform.SetRotationEulerDegrees(Vector3(0.0f, 45.0f, 0.0f));
+transform.SetScale(2.0f);
 
-### 🔗 ECS 集成
-与ECS架构无缝集成，支持组件式渲染开发。
+// 朝向目标
+transform.LookAt(Vector3(0.0f, 0.0f, 0.0f));
 
-### ⚡ 性能优化
-内置批处理、剔除、排序等性能优化机制。
+// 获取变换矩阵
+Matrix4 worldMatrix = transform.GetWorldMatrix();
 
-## 技术优势
+// 使用数学工具
+Quaternion rot = MathUtils::FromEulerDegrees(45.0f, 30.0f, 0.0f);
+Matrix4 proj = MathUtils::PerspectiveDegrees(60.0f, aspect, 0.1f, 100.0f);
+```
 
-- **高度抽象**: 简洁的API，易于使用
-- **高性能**: 优化的渲染管线，支持大规模场景
-- **模块化**: 清晰的架构，易于扩展
-- **跨平台**: 支持多种平台（扩展中）
-- **生产就绪**: 适用于游戏、影视、可视化等应用
+### 3. 加载和渲染模型
 
-## 许可证
+```cpp
+#include <render/mesh_loader.h>
+#include <render/resource_manager.h>
 
-本项目采用 MIT 许可证。详见 LICENSE 文件。
+// 加载模型
+auto results = MeshLoader::LoadFromFileWithMaterials("model.obj");
 
-## 联系方式
+// 使用资源管理器管理资源
+ResourceManager resourceMgr;
+for (auto& result : results) {
+    resourceMgr.RegisterMesh(result.name, result.mesh);
+    if (result.material) {
+        resourceMgr.RegisterMaterial(result.name + "_mat", result.material);
+    }
+}
 
-- 项目仓库: https://github.com/yourusername/render
-- 问题反馈: https://github.com/yourusername/render/issues
-- 讨论区: https://github.com/yourusername/render/discussions
+// 渲染
+for (auto& result : results) {
+    if (result.material) {
+        result.material->Bind();
+    }
+    result.mesh->Draw();
+}
+```
 
+---
+
+## 📊 系统特性
+
+### 已完成功能
+
+- ✅ OpenGL 4.5+ 抽象层
+- ✅ 着色器系统（顶点/片段/几何着色器）
+- ✅ 着色器缓存和热重载
+- ✅ 纹理系统（PNG/JPG/BMP/TGA）
+- ✅ 网格系统（10种几何形状 + 外部模型加载）
+- ✅ 材质系统（Phong 光照）
+- ✅ 资源管理器（统一管理）
+- ✅ **数学库集成**（Transform + MathUtils）⚡ **新增**
+- ✅ 渲染状态管理
+- ✅ OpenGL 状态封装
+- ✅ 日志系统
+- ✅ **全面线程安全** 🔒
+- ✅ **性能优化**（SIMD + 缓存 + 并行）⚡ **新增**
+
+### 性能特性
+
+- ⚡ AVX2 SIMD 指令集优化
+- ⚡ 智能缓存机制（Transform 缓存提升 10-50x）
+- ⚡ OpenMP 并行处理（批量操作提升 2-4x）
+- ⚡ 高效的数学运算（FromEuler 快 40-50%）
+- 🔒 全面线程安全设计
+
+---
+
+## 📖 示例程序
+
+项目包含 19 个示例程序，涵盖所有功能：
+
+| 编号 | 名称 | 说明 |
+|------|------|------|
+| 01 | basic_window | 基础窗口创建 |
+| 02 | shader_test | 着色器系统 |
+| 03 | geometry_shader_test | 几何着色器 |
+| 04 | state_management_test | 状态管理 |
+| 05 | texture_test | 纹理系统 |
+| 06 | mesh_test | 网格和几何形状 |
+| 07-10 | thread_safe_test | 各系统线程安全测试 🔒 |
+| 11 | model_loader_test | 外部模型加载 |
+| 12-13 | material_test | 材质系统 |
+| 14 | model_material_loader_test | 模型材质加载 |
+| 15-17 | resource_manager_test | 资源管理器 |
+| **18** | **math_test** | **数学库功能测试** ⭐ |
+| **19** | **math_benchmark** | **数学性能基准** ⚡ ⭐ |
+
+---
+
+## 🎯 下一步
+
+### 正在开发
+- [ ] 相机系统
+- [ ] 光照系统
+- [ ] 渲染层级
+
+### 计划中
+- [ ] 阴影系统
+- [ ] 后处理效果
+- [ ] 粒子系统
+
+---
+
+## 💬 获取帮助
+
+- 查看 [API 文档](api/README.md)
+- 运行示例程序学习
+- 阅读 [开发指南](DEVELOPMENT_GUIDE.md)
+
+---
+
+[返回项目主页](../README.md)

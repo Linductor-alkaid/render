@@ -9,8 +9,25 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # 编译选项（仅用于变量保存，不全局应用）
 if(MSVC)
     set(PROJECT_COMPILE_OPTIONS /utf-8 /W4 /WX-)
+    # 启用 SIMD 优化（AVX2）以提升 Eigen 性能
+    list(APPEND PROJECT_COMPILE_OPTIONS /arch:AVX2)
 else()
     set(PROJECT_COMPILE_OPTIONS -Wall -Wextra -Wpedantic -finput-charset=UTF-8 -fexec-charset=UTF-8)
+    # 启用 SIMD 优化（AVX2 + FMA）
+    list(APPEND PROJECT_COMPILE_OPTIONS -mavx2 -mfma)
+endif()
+
+# OpenMP 支持（用于批量变换的并行处理）
+option(ENABLE_OPENMP "Enable OpenMP for parallel processing" ON)
+if(ENABLE_OPENMP)
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        message(STATUS "OpenMP found, enabling parallel processing")
+        list(APPEND PROJECT_COMPILE_OPTIONS ${OpenMP_CXX_FLAGS})
+        set(PROJECT_LINK_OPTIONS ${OpenMP_CXX_FLAGS})
+    else()
+        message(STATUS "OpenMP not found, parallel processing disabled")
+    endif()
 endif()
 
 # 设置输出目录
@@ -163,6 +180,7 @@ set(RENDER_SOURCES
     src/core/opengl_context.cpp
     src/core/render_state.cpp
     src/core/resource_manager.cpp
+    src/core/transform.cpp
     
     # Rendering
     src/rendering/shader.cpp
@@ -189,6 +207,8 @@ set(RENDER_HEADERS
     include/render/render_state.h
     include/render/types.h
     include/render/resource_manager.h
+    include/render/transform.h
+    include/render/math_utils.h
     
     # Rendering
     include/render/shader.h
@@ -221,6 +241,11 @@ target_link_libraries(RenderEngine
         ${ASSIMP_LIBRARY}
         ${OPENGL_LIBRARIES}
 )
+
+# 链接 OpenMP（如果启用）
+if(ENABLE_OPENMP AND OpenMP_CXX_FOUND)
+    target_link_libraries(RenderEngine PUBLIC OpenMP::OpenMP_CXX)
+endif()
 
 # ============================================================================
 # 安装规则

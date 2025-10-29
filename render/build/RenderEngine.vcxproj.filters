@@ -13,6 +13,9 @@
     <ClCompile Include="G:\myproject\render\src\core\resource_manager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="G:\myproject\render\src\core\transform.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="G:\myproject\render\src\rendering\shader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -61,6 +64,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="G:\myproject\render\include\render\resource_manager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="G:\myproject\render\include\render\transform.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="G:\myproject\render\include\render\math_utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="G:\myproject\render\include\render\shader.h">

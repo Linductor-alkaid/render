@@ -132,10 +132,126 @@ struct AABB {
     Vector3 max;
     
     Vector3 GetCenter() const;
+    Vector3 GetExtents() const;
     Vector3 GetSize() const;
     bool Contains(const Vector3& point) const;
     bool Intersects(const AABB& other) const;
 };
+```
+
+---
+
+### Plane
+
+平面。
+
+```cpp
+struct Plane {
+    Vector3 normal;   // 平面法向量（单位向量）
+    float distance;   // 原点到平面的距离
+    
+    Plane();
+    Plane(const Vector3& normal, float distance);
+    Plane(const Vector3& normal, const Vector3& point);
+    Plane(const Vector3& p1, const Vector3& p2, const Vector3& p3);
+    
+    float GetDistance(const Vector3& point) const;
+    bool IsOnPositiveSide(const Vector3& point) const;
+};
+```
+
+**构造方法**:
+- 默认构造：XY 平面（Y = 0）
+- 法向量 + 距离
+- 法向量 + 平面上一点
+- 三个点定义平面
+
+**示例**:
+```cpp
+// 地面平面
+Plane ground(Vector3::UnitY(), 0.0f);
+
+// 从三个点创建平面
+Plane plane(p1, p2, p3);
+
+// 点到平面距离
+float dist = plane.GetDistance(somePoint);
+```
+
+---
+
+### Ray
+
+射线。
+
+```cpp
+struct Ray {
+    Vector3 origin;      // 射线起点
+    Vector3 direction;   // 射线方向（单位向量）
+    
+    Ray();
+    Ray(const Vector3& origin, const Vector3& direction);
+    
+    Vector3 GetPoint(float t) const;
+    bool IntersectPlane(const Plane& plane, float& t) const;
+    bool IntersectAABB(const AABB& aabb, float& tMin, float& tMax) const;
+};
+```
+
+**方法**:
+- `GetPoint(t)` - 获取射线上距起点 t 的点
+- `IntersectPlane` - 射线与平面相交检测
+- `IntersectAABB` - 射线与AABB相交检测
+
+**示例**:
+```cpp
+// 创建从相机发出的射线
+Ray ray(cameraPos, cameraForward);
+
+// 与平面相交
+float t;
+if (ray.IntersectPlane(groundPlane, t)) {
+    Vector3 hitPoint = ray.GetPoint(t);
+    // 处理交点
+}
+
+// 与包围盒相交
+float tMin, tMax;
+if (ray.IntersectAABB(box, tMin, tMax)) {
+    // 射线穿过包围盒
+}
+```
+
+---
+
+## 智能指针类型
+
+### Ref / Scope
+
+```cpp
+template<typename T>
+using Ref = std::shared_ptr<T>;    // 共享指针
+
+template<typename T>
+using Scope = std::unique_ptr<T>;  // 独占指针
+```
+
+**辅助函数**:
+```cpp
+template<typename T, typename... Args>
+Ref<T> CreateRef(Args&&... args);
+
+template<typename T, typename... Args>
+Scope<T> CreateScope(Args&&... args);
+```
+
+**示例**:
+```cpp
+// 创建共享资源
+Ref<Texture> texture = CreateRef<Texture>();
+
+// 创建独占资源
+Scope<Mesh> mesh = CreateScope<Mesh>(vertices, indices);
 ```
 
 ---
@@ -165,9 +281,20 @@ AABB box;
 box.min = Vector3(-1.0f, -1.0f, -1.0f);
 box.max = Vector3(1.0f, 1.0f, 1.0f);
 Vector3 center = box.GetCenter();  // (0, 0, 0)
+
+// 平面
+Plane groundPlane(Vector3::UnitY(), 0.0f);
+float distToGround = groundPlane.GetDistance(position);
+
+// 射线
+Ray ray(cameraPos, cameraForward);
+float t;
+if (ray.IntersectPlane(groundPlane, t)) {
+    Vector3 hitPoint = ray.GetPoint(t);
+}
 ```
 
 ---
 
-[上一篇: FileUtils](FileUtils.md) | [返回 API 首页](README.md)
+[上一篇: FileUtils](FileUtils.md) | [下一篇: MathUtils](MathUtils.md)
 

@@ -2,6 +2,7 @@ G:\myproject\render\src\core\renderer.cpp;G:\myproject\render\build\RenderEngine
 G:\myproject\render\src\core\opengl_context.cpp;G:\myproject\render\build\RenderEngine.dir\Release\opengl_context.obj
 G:\myproject\render\src\core\render_state.cpp;G:\myproject\render\build\RenderEngine.dir\Release\render_state.obj
 G:\myproject\render\src\core\resource_manager.cpp;G:\myproject\render\build\RenderEngine.dir\Release\resource_manager.obj
+G:\myproject\render\src\core\transform.cpp;G:\myproject\render\build\RenderEngine.dir\Release\transform.obj
 G:\myproject\render\src\rendering\shader.cpp;G:\myproject\render\build\RenderEngine.dir\Release\shader.obj
 G:\myproject\render\src\rendering\uniform_manager.cpp;G:\myproject\render\build\RenderEngine.dir\Release\uniform_manager.obj
 G:\myproject\render\src\rendering\shader_cache.cpp;G:\myproject\render\build\RenderEngine.dir\Release\shader_cache.obj

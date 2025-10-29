@@ -85,6 +85,94 @@ struct AABB {
 };
 
 // ============================================================================
+// 平面
+// ============================================================================
+
+struct Plane {
+    Vector3 normal;  // 平面法向量（单位向量）
+    float distance;  // 原点到平面的距离
+    
+    Plane() : normal(Vector3::UnitY()), distance(0.0f) {}
+    Plane(const Vector3& normal, float distance) : normal(normal), distance(distance) {}
+    Plane(const Vector3& normal, const Vector3& point) 
+        : normal(normal), distance(normal.dot(point)) {}
+    Plane(const Vector3& p1, const Vector3& p2, const Vector3& p3) {
+        Vector3 v1 = p2 - p1;
+        Vector3 v2 = p3 - p1;
+        normal = v1.cross(v2).normalized();
+        distance = normal.dot(p1);
+    }
+    
+    // 计算点到平面的距离（带符号）
+    float GetDistance(const Vector3& point) const {
+        return normal.dot(point) - distance;
+    }
+    
+    // 判断点在平面的哪一侧
+    bool IsOnPositiveSide(const Vector3& point) const {
+        return GetDistance(point) > 0.0f;
+    }
+};
+
+// ============================================================================
+// 射线
+// ============================================================================
+
+struct Ray {
+    Vector3 origin;     // 射线起点
+    Vector3 direction;  // 射线方向（单位向量）
+    
+    Ray() : origin(Vector3::Zero()), direction(Vector3::UnitZ()) {}
+    Ray(const Vector3& origin, const Vector3& direction) 
+        : origin(origin), direction(direction.normalized()) {}
+    
+    // 获取射线上的点
+    Vector3 GetPoint(float t) const {
+        return origin + direction * t;
+    }
+    
+    // 与平面相交检测
+    bool IntersectPlane(const Plane& plane, float& t) const {
+        float denom = plane.normal.dot(direction);
+        if (std::abs(denom) < 1e-6f) {
+            return false; // 射线与平面平行
+        }
+        t = (plane.distance - plane.normal.dot(origin)) / denom;
+        return t >= 0.0f; // 只考虑射线方向的交点
+    }
+    
+    // 与 AABB 相交检测
+    bool IntersectAABB(const AABB& aabb, float& tMin, float& tMax) const {
+        tMin = 0.0f;
+        tMax = std::numeric_limits<float>::max();
+        
+        for (int i = 0; i < 3; ++i) {
+            if (std::abs(direction[i]) < 1e-6f) {
+                // 射线与该轴平行
+                if (origin[i] < aabb.min[i] || origin[i] > aabb.max[i]) {
+                    return false;
+                }
+            } else {
+                float ood = 1.0f / direction[i];
+                float t1 = (aabb.min[i] - origin[i]) * ood;
+                float t2 = (aabb.max[i] - origin[i]) * ood;
+                
+                if (t1 > t2) std::swap(t1, t2);
+                
+                tMin = std::max(tMin, t1);
+                tMax = std::min(tMax, t2);
+                
+                if (tMin > tMax) {
+                    return false;
+                }
+            }
+        }
+        
+        return true;
+    }
+};
+
+// ============================================================================
 // 资源句柄
 // ============================================================================
 

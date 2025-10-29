@@ -19,6 +19,8 @@ set(EXAMPLES
     15_resource_manager_test
     16_resource_manager_thread_safe_test
     17_model_with_resource_manager_test
+    18_math_test
+    19_math_benchmark
 )
 
 # 批量创建示例程序

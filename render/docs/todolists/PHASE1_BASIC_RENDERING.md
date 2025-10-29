@@ -288,18 +288,18 @@
 - [x] Quaternion
 - [x] Color（RGBA）
 - [x] Rect, AABB
-- [ ] Plane, Ray
+- [x] Plane, Ray
 
-### 数学工具函数
+### ✅ 数学工具函数
 - [x] 矩阵运算（使用 Eigen）
 - [x] 向量运算
 - [x] 四元数运算
-- [ ] 变换计算
+- [x] 变换计算（MathUtils）
 
-### Transform 类
-- [ ] 位置、旋转、缩放
-- [ ] 本地和世界变换
-- [ ] 父子关系（可选）
+### ✅ Transform 类
+- [x] 位置、旋转、缩放
+- [x] 本地和世界变换
+- [x] 父子关系
 
 ---
 
@@ -341,6 +341,8 @@
 - [x] 资源管理器测试 (15_resource_manager_test) - 统一资源管理、引用计数、自动清理 ✅ 已完成
 - [x] 资源管理器线程安全测试 (16_resource_manager_thread_safe_test) - 多线程并发访问测试 ✅ 已完成
 - [x] 资源管理器实战测试 (17_model_with_resource_manager_test) - 使用资源管理器加载和管理完整模型 ✅ 已完成
+- [x] 数学库测试 (18_math_test) - Transform、数学工具函数、Ray、Plane 测试 ✅ 已完成
+- [x] 数学库性能基准测试 (19_math_benchmark) - 性能测试和优化验证 ✅ 已完成
 - [ ] 光照测试
 
 ### 综合示例
