@@ -10,14 +10,14 @@
 - **[Renderer](Renderer.md)** - 主渲染器类，提供高层渲染接口 🔒 **线程安全**
 - **[OpenGLContext](OpenGLContext.md)** - OpenGL 上下文管理
 - **[RenderState](RenderState.md)** - 渲染状态管理（包含 OpenGL 状态封装：纹理/缓冲区/着色器程序管理） 🔒 **线程安全**
-- **[GLThreadChecker](GLThreadChecker.md)** - OpenGL 线程安全检查器 🔒 **线程安全** ⭐ **新增**
+- **[GLThreadChecker](GLThreadChecker.md)** - OpenGL 线程安全检查器 🔒 **线程安全** 
   - 确保所有 OpenGL 调用在正确的线程中执行
   - 自动检测和报告线程错误
   - 提供详细的错误信息（文件、行号、线程 ID）
   - 编译时可禁用以提高性能
 
 ### 相机系统
-- **[Camera](Camera.md)** - 相机类（透视/正交投影、视图变换、视锥体裁剪） 🔒 **线程安全** ⭐ **新增**
+- **[Camera](Camera.md)** - 相机类（透视/正交投影、视图变换、视锥体裁剪） 🔒 **线程安全** 
   - 支持透视投影和正交投影
   - 第一人称、轨道、第三人称相机控制器
   - 屏幕↔世界坐标转换
@@ -58,25 +58,25 @@
 
 ### 初学者指南
 1. [渲染器初始化](Renderer.md#初始化)
-2. [理解 OpenGL 线程安全](GLThreadChecker.md#概述) ⭐ **新增**
-3. [创建相机](Camera.md#构造函数) ⭐ **新增**
+2. [理解 OpenGL 线程安全](GLThreadChecker.md#概述) 
+3. [创建相机](Camera.md#构造函数) 
 4. [创建着色器](Shader.md#从文件加载)
 5. [使用着色器缓存](ShaderCache.md#基本使用)
 6. [设置 Uniform](UniformManager.md#基本使用)
-7. [设置相机矩阵](Camera.md#矩阵操作) ⭐ **新增**
+7. [设置相机矩阵](Camera.md#矩阵操作) 
 
 ### 常用任务
 - [窗口管理](Renderer.md#窗口管理)
 - [渲染状态设置](RenderState.md#状态设置)
 - [OpenGL 状态封装（纹理/VAO/着色器）](RenderState.md#opengl-状态封装)
-- [OpenGL 线程安全检查](GLThreadChecker.md#使用示例) 🔒 ⭐ **新增**
+- [OpenGL 线程安全检查](GLThreadChecker.md#使用示例) 🔒 
 - [着色器热重载](ShaderCache.md#热重载)
 - [加载纹理](TextureLoader.md#基本使用)
 - [创建几何形状](MeshLoader.md#几何形状生成方法)
 - [网格管理](Mesh.md#公共方法)
-- [相机设置和控制](Camera.md#使用示例) ⭐ **新增**
-- [鼠标拾取](Camera.md#鼠标拾取示例) ⭐ **新增**
-- [视锥体裁剪](Camera.md#视锥体裁剪优化) ⭐ **新增**
+- [相机设置和控制](Camera.md#使用示例) 
+- [鼠标拾取](Camera.md#鼠标拾取示例) 
+- [视锥体裁剪](Camera.md#视锥体裁剪优化) 
 - [3D 变换操作](Transform.md#使用示例) 
 - [数学工具函数](MathUtils.md#使用示例) 
 - [射线投射](Types.md#ray) 
@@ -90,10 +90,10 @@
 ```
 Renderer
   ├── OpenGLContext (窗口和 OpenGL 上下文)
-  │   └── GLThreadChecker (线程安全检查) ⭐ 新增
+  │   └── GLThreadChecker (线程安全检查) 
   └── RenderState (渲染状态管理)
 
-Camera ⭐ 新增
+Camera 
   ├── Transform (位置、旋转)
   ├── Frustum (视锥体裁剪)
   └── CameraController (相机控制器)
@@ -268,14 +268,14 @@ MathUtils (静态工具类)
 - [12_material_test.cpp](../../examples/12_material_test.cpp) - **材质系统测试**
 - [13_material_thread_safe_test.cpp](../../examples/13_material_thread_safe_test.cpp) - **材质系统线程安全测试** 🔒
 - [14_model_material_loader_test.cpp](../../examples/14_model_material_loader_test.cpp) - **模型材质纹理加载测试**
-- [15_resource_manager_test.cpp](../../examples/15_resource_manager_test.cpp) - **资源管理器测试** ⭐ **新增**
-- [16_resource_manager_thread_safe_test.cpp](../../examples/16_resource_manager_thread_safe_test.cpp) - **资源管理器线程安全测试** 🔒 ⭐ **新增**
-- [17_model_with_resource_manager_test.cpp](../../examples/17_model_with_resource_manager_test.cpp) - **使用资源管理器加载模型** ⭐ **新增**
-- [18_math_test.cpp](../../examples/18_math_test.cpp) - **数学库功能测试** ⭐ **新增**
-- [19_math_benchmark.cpp](../../examples/19_math_benchmark.cpp) - **数学库性能基准测试** ⚡ ⭐ **新增**
-- [20_camera_test.cpp](../../examples/20_camera_test.cpp) - **相机系统测试（三种相机控制模式）** 📷 ⭐ **新增**
-- [21_transform_thread_safe_test.cpp](../../examples/21_transform_thread_safe_test.cpp) - **Transform 线程安全测试** 🔒 ⭐ **新增**
-- [22_gl_thread_safety_test.cpp](../../examples/22_gl_thread_safety_test.cpp) - **OpenGL 线程安全检查测试** 🔒 ⭐ **新增**
+- [15_resource_manager_test.cpp](../../examples/15_resource_manager_test.cpp) - **资源管理器测试** 
+- [16_resource_manager_thread_safe_test.cpp](../../examples/16_resource_manager_thread_safe_test.cpp) - **资源管理器线程安全测试** 🔒 
+- [17_model_with_resource_manager_test.cpp](../../examples/17_model_with_resource_manager_test.cpp) - **使用资源管理器加载模型** 
+- [18_math_test.cpp](../../examples/18_math_test.cpp) - **数学库功能测试** 
+- [19_math_benchmark.cpp](../../examples/19_math_benchmark.cpp) - **数学库性能基准测试** ⚡ 
+- [20_camera_test.cpp](../../examples/20_camera_test.cpp) - **相机系统测试（三种相机控制模式）** 📷 
+- [21_transform_thread_safe_test.cpp](../../examples/21_transform_thread_safe_test.cpp) - **Transform 线程安全测试** 🔒 
+- [22_gl_thread_safety_test.cpp](../../examples/22_gl_thread_safety_test.cpp) - **OpenGL 线程安全检查测试** 🔒 
 
 ## 相关文档
 
@@ -286,14 +286,14 @@ MathUtils (静态工具类)
 - [架构文档](../ARCHITECTURE.md)
 
 ### 线程安全 🔒
-- [OpenGL 线程安全检查](GLThreadChecker.md) ⭐ **新增**
+- [OpenGL 线程安全检查](GLThreadChecker.md) 
 - [Renderer 线程安全指南](../RENDERER_THREAD_SAFETY.md)
 - [RenderState 线程安全文档](../THREAD_SAFETY.md)
 - [网格系统线程安全指南](../MESH_THREAD_SAFETY.md)
 - [整体线程安全总结](../THREAD_SAFETY_SUMMARY.md)
 
 ### 性能优化 ⚡
-- [数学库性能优化报告](../MATH_FINAL_OPTIMIZATION_REPORT.md) ⭐ **新增**
+- [数学库性能优化报告](../MATH_FINAL_OPTIMIZATION_REPORT.md) 
 
 ### 项目管理
 - [Phase 1 进度](../todolists/PHASE1_BASIC_RENDERING.md)
