@@ -11,7 +11,7 @@
 **头文件**: `render/camera.h`  
 **命名空间**: `Render`
 
-**线程安全**: ✅ 是（使用互斥锁保护）
+**线程安全**: ✅ 是（使用互斥锁和原子操作优化）
 
 ---
 
@@ -834,15 +834,25 @@ if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
 
 ### 脏标志机制
 
+相机使用 **原子脏标志 + Double-Checked Locking** 优化：
+
 ```cpp
-// 修改操作只标记脏标志
+// 修改操作只标记脏标志（原子操作，无锁）
 camera.SetPosition(pos);      // 标记视图矩阵为 dirty
 camera.SetRotation(rot);      // 标记视图矩阵为 dirty
 
 // 获取时才真正计算
 Matrix4 view = camera.GetViewMatrix();  // 计算并缓存
-Matrix4 view2 = camera.GetViewMatrix(); // 直接返回缓存（极快）
+Matrix4 view2 = camera.GetViewMatrix(); // 直接返回缓存（极快，无锁检查）
 ```
+
+**优化说明**:
+- 使用 `std::atomic<bool>` 存储脏标志
+- 采用 Double-Checked Locking 模式
+- 第一次检查脏标志时无需加锁（快速路径）
+- 只有在需要更新时才加锁（慢速路径）
+- 多线程环境下避免不必要的锁竞争
+- 符合 C++ 内存模型，使用 `memory_order_acquire` 和 `memory_order_release`
 
 ---
 
@@ -854,15 +864,34 @@ Matrix4 view2 = camera.GetViewMatrix(); // 直接返回缓存（极快）
 - 可以在多个线程中安全调用
 - 注意：OpenGL 渲染必须在主线程
 
+**性能优化**:
+- 使用原子操作优化脏标志检查
+- 采用 Double-Checked Locking 减少锁竞争
+- 只读操作（缓存命中时）几乎无锁开销
+- 多线程环境下性能优异
+
+**内存模型保证**:
+- 使用 `std::atomic<bool>` 确保可见性
+- `memory_order_acquire` / `memory_order_release` 确保正确同步
+- 符合 C++ 内存模型标准
+
 **示例**:
 ```cpp
 // 线程1：更新相机
 std::thread updateThread([&camera]() {
-    camera.SetPosition(newPosition);  // 安全
+    camera.SetPosition(newPosition);  // 安全，原子标记脏标志
 });
 
 // 主线程：渲染
-Matrix4 view = camera.GetViewMatrix();  // 安全
+Matrix4 view = camera.GetViewMatrix();  // 安全，快速路径无锁检查
+
+// 多个线程同时读取（常见场景）
+std::thread t1([&camera]() {
+    Matrix4 v1 = camera.GetViewMatrix();  // 快速，无锁检查
+});
+std::thread t2([&camera]() {
+    Matrix4 v2 = camera.GetViewMatrix();  // 快速，无锁检查
+});
 ```
 
 ---

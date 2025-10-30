@@ -306,10 +306,13 @@ Vector3 Camera::GetUp() const {
 // ============================================================================
 
 Matrix4 Camera::GetViewMatrix() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    if (m_viewDirty) {
-        UpdateViewMatrix();
+    // Double-checked locking: 先检查脏标志（无锁），再加锁更新
+    if (m_viewDirty.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        // 再次检查，避免多个线程重复更新
+        if (m_viewDirty.load(std::memory_order_relaxed)) {
+            UpdateViewMatrix();
+        }
     }
     
     return m_viewMatrix;
@@ -321,14 +324,20 @@ Matrix4 Camera::GetProjectionMatrix() const {
 }
 
 Matrix4 Camera::GetViewProjectionMatrix() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    if (m_viewDirty || m_viewProjectionDirty) {
-        UpdateViewMatrix();
-    }
-    
-    if (m_viewProjectionDirty) {
-        UpdateViewProjectionMatrix();
+    // Double-checked locking: 先检查脏标志（无锁），再加锁更新
+    if (m_viewDirty.load(std::memory_order_acquire) || 
+        m_viewProjectionDirty.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // 再次检查并更新视图矩阵（如果需要）
+        if (m_viewDirty.load(std::memory_order_relaxed)) {
+            UpdateViewMatrix();
+        }
+        
+        // 再次检查并更新视图投影矩阵（如果需要）
+        if (m_viewProjectionDirty.load(std::memory_order_relaxed)) {
+            UpdateViewProjectionMatrix();
+        }
     }
     
     return m_viewProjectionMatrix;
@@ -339,28 +348,34 @@ Matrix4 Camera::GetViewProjectionMatrix() const {
 // ============================================================================
 
 const Frustum& Camera::GetFrustum() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    if (m_frustumDirty || m_viewDirty || m_projectionDirty || m_viewProjectionDirty) {
-        // 更新视图投影矩阵
-        if (m_viewDirty) {
+    // Double-checked locking: 先检查脏标志（无锁），再加锁更新
+    if (m_frustumDirty.load(std::memory_order_acquire) || 
+        m_viewDirty.load(std::memory_order_acquire) || 
+        m_projectionDirty.load(std::memory_order_acquire) || 
+        m_viewProjectionDirty.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // 再次检查并更新（如果需要）
+        if (m_viewDirty.load(std::memory_order_relaxed)) {
             UpdateViewMatrix();
         }
-        if (m_viewProjectionDirty) {
+        if (m_viewProjectionDirty.load(std::memory_order_relaxed)) {
             UpdateViewProjectionMatrix();
         }
         
-        // 更新视锥体
-        m_frustum.ExtractFromMatrix(m_viewProjectionMatrix);
-        m_frustumDirty = false;
+        // 再次检查并更新视锥体
+        if (m_frustumDirty.load(std::memory_order_relaxed)) {
+            m_frustum.ExtractFromMatrix(m_viewProjectionMatrix);
+            m_frustumDirty.store(false, std::memory_order_release);
+        }
     }
     
     return m_frustum;
 }
 
 void Camera::UpdateFrustum() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_frustumDirty = true;
+    // 使用原子操作更新脏标志，不需要锁
+    m_frustumDirty.store(true, std::memory_order_release);
 }
 
 // ============================================================================
@@ -442,23 +457,24 @@ void Camera::UpdateProjectionMatrix() {
         );
     }
     
-    m_projectionDirty = false;
-    m_viewProjectionDirty = true;
-    m_frustumDirty = true;
+    // 使用原子操作更新脏标志
+    m_projectionDirty.store(false, std::memory_order_release);
+    m_viewProjectionDirty.store(true, std::memory_order_release);
+    m_frustumDirty.store(true, std::memory_order_release);
 }
 
 void Camera::MarkViewDirty() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_viewDirty = true;
-    m_viewProjectionDirty = true;
-    m_frustumDirty = true;
+    // 使用原子操作更新脏标志，不需要锁
+    m_viewDirty.store(true, std::memory_order_release);
+    m_viewProjectionDirty.store(true, std::memory_order_release);
+    m_frustumDirty.store(true, std::memory_order_release);
 }
 
 void Camera::MarkProjectionDirty() {
-    // 注意：调用者必须已经持有锁
-    m_projectionDirty = true;
-    m_viewProjectionDirty = true;
-    m_frustumDirty = true;
+    // 使用原子操作更新脏标志（注意：调用者已经持有锁）
+    m_projectionDirty.store(true, std::memory_order_release);
+    m_viewProjectionDirty.store(true, std::memory_order_release);
+    m_frustumDirty.store(true, std::memory_order_release);
 }
 
 void Camera::UpdateViewMatrix() const {
@@ -468,17 +484,20 @@ void Camera::UpdateViewMatrix() const {
     Matrix4 worldMatrix = m_transform.GetWorldMatrix();
     m_viewMatrix = worldMatrix.inverse();
     
-    m_viewDirty = false;
-    m_viewProjectionDirty = true;
-    m_frustumDirty = true;
+    // 使用原子操作更新脏标志
+    m_viewDirty.store(false, std::memory_order_release);
+    m_viewProjectionDirty.store(true, std::memory_order_release);
+    m_frustumDirty.store(true, std::memory_order_release);
 }
 
 void Camera::UpdateViewProjectionMatrix() const {
     // 注意：调用者必须已经持有锁
     
     m_viewProjectionMatrix = m_projectionMatrix * m_viewMatrix;
-    m_viewProjectionDirty = false;
-    m_frustumDirty = true;
+    
+    // 使用原子操作更新脏标志
+    m_viewProjectionDirty.store(false, std::memory_order_release);
+    m_frustumDirty.store(true, std::memory_order_release);
 }
 
 // ============================================================================

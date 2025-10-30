@@ -4,6 +4,7 @@
 #include "math_utils.h"
 #include "transform.h"
 #include <mutex>
+#include <atomic>
 
 namespace Render {
 
@@ -342,11 +343,11 @@ private:
     // 视锥体
     mutable Frustum m_frustum;
     
-    // 脏标志
-    mutable bool m_viewDirty;
-    mutable bool m_projectionDirty;
-    mutable bool m_viewProjectionDirty;
-    mutable bool m_frustumDirty;
+    // 脏标志（使用原子操作以支持 double-checked locking）
+    mutable std::atomic<bool> m_viewDirty;
+    mutable std::atomic<bool> m_projectionDirty;
+    mutable std::atomic<bool> m_viewProjectionDirty;
+    mutable std::atomic<bool> m_frustumDirty;
     
     // 线程安全
     mutable std::mutex m_mutex;
