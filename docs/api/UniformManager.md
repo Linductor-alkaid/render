@@ -572,6 +572,49 @@ void UpdatePerObjectUniforms(UniformManager* uniformMgr, const GameObject& obj) 
 
 ---
 
+## 线程安全
+
+`UniformManager` 具有线程安全保护机制：
+
+### OpenGL 线程检查
+
+所有 OpenGL 调用都会进行线程检查，确保在正确的线程中执行：
+
+```cpp
+// 必须在创建 OpenGL 上下文的线程中调用
+shader.Use();
+uniformMgr->SetMatrix4("model", modelMatrix);  // ✓ 正确
+
+// 在其他线程中调用会触发错误
+std::thread worker([&]() {
+    uniformMgr->SetFloat("time", 1.0f);  // ✗ 错误！会被检测到
+});
+```
+
+**说明**:
+- 所有 `SetXXX()` 方法都包含 `GL_THREAD_CHECK()` 检查
+- 所有查询方法（`HasUniform`、`GetAllUniformNames` 等）也包含线程检查
+- 在 Debug 模式下，线程错误会被立即检测并记录
+- 在 Release 模式下，可以通过定义 `GL_DISABLE_THREAD_CHECK` 禁用检查以提高性能
+
+### 缓存保护
+
+Uniform 位置缓存使用互斥锁保护，支持多线程查询（但不推荐）：
+
+```cpp
+// 缓存访问是线程安全的（但 OpenGL 调用必须在正确的线程）
+bool exists = uniformMgr->HasUniform("color");  // 线程安全的缓存查询
+```
+
+**最佳实践**:
+1. 所有 UniformManager 操作都应在主渲染线程中进行
+2. 不要在工作线程中调用任何 UniformManager 方法
+3. 如需在其他线程中准备数据，先准备好数据，然后在渲染线程中设置 uniform
+
+**相关文档**: [GLThreadChecker API](GLThreadChecker.md)
+
+---
+
 ## 错误处理
 
 ```cpp
@@ -594,12 +637,14 @@ if (uniformMgr->HasUniform("optionalUniform")) {
 3. **批量设置**: 将相关 uniform 分组设置
 4. **调试**: 使用 `PrintUniformInfo()` 查看可用 uniform
 5. **命名一致**: C++ 代码中的名称要与着色器中的一致
+6. **线程安全**: 所有操作必须在主渲染线程中进行
 
 ---
 
 ## 相关文档
 
 - [Shader API](Shader.md)
+- [GLThreadChecker API](GLThreadChecker.md)
 - [Types API](Types.md)
 - [示例程序: 02_shader_test](../../examples/02_shader_test.cpp)
 

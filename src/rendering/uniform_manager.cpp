@@ -1,5 +1,6 @@
 #include "render/uniform_manager.h"
 #include "render/logger.h"
+#include "render/gl_thread_checker.h"
 #include <glad/glad.h>
 
 namespace Render {
@@ -15,6 +16,7 @@ UniformManager::~UniformManager() {
 void UniformManager::SetInt(const std::string& name, int value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform1i(location, value);
     }
 }
@@ -22,6 +24,7 @@ void UniformManager::SetInt(const std::string& name, int value) {
 void UniformManager::SetFloat(const std::string& name, float value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform1f(location, value);
     }
 }
@@ -29,6 +32,7 @@ void UniformManager::SetFloat(const std::string& name, float value) {
 void UniformManager::SetBool(const std::string& name, bool value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform1i(location, value ? 1 : 0);
     }
 }
@@ -36,6 +40,7 @@ void UniformManager::SetBool(const std::string& name, bool value) {
 void UniformManager::SetVector2(const std::string& name, const Vector2& value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform2f(location, value.x(), value.y());
     }
 }
@@ -43,6 +48,7 @@ void UniformManager::SetVector2(const std::string& name, const Vector2& value) {
 void UniformManager::SetVector3(const std::string& name, const Vector3& value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform3f(location, value.x(), value.y(), value.z());
     }
 }
@@ -50,6 +56,7 @@ void UniformManager::SetVector3(const std::string& name, const Vector3& value) {
 void UniformManager::SetVector4(const std::string& name, const Vector4& value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform4f(location, value.x(), value.y(), value.z(), value.w());
     }
 }
@@ -57,6 +64,7 @@ void UniformManager::SetVector4(const std::string& name, const Vector4& value) {
 void UniformManager::SetMatrix3(const std::string& name, const Matrix3& value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniformMatrix3fv(location, 1, GL_FALSE, value.data());
     }
 }
@@ -64,6 +72,7 @@ void UniformManager::SetMatrix3(const std::string& name, const Matrix3& value) {
 void UniformManager::SetMatrix4(const std::string& name, const Matrix4& value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniformMatrix4fv(location, 1, GL_FALSE, value.data());
     }
 }
@@ -71,6 +80,7 @@ void UniformManager::SetMatrix4(const std::string& name, const Matrix4& value) {
 void UniformManager::SetColor(const std::string& name, const Color& value) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform4f(location, value.r, value.g, value.b, value.a);
     }
 }
@@ -78,6 +88,7 @@ void UniformManager::SetColor(const std::string& name, const Color& value) {
 void UniformManager::SetIntArray(const std::string& name, const int* values, uint32_t count) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform1iv(location, count, values);
     }
 }
@@ -85,6 +96,7 @@ void UniformManager::SetIntArray(const std::string& name, const int* values, uin
 void UniformManager::SetFloatArray(const std::string& name, const float* values, uint32_t count) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform1fv(location, count, values);
     }
 }
@@ -92,6 +104,7 @@ void UniformManager::SetFloatArray(const std::string& name, const float* values,
 void UniformManager::SetVector3Array(const std::string& name, const Vector3* values, uint32_t count) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniform3fv(location, count, reinterpret_cast<const float*>(values));
     }
 }
@@ -99,6 +112,7 @@ void UniformManager::SetVector3Array(const std::string& name, const Vector3* val
 void UniformManager::SetMatrix4Array(const std::string& name, const Matrix4* values, uint32_t count) {
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
+        GL_THREAD_CHECK();
         glUniformMatrix4fv(location, count, GL_FALSE, reinterpret_cast<const float*>(values));
     }
 }
@@ -113,6 +127,7 @@ bool UniformManager::HasUniform(const std::string& name) const {
     }
     
     // 查询 OpenGL
+    GL_THREAD_CHECK();
     int location = glGetUniformLocation(m_programID, name.c_str());
     m_uniformLocationCache[name] = location;
     return location != -1;
@@ -128,6 +143,8 @@ void UniformManager::ClearCache() {
 }
 
 std::vector<std::string> UniformManager::GetAllUniformNames() const {
+    GL_THREAD_CHECK();
+    
     GLint numUniforms = 0;
     glGetProgramiv(m_programID, GL_ACTIVE_UNIFORMS, &numUniforms);
     
@@ -148,6 +165,8 @@ std::vector<std::string> UniformManager::GetAllUniformNames() const {
 }
 
 void UniformManager::PrintUniformInfo() const {
+    GL_THREAD_CHECK();
+    
     GLint numUniforms = 0;
     glGetProgramiv(m_programID, GL_ACTIVE_UNIFORMS, &numUniforms);
     
@@ -197,6 +216,7 @@ int UniformManager::GetOrFindUniformLocation(const std::string& name) {
     }
     
     // 查询位置
+    GL_THREAD_CHECK();
     int location = glGetUniformLocation(m_programID, name.c_str());
     
     if (location == -1) {
