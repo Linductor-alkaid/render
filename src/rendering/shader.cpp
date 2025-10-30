@@ -2,6 +2,7 @@
 #include "render/uniform_manager.h"
 #include "render/file_utils.h"
 #include "render/logger.h"
+#include "render/gl_thread_checker.h"
 #include <glad/glad.h>
 
 namespace Render {
@@ -130,11 +131,13 @@ bool Shader::LoadFromSource_Locked(const std::string& vertexSource,
 void Shader::Use() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_programID != 0) {
+        GL_THREAD_CHECK();
         glUseProgram(m_programID);
     }
 }
 
 void Shader::Unuse() const {
+    GL_THREAD_CHECK();
     glUseProgram(0);
 }
 
@@ -158,6 +161,8 @@ bool Shader::Reload() {
 }
 
 uint32_t Shader::CompileShader(const std::string& source, ShaderType type) {
+    GL_THREAD_CHECK();
+    
     GLenum glType;
     std::string typeName;
     
@@ -205,6 +210,8 @@ uint32_t Shader::CompileShader(const std::string& source, ShaderType type) {
 uint32_t Shader::LinkProgram(uint32_t vertexShader, 
                               uint32_t fragmentShader,
                               uint32_t geometryShader) {
+    GL_THREAD_CHECK();
+    
     // 创建程序
     uint32_t program = glCreateProgram();
     

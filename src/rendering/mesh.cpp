@@ -1,5 +1,6 @@
 #include "render/mesh.h"
 #include "render/logger.h"
+#include "render/gl_thread_checker.h"
 #include <algorithm>
 #include <unordered_map>
 
@@ -117,6 +118,7 @@ void Mesh::UpdateVertices(const std::vector<Vertex>& vertices, size_t offset) {
     std::copy(vertices.begin(), vertices.end(), m_Vertices.begin() + offset);
     
     // 更新 GPU 端数据
+    GL_THREAD_CHECK();
     glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
     glBufferSubData(GL_ARRAY_BUFFER, 
                     offset * sizeof(Vertex), 
@@ -151,6 +153,7 @@ void Mesh::Upload() {
     }
     
     // 创建 VAO
+    GL_THREAD_CHECK();
     glGenVertexArrays(1, &m_VAO);
     glBindVertexArray(m_VAO);
     
@@ -194,6 +197,7 @@ void Mesh::Draw(DrawMode mode) const {
         return;
     }
     
+    GL_THREAD_CHECK();
     glBindVertexArray(m_VAO);
     
     GLenum glMode = ConvertDrawMode(mode);
@@ -217,6 +221,7 @@ void Mesh::DrawInstanced(uint32_t instanceCount, DrawMode mode) const {
         return;
     }
     
+    GL_THREAD_CHECK();
     glBindVertexArray(m_VAO);
     
     GLenum glMode = ConvertDrawMode(mode);

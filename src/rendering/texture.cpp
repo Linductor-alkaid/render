@@ -1,5 +1,6 @@
 #include "render/texture.h"
 #include "render/logger.h"
+#include "render/gl_thread_checker.h"
 #include <SDL3_image/SDL_image.h>
 #include <SDL3/SDL.h>
 

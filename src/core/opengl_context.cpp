@@ -59,13 +59,20 @@ bool OpenGLContext::Initialize(const std::string& title,
     // 输出 OpenGL 信息
     LogGLInfo();
     
+    // 注册 OpenGL 线程 - 必须在所有 OpenGL 调用之前
+    GL_THREAD_REGISTER();
+    LOG_INFO("OpenGL thread registered for thread safety checks");
+    
     // 设置视口
+    GL_THREAD_CHECK();
     glViewport(0, 0, width, height);
     
     // 启用深度测试
+    GL_THREAD_CHECK();
     glEnable(GL_DEPTH_TEST);
     
     // 启用面剔除
+    GL_THREAD_CHECK();
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
@@ -82,6 +89,9 @@ void OpenGLContext::Shutdown() {
     }
     
     LOG_INFO("Shutting down OpenGL Context...");
+    
+    // 注销 OpenGL 线程
+    GL_THREAD_UNREGISTER();
     
     if (m_glContext) {
         SDL_GL_DestroyContext(m_glContext);
@@ -100,6 +110,7 @@ void OpenGLContext::Shutdown() {
 }
 
 void OpenGLContext::SwapBuffers() {
+    GL_THREAD_CHECK();
     if (m_window) {
         SDL_GL_SwapWindow(m_window);
     }
@@ -134,6 +145,7 @@ void OpenGLContext::SetWindowSize(int width, int height) {
         SDL_SetWindowSize(m_window, width, height);
         m_width = width;
         m_height = height;
+        GL_THREAD_CHECK();
         glViewport(0, 0, width, height);
         LOG_INFO("Window resized to " + std::to_string(width) + "x" + std::to_string(height));
     }
@@ -151,16 +163,19 @@ void OpenGLContext::SetFullscreen(bool fullscreen) {
 }
 
 std::string OpenGLContext::GetGLVersion() const {
+    GL_THREAD_CHECK();
     const GLubyte* version = glGetString(GL_VERSION);
     return version ? std::string(reinterpret_cast<const char*>(version)) : "Unknown";
 }
 
 std::string OpenGLContext::GetGPUInfo() const {
+    GL_THREAD_CHECK();
     const GLubyte* renderer = glGetString(GL_RENDERER);
     return renderer ? std::string(reinterpret_cast<const char*>(renderer)) : "Unknown";
 }
 
 bool OpenGLContext::IsExtensionSupported(const std::string& extension) const {
+    GL_THREAD_CHECK();
     GLint numExtensions = 0;
     glGetIntegerv(GL_NUM_EXTENSIONS, &numExtensions);
     
@@ -233,6 +248,8 @@ bool OpenGLContext::InitializeGLAD() {
 }
 
 void OpenGLContext::LogGLInfo() {
+    // 注意：这个函数在 GL_THREAD_REGISTER 之前调用，所以不能使用 GL_THREAD_CHECK
+    // GetGLVersion 和 GetGPUInfo 内部有自己的检查，但此时会跳过（因为还未注册）
     LOG_INFO("OpenGL Information:");
     LOG_INFO("  Version: " + GetGLVersion());
     LOG_INFO("  Vendor: " + std::string(reinterpret_cast<const char*>(glGetString(GL_VENDOR))));

@@ -311,9 +311,11 @@ int main() {
 ## 相关文档
 
 - [Renderer API](Renderer.md)
+- [GLThreadChecker API](GLThreadChecker.md) - OpenGL 线程安全检查 ⭐ **新增**
 - [示例程序: 01_basic_window](../../examples/01_basic_window.cpp)
+- [示例程序: 22_gl_thread_safety_test](../../examples/22_gl_thread_safety_test.cpp) - 线程安全测试 ⭐ **新增**
 
 ---
 
-[上一篇: RenderState](RenderState.md) | [下一篇: Logger](Logger.md)
+[上一篇: RenderState](RenderState.md) | [下一篇: GLThreadChecker](GLThreadChecker.md)
 

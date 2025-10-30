@@ -1,6 +1,7 @@
 #pragma once
 
 #include "render/types.h"
+#include "render/gl_thread_checker.h"
 #include <SDL3/SDL.h>
 #include <string>
 

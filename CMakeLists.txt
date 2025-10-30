@@ -182,6 +182,7 @@ set(RENDER_SOURCES
     src/core/resource_manager.cpp
     src/core/transform.cpp
     src/core/camera.cpp
+    src/core/gl_thread_checker.cpp
     
     # Rendering
     src/rendering/shader.cpp
@@ -211,6 +212,7 @@ set(RENDER_HEADERS
     include/render/transform.h
     include/render/camera.h
     include/render/math_utils.h
+    include/render/gl_thread_checker.h
     
     # Rendering
     include/render/shader.h
