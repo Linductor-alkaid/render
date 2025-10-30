@@ -187,7 +187,7 @@ bool InitScene(Renderer& renderer) {
  */
 void RenderScene(Renderer& renderer) {
     // 清屏
-    auto* renderState = renderer.GetRenderState();
+    auto renderState = renderer.GetRenderState();
     renderState->Clear();
     
     // 使用全局持有的资源引用
@@ -226,7 +226,7 @@ void RenderScene(Renderer& renderer) {
     Matrix4 mvpMatrix = projMatrix * viewMatrix * modelMatrix;
     
     // 绑定材质并设置 uniforms
-    activeMaterial->Bind(renderer.GetRenderState());
+    activeMaterial->Bind(renderer.GetRenderState().get());
     
     auto* uniformMgr = activeMaterial->GetShader()->GetUniformManager();
     uniformMgr->SetMatrix4("uProjection", projMatrix);
@@ -379,7 +379,7 @@ int main(int argc, char* argv[]) {
         }
         
         // 设置渲染状态
-        auto* renderState = renderer.GetRenderState();
+        auto renderState = renderer.GetRenderState();
         renderState->SetDepthTest(true);
         renderState->SetCullFace(CullFace::Back);
         renderState->SetClearColor(Color(0.1f, 0.1f, 0.15f, 1.0f));

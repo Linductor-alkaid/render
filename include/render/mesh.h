@@ -150,19 +150,141 @@ public:
     void Clear();
     
     /**
-     * @brief 获取顶点数据
+     * @brief 获取顶点数据（已弃用，请使用 AccessVertices 或 LockVertices）
+     * @deprecated 返回副本较慢，推荐使用访问器方法
      */
-    const std::vector<Vertex>& GetVertices() const { 
+    [[deprecated("Use AccessVertices() or LockVertices() instead")]]
+    std::vector<Vertex> GetVertices() const { 
         std::lock_guard<std::mutex> lock(m_Mutex);
-        return m_Vertices; 
+        return m_Vertices;  // 返回副本以保证线程安全
     }
     
     /**
-     * @brief 获取索引数据
+     * @brief 获取索引数据（已弃用，请使用 AccessIndices 或 LockIndices）
+     * @deprecated 返回副本较慢，推荐使用访问器方法
      */
-    const std::vector<uint32_t>& GetIndices() const { 
+    [[deprecated("Use AccessIndices() or LockIndices() instead")]]
+    std::vector<uint32_t> GetIndices() const { 
         std::lock_guard<std::mutex> lock(m_Mutex);
-        return m_Indices; 
+        return m_Indices;  // 返回副本以保证线程安全
+    }
+    
+    /**
+     * @brief 通过回调访问顶点数据（方法1：推荐）
+     * 
+     * 使用回调方式在锁保护下访问顶点数据，避免数据竞争
+     * 
+     * @param func 回调函数，接受 const std::vector<Vertex>& 参数
+     * 
+     * @example
+     * mesh->AccessVertices([](const std::vector<Vertex>& vertices) {
+     *     for (const auto& v : vertices) {
+     *         // 处理顶点数据
+     *     }
+     * });
+     */
+    template<typename Func>
+    void AccessVertices(Func&& func) const {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        func(m_Vertices);
+    }
+    
+    /**
+     * @brief 通过回调访问索引数据（方法1：推荐）
+     * 
+     * 使用回调方式在锁保护下访问索引数据，避免数据竞争
+     * 
+     * @param func 回调函数，接受 const std::vector<uint32_t>& 参数
+     * 
+     * @example
+     * mesh->AccessIndices([](const std::vector<uint32_t>& indices) {
+     *     for (const auto& idx : indices) {
+     *         // 处理索引数据
+     *     }
+     * });
+     */
+    template<typename Func>
+    void AccessIndices(Func&& func) const {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        func(m_Indices);
+    }
+    
+    /**
+     * @brief RAII 顶点数据守卫（方法2）
+     * 
+     * 在对象生命周期内持有锁，允许安全访问顶点数据
+     */
+    class VertexGuard {
+    public:
+        VertexGuard(const Mesh& mesh) 
+            : m_mesh(mesh), m_lock(mesh.m_Mutex) {}
+        
+        const std::vector<Vertex>& Get() const { 
+            return m_mesh.m_Vertices; 
+        }
+        
+    private:
+        const Mesh& m_mesh;
+        std::lock_guard<std::mutex> m_lock;
+    };
+    
+    /**
+     * @brief RAII 索引数据守卫（方法2）
+     * 
+     * 在对象生命周期内持有锁，允许安全访问索引数据
+     */
+    class IndexGuard {
+    public:
+        IndexGuard(const Mesh& mesh) 
+            : m_mesh(mesh), m_lock(mesh.m_Mutex) {}
+        
+        const std::vector<uint32_t>& Get() const { 
+            return m_mesh.m_Indices; 
+        }
+        
+    private:
+        const Mesh& m_mesh;
+        std::lock_guard<std::mutex> m_lock;
+    };
+    
+    /**
+     * @brief 获取顶点数据的锁保护访问（方法2）
+     * 
+     * 返回 RAII 守卫对象，在其生命周期内持有锁
+     * 
+     * @return VertexGuard 守卫对象
+     * 
+     * @example
+     * {
+     *     auto guard = mesh->LockVertices();
+     *     const auto& vertices = guard.Get();
+     *     for (const auto& v : vertices) {
+     *         // 处理顶点数据
+     *     }
+     * }  // 作用域结束，自动解锁
+     */
+    VertexGuard LockVertices() const {
+        return VertexGuard(*this);
+    }
+    
+    /**
+     * @brief 获取索引数据的锁保护访问（方法2）
+     * 
+     * 返回 RAII 守卫对象，在其生命周期内持有锁
+     * 
+     * @return IndexGuard 守卫对象
+     * 
+     * @example
+     * {
+     *     auto guard = mesh->LockIndices();
+     *     const auto& indices = guard.Get();
+     *     for (const auto& idx : indices) {
+     *         // 处理索引数据
+     *     }
+     * }  // 作用域结束，自动解锁
+     */
+    IndexGuard LockIndices() const {
+        return IndexGuard(*this);
     }
     
     /**

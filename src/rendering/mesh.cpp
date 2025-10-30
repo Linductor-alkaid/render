@@ -55,14 +55,17 @@ Mesh& Mesh::operator=(Mesh&& other) noexcept {
         
         // 释放当前网格资源（内部实现，已持有锁）
         if (m_VAO != 0) {
+            GL_THREAD_CHECK();
             glDeleteVertexArrays(1, &m_VAO);
             m_VAO = 0;
         }
         if (m_VBO != 0) {
+            GL_THREAD_CHECK();
             glDeleteBuffers(1, &m_VBO);
             m_VBO = 0;
         }
         if (m_EBO != 0) {
+            GL_THREAD_CHECK();
             glDeleteBuffers(1, &m_EBO);
             m_EBO = 0;
         }
@@ -138,14 +141,17 @@ void Mesh::Upload() {
     // 如果已经上传过，先清理旧资源（内部实现，已持有锁）
     if (m_Uploaded) {
         if (m_VAO != 0) {
+            GL_THREAD_CHECK();
             glDeleteVertexArrays(1, &m_VAO);
             m_VAO = 0;
         }
         if (m_VBO != 0) {
+            GL_THREAD_CHECK();
             glDeleteBuffers(1, &m_VBO);
             m_VBO = 0;
         }
         if (m_EBO != 0) {
+            GL_THREAD_CHECK();
             glDeleteBuffers(1, &m_EBO);
             m_EBO = 0;
         }
@@ -242,16 +248,19 @@ void Mesh::Clear() {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
     if (m_VAO != 0) {
+        GL_THREAD_CHECK();
         glDeleteVertexArrays(1, &m_VAO);
         m_VAO = 0;
     }
     
     if (m_VBO != 0) {
+        GL_THREAD_CHECK();
         glDeleteBuffers(1, &m_VBO);
         m_VBO = 0;
     }
     
     if (m_EBO != 0) {
+        GL_THREAD_CHECK();
         glDeleteBuffers(1, &m_EBO);
         m_EBO = 0;
     }

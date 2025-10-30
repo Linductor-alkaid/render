@@ -63,7 +63,7 @@ void TestConcurrentSettingChanges(int threadId) {
             g_renderer->SetClearColor(r, g, b, 1.0f);
             
             // 获取渲染状态并修改
-            auto* renderState = g_renderer->GetRenderState();
+            auto renderState = g_renderer->GetRenderState();
             if (renderState) {
                 renderState->SetDepthTest(iterations % 2 == 0);
                 renderState->SetBlendMode(iterations % 2 == 0 ? BlendMode::Alpha : BlendMode::None);
@@ -121,8 +121,8 @@ void TestConcurrentContextAccess(int threadId) {
     int iterations = 0;
     while (g_running && iterations < 100) {
         if (g_renderer && g_renderer->IsInitialized()) {
-            // 获取上下文指针（不实际调用 OpenGL 函数，因为可能不在正确的线程）
-            auto* context = g_renderer->GetContext();
+            // 获取上下文（不实际调用 OpenGL 函数，因为可能不在正确的线程）
+            auto context = g_renderer->GetContext();
             if (context) {
                 // 只是验证指针有效性
                 bool isInit = context->IsInitialized();

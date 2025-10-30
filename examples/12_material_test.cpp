@@ -205,7 +205,7 @@ void UpdateScene(float deltaTime) {
  */
 void RenderScene(Renderer& renderer) {
     // 清空屏幕
-    auto* renderState = renderer.GetRenderState();
+    auto renderState = renderer.GetRenderState();
     renderState->SetClearColor(Color(0.1f, 0.1f, 0.15f, 1.0f));
     renderState->Clear();
     
@@ -245,7 +245,7 @@ void RenderScene(Renderer& renderer) {
         auto& material = materials[currentMaterialIndex];
         
         // 应用材质
-        material->Bind(renderState);
+        material->Bind(renderState.get());
         
         // 设置变换矩阵和光照
         auto* uniformMgr = material->GetShader()->GetUniformManager();

@@ -155,20 +155,19 @@ public:
     
     /**
      * @brief 获取 OpenGL 上下文
-     * 注意：返回的指针在其他线程调用 Shutdown 时可能失效
+     * 返回 shared_ptr，避免悬空指针
      */
-    OpenGLContext* GetContext() { 
+    std::shared_ptr<OpenGLContext> GetContext() const { 
         std::lock_guard<std::mutex> lock(m_mutex);
-        return m_context.get(); 
+        return m_context; 
     }
     
     /**
      * @brief 获取渲染状态管理器
-     * RenderState 本身是线程安全的
      */
-    RenderState* GetRenderState() { 
+    std::shared_ptr<RenderState> GetRenderState() const { 
         std::lock_guard<std::mutex> lock(m_mutex);
-        return m_renderState.get(); 
+        return m_renderState; 
     }
     
     /**
@@ -179,8 +178,8 @@ public:
 private:
     void UpdateStats();
     
-    std::unique_ptr<OpenGLContext> m_context;
-    std::unique_ptr<RenderState> m_renderState;
+    std::shared_ptr<OpenGLContext> m_context;
+    std::shared_ptr<RenderState> m_renderState;
     
     std::atomic<bool> m_initialized;
     RenderStats m_stats;

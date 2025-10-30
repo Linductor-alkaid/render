@@ -112,7 +112,7 @@ void CreateTriangle(GLuint& vao, GLuint& vbo, GLuint& ebo, float offsetX) {
 /**
  * @brief 测试状态管理
  */
-void TestStateManagement(RenderState* state) {
+void TestStateManagement(const std::shared_ptr<RenderState>& state) {
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("开始测试状态管理功能");
     Logger::GetInstance().Info("========================================");
@@ -168,7 +168,7 @@ void TestStateManagement(RenderState* state) {
  * @brief 渲染场景
  */
 void RenderScene(Renderer& renderer) {
-    RenderState* state = renderer.GetRenderState();
+    auto state = renderer.GetRenderState();
     
     renderer.BeginFrame();
     renderer.Clear(true, true);

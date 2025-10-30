@@ -9,6 +9,11 @@ ResourceManager& ResourceManager::GetInstance() {
     return instance;
 }
 
+void ResourceManager::BeginFrame() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    ++m_currentFrame;
+}
+
 // ============================================================================
 // 纹理管理
 // ============================================================================
@@ -26,7 +31,7 @@ bool ResourceManager::RegisterTexture(const std::string& name, Ref<Texture> text
         return false;
     }
     
-    m_textures[name] = texture;
+    m_textures[name] = ResourceEntry<Texture>(texture, m_currentFrame);
     Logger::GetInstance().Debug("ResourceManager: 注册纹理: " + name);
     return true;
 }
@@ -36,7 +41,8 @@ Ref<Texture> ResourceManager::GetTexture(const std::string& name) {
     
     auto it = m_textures.find(name);
     if (it != m_textures.end()) {
-        return it->second;
+        it->second.lastAccessFrame = m_currentFrame;  // 更新访问帧
+        return it->second.resource;
     }
     
     return nullptr;
@@ -77,7 +83,7 @@ bool ResourceManager::RegisterMesh(const std::string& name, Ref<Mesh> mesh) {
         return false;
     }
     
-    m_meshes[name] = mesh;
+    m_meshes[name] = ResourceEntry<Mesh>(mesh, m_currentFrame);
     Logger::GetInstance().Debug("ResourceManager: 注册网格: " + name);
     return true;
 }
@@ -87,7 +93,8 @@ Ref<Mesh> ResourceManager::GetMesh(const std::string& name) {
     
     auto it = m_meshes.find(name);
     if (it != m_meshes.end()) {
-        return it->second;
+        it->second.lastAccessFrame = m_currentFrame;  // 更新访问帧
+        return it->second.resource;
     }
     
     return nullptr;
@@ -128,7 +135,7 @@ bool ResourceManager::RegisterMaterial(const std::string& name, Ref<Material> ma
         return false;
     }
     
-    m_materials[name] = material;
+    m_materials[name] = ResourceEntry<Material>(material, m_currentFrame);
     Logger::GetInstance().Debug("ResourceManager: 注册材质: " + name);
     return true;
 }
@@ -138,7 +145,8 @@ Ref<Material> ResourceManager::GetMaterial(const std::string& name) {
     
     auto it = m_materials.find(name);
     if (it != m_materials.end()) {
-        return it->second;
+        it->second.lastAccessFrame = m_currentFrame;  // 更新访问帧
+        return it->second.resource;
     }
     
     return nullptr;
@@ -179,7 +187,7 @@ bool ResourceManager::RegisterShader(const std::string& name, Ref<Shader> shader
         return false;
     }
     
-    m_shaders[name] = shader;
+    m_shaders[name] = ResourceEntry<Shader>(shader, m_currentFrame);
     Logger::GetInstance().Debug("ResourceManager: 注册着色器: " + name);
     return true;
 }
@@ -189,7 +197,8 @@ Ref<Shader> ResourceManager::GetShader(const std::string& name) {
     
     auto it = m_shaders.find(name);
     if (it != m_shaders.end()) {
-        return it->second;
+        it->second.lastAccessFrame = m_currentFrame;  // 更新访问帧
+        return it->second.resource;
     }
     
     return nullptr;
@@ -251,52 +260,103 @@ void ResourceManager::ClearType(ResourceType type) {
     }
 }
 
-size_t ResourceManager::CleanupUnused() {
+size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     size_t cleanedCount = 0;
     
-    // 清理纹理
-    for (auto it = m_textures.begin(); it != m_textures.end();) {
-        if (it->second.use_count() == 1) {
-            Logger::GetInstance().Debug("ResourceManager: 清理未使用纹理: " + it->first);
-            it = m_textures.erase(it);
-            ++cleanedCount;
-        } else {
-            ++it;
+    // 阶段1: 标记待删除的资源
+    std::vector<std::string> texturesToDelete;
+    std::vector<std::string> meshesToDelete;
+    std::vector<std::string> materialsToDelete;
+    std::vector<std::string> shadersToDelete;
+    
+    // 标记纹理
+    for (auto& [name, entry] : m_textures) {
+        bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+        bool onlyManagerRef = entry.resource.use_count() == 1;
+        
+        if (unused && onlyManagerRef) {
+            texturesToDelete.push_back(name);
+            entry.markedForDeletion = true;
         }
     }
     
-    // 清理网格
-    for (auto it = m_meshes.begin(); it != m_meshes.end();) {
-        if (it->second.use_count() == 1) {
-            Logger::GetInstance().Debug("ResourceManager: 清理未使用网格: " + it->first);
-            it = m_meshes.erase(it);
-            ++cleanedCount;
-        } else {
-            ++it;
+    // 标记网格
+    for (auto& [name, entry] : m_meshes) {
+        bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+        bool onlyManagerRef = entry.resource.use_count() == 1;
+        
+        if (unused && onlyManagerRef) {
+            meshesToDelete.push_back(name);
+            entry.markedForDeletion = true;
         }
     }
     
-    // 清理材质
-    for (auto it = m_materials.begin(); it != m_materials.end();) {
-        if (it->second.use_count() == 1) {
-            Logger::GetInstance().Debug("ResourceManager: 清理未使用材质: " + it->first);
-            it = m_materials.erase(it);
-            ++cleanedCount;
-        } else {
-            ++it;
+    // 标记材质
+    for (auto& [name, entry] : m_materials) {
+        bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+        bool onlyManagerRef = entry.resource.use_count() == 1;
+        
+        if (unused && onlyManagerRef) {
+            materialsToDelete.push_back(name);
+            entry.markedForDeletion = true;
         }
     }
     
-    // 清理着色器
-    for (auto it = m_shaders.begin(); it != m_shaders.end();) {
-        if (it->second.use_count() == 1) {
-            Logger::GetInstance().Debug("ResourceManager: 清理未使用着色器: " + it->first);
-            it = m_shaders.erase(it);
+    // 标记着色器
+    for (auto& [name, entry] : m_shaders) {
+        bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+        bool onlyManagerRef = entry.resource.use_count() == 1;
+        
+        if (unused && onlyManagerRef) {
+            shadersToDelete.push_back(name);
+            entry.markedForDeletion = true;
+        }
+    }
+    
+    // 阶段2: 再次检查并删除
+    // 删除纹理
+    for (const auto& name : texturesToDelete) {
+        auto it = m_textures.find(name);
+        if (it != m_textures.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+            Logger::GetInstance().Debug("ResourceManager: 清理未使用纹理: " + name + 
+                " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
+            m_textures.erase(it);
             ++cleanedCount;
-        } else {
-            ++it;
+        }
+    }
+    
+    // 删除网格
+    for (const auto& name : meshesToDelete) {
+        auto it = m_meshes.find(name);
+        if (it != m_meshes.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+            Logger::GetInstance().Debug("ResourceManager: 清理未使用网格: " + name + 
+                " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
+            m_meshes.erase(it);
+            ++cleanedCount;
+        }
+    }
+    
+    // 删除材质
+    for (const auto& name : materialsToDelete) {
+        auto it = m_materials.find(name);
+        if (it != m_materials.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+            Logger::GetInstance().Debug("ResourceManager: 清理未使用材质: " + name + 
+                " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
+            m_materials.erase(it);
+            ++cleanedCount;
+        }
+    }
+    
+    // 删除着色器
+    for (const auto& name : shadersToDelete) {
+        auto it = m_shaders.find(name);
+        if (it != m_shaders.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+            Logger::GetInstance().Debug("ResourceManager: 清理未使用着色器: " + name + 
+                " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
+            m_shaders.erase(it);
+            ++cleanedCount;
         }
     }
     
@@ -307,59 +367,105 @@ size_t ResourceManager::CleanupUnused() {
     return cleanedCount;
 }
 
-size_t ResourceManager::CleanupUnusedType(ResourceType type) {
+size_t ResourceManager::CleanupUnusedType(ResourceType type, uint32_t unusedFrames) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     size_t cleanedCount = 0;
     
     switch (type) {
-        case ResourceType::Texture:
-            for (auto it = m_textures.begin(); it != m_textures.end();) {
-                if (it->second.use_count() == 1) {
-                    Logger::GetInstance().Debug("ResourceManager: 清理未使用纹理: " + it->first);
-                    it = m_textures.erase(it);
-                    ++cleanedCount;
-                } else {
-                    ++it;
+        case ResourceType::Texture: {
+            // 阶段1: 标记
+            std::vector<std::string> toDelete;
+            for (auto& [name, entry] : m_textures) {
+                bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+                bool onlyManagerRef = entry.resource.use_count() == 1;
+                
+                if (unused && onlyManagerRef) {
+                    toDelete.push_back(name);
+                    entry.markedForDeletion = true;
                 }
             }
-            break;
             
-        case ResourceType::Mesh:
-            for (auto it = m_meshes.begin(); it != m_meshes.end();) {
-                if (it->second.use_count() == 1) {
-                    Logger::GetInstance().Debug("ResourceManager: 清理未使用网格: " + it->first);
-                    it = m_meshes.erase(it);
+            // 阶段2: 删除
+            for (const auto& name : toDelete) {
+                auto it = m_textures.find(name);
+                if (it != m_textures.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+                    Logger::GetInstance().Debug("ResourceManager: 清理未使用纹理: " + name);
+                    m_textures.erase(it);
                     ++cleanedCount;
-                } else {
-                    ++it;
                 }
             }
             break;
+        }
             
-        case ResourceType::Material:
-            for (auto it = m_materials.begin(); it != m_materials.end();) {
-                if (it->second.use_count() == 1) {
-                    Logger::GetInstance().Debug("ResourceManager: 清理未使用材质: " + it->first);
-                    it = m_materials.erase(it);
-                    ++cleanedCount;
-                } else {
-                    ++it;
+        case ResourceType::Mesh: {
+            std::vector<std::string> toDelete;
+            for (auto& [name, entry] : m_meshes) {
+                bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+                bool onlyManagerRef = entry.resource.use_count() == 1;
+                
+                if (unused && onlyManagerRef) {
+                    toDelete.push_back(name);
+                    entry.markedForDeletion = true;
                 }
             }
-            break;
             
-        case ResourceType::Shader:
-            for (auto it = m_shaders.begin(); it != m_shaders.end();) {
-                if (it->second.use_count() == 1) {
-                    Logger::GetInstance().Debug("ResourceManager: 清理未使用着色器: " + it->first);
-                    it = m_shaders.erase(it);
+            for (const auto& name : toDelete) {
+                auto it = m_meshes.find(name);
+                if (it != m_meshes.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+                    Logger::GetInstance().Debug("ResourceManager: 清理未使用网格: " + name);
+                    m_meshes.erase(it);
                     ++cleanedCount;
-                } else {
-                    ++it;
                 }
             }
             break;
+        }
+            
+        case ResourceType::Material: {
+            std::vector<std::string> toDelete;
+            for (auto& [name, entry] : m_materials) {
+                bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+                bool onlyManagerRef = entry.resource.use_count() == 1;
+                
+                if (unused && onlyManagerRef) {
+                    toDelete.push_back(name);
+                    entry.markedForDeletion = true;
+                }
+            }
+            
+            for (const auto& name : toDelete) {
+                auto it = m_materials.find(name);
+                if (it != m_materials.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+                    Logger::GetInstance().Debug("ResourceManager: 清理未使用材质: " + name);
+                    m_materials.erase(it);
+                    ++cleanedCount;
+                }
+            }
+            break;
+        }
+            
+        case ResourceType::Shader: {
+            std::vector<std::string> toDelete;
+            for (auto& [name, entry] : m_shaders) {
+                bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+                bool onlyManagerRef = entry.resource.use_count() == 1;
+                
+                if (unused && onlyManagerRef) {
+                    toDelete.push_back(name);
+                    entry.markedForDeletion = true;
+                }
+            }
+            
+            for (const auto& name : toDelete) {
+                auto it = m_shaders.find(name);
+                if (it != m_shaders.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+                    Logger::GetInstance().Debug("ResourceManager: 清理未使用着色器: " + name);
+                    m_shaders.erase(it);
+                    ++cleanedCount;
+                }
+            }
+            break;
+        }
     }
     
     if (cleanedCount > 0) {
@@ -384,13 +490,13 @@ ResourceStats ResourceManager::GetStats() const {
     stats.totalCount = stats.textureCount + stats.meshCount + stats.materialCount + stats.shaderCount;
     
     // 计算纹理内存
-    for (const auto& [name, texture] : m_textures) {
-        stats.textureMemory += texture->GetMemoryUsage();
+    for (const auto& [name, entry] : m_textures) {
+        stats.textureMemory += entry.resource->GetMemoryUsage();
     }
     
     // 计算网格内存
-    for (const auto& [name, mesh] : m_meshes) {
-        stats.meshMemory += mesh->GetMemoryUsage();
+    for (const auto& [name, entry] : m_meshes) {
+        stats.meshMemory += entry.resource->GetMemoryUsage();
     }
     
     stats.totalMemory = stats.textureMemory + stats.meshMemory;
@@ -404,19 +510,19 @@ long ResourceManager::GetReferenceCount(ResourceType type, const std::string& na
     switch (type) {
         case ResourceType::Texture: {
             auto it = m_textures.find(name);
-            return (it != m_textures.end()) ? it->second.use_count() : 0;
+            return (it != m_textures.end()) ? it->second.resource.use_count() : 0;
         }
         case ResourceType::Mesh: {
             auto it = m_meshes.find(name);
-            return (it != m_meshes.end()) ? it->second.use_count() : 0;
+            return (it != m_meshes.end()) ? it->second.resource.use_count() : 0;
         }
         case ResourceType::Material: {
             auto it = m_materials.find(name);
-            return (it != m_materials.end()) ? it->second.use_count() : 0;
+            return (it != m_materials.end()) ? it->second.resource.use_count() : 0;
         }
         case ResourceType::Shader: {
             auto it = m_shaders.find(name);
-            return (it != m_shaders.end()) ? it->second.use_count() : 0;
+            return (it != m_shaders.end()) ? it->second.resource.use_count() : 0;
         }
     }
     
@@ -492,32 +598,32 @@ std::vector<std::string> ResourceManager::ListShaders() const {
 void ResourceManager::ForEachTexture(std::function<void(const std::string&, Ref<Texture>)> callback) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    for (const auto& [name, texture] : m_textures) {
-        callback(name, texture);
+    for (const auto& [name, entry] : m_textures) {
+        callback(name, entry.resource);
     }
 }
 
 void ResourceManager::ForEachMesh(std::function<void(const std::string&, Ref<Mesh>)> callback) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    for (const auto& [name, mesh] : m_meshes) {
-        callback(name, mesh);
+    for (const auto& [name, entry] : m_meshes) {
+        callback(name, entry.resource);
     }
 }
 
 void ResourceManager::ForEachMaterial(std::function<void(const std::string&, Ref<Material>)> callback) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    for (const auto& [name, material] : m_materials) {
-        callback(name, material);
+    for (const auto& [name, entry] : m_materials) {
+        callback(name, entry.resource);
     }
 }
 
 void ResourceManager::ForEachShader(std::function<void(const std::string&, Ref<Shader>)> callback) {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    for (const auto& [name, shader] : m_shaders) {
-        callback(name, shader);
+    for (const auto& [name, entry] : m_shaders) {
+        callback(name, entry.resource);
     }
 }
 

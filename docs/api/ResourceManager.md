@@ -17,7 +17,8 @@
 ✅ **统一管理**: 统一管理纹理、网格、材质、着色器四种资源类型  
 ✅ **线程安全**: 所有公共方法使用互斥锁保护，支持多线程访问  
 ✅ **引用计数**: 基于 `std::shared_ptr` 的自动引用计数管理  
-✅ **自动清理**: 支持清理未使用资源（引用计数为1）  
+✅ **智能清理**: 基于帧追踪和两阶段清理策略，安全清理未使用资源  
+✅ **访问追踪**: 自动追踪资源访问帧，防止意外删除活跃资源  
 ✅ **资源统计**: 提供详细的资源统计和监控功能  
 ✅ **批量操作**: 支持批量清理和遍历操作  
 
@@ -54,11 +55,14 @@ public:
     bool RemoveShader(const std::string& name);
     bool HasShader(const std::string& name) const;
     
+    // 帧管理
+    void BeginFrame();
+    
     // 批量操作
     void Clear();
     void ClearType(ResourceType type);
-    size_t CleanupUnused();
-    size_t CleanupUnusedType(ResourceType type);
+    size_t CleanupUnused(uint32_t unusedFrames = 60);
+    size_t CleanupUnusedType(ResourceType type, uint32_t unusedFrames = 60);
     
     // 统计和监控
     ResourceStats GetStats() const;
@@ -93,6 +97,21 @@ enum class ResourceType {
     Shader      // 着色器
 };
 ```
+
+### ResourceEntry<T>
+
+资源条目结构，封装资源引用和访问信息。
+
+```cpp
+template<typename T>
+struct ResourceEntry {
+    std::shared_ptr<T> resource;        // 资源引用
+    bool markedForDeletion = false;     // 删除标记（用于两阶段清理）
+    uint32_t lastAccessFrame = 0;       // 最后访问帧号
+};
+```
+
+**说明**: 内部使用的结构，用户代码不需要直接访问。
 
 ### ResourceStats
 
@@ -133,6 +152,45 @@ auto& resMgr = ResourceManager::GetInstance();
 
 ---
 
+## 帧管理
+
+### BeginFrame()
+
+开始新的一帧，更新帧计数器。
+
+```cpp
+void BeginFrame()
+```
+
+**说明**: 
+- 应在每帧开始时调用（通常在主循环中）
+- 用于跟踪资源访问，支持基于帧数的资源清理
+- 内部维护帧计数器，每次调用递增
+
+**示例**:
+```cpp
+auto& resMgr = ResourceManager::GetInstance();
+
+// 主循环
+while (running) {
+    // 每帧开始时调用
+    resMgr.BeginFrame();
+    
+    // ... 渲染代码 ...
+    
+    // 定期清理未使用资源
+    if (frameCount % 60 == 0) {
+        resMgr.CleanupUnused(60);  // 清理60帧未使用的资源
+    }
+}
+```
+
+**重要**: 
+- 如果不调用 `BeginFrame()`，资源的访问帧信息不会更新
+- `CleanupUnused()` 依赖于帧追踪信息，建议始终调用 `BeginFrame()`
+
+---
+
 ## 纹理管理
 
 ### RegisterTexture()
@@ -169,6 +227,10 @@ Ref<Texture> GetTexture(const std::string& name)
 
 **返回值**: 纹理对象，不存在返回 `nullptr`
 
+**说明**: 
+- 每次调用会自动更新资源的最后访问帧号
+- 访问过的资源不会被立即清理，除非长时间未使用
+
 **示例**:
 ```cpp
 auto texture = resMgr.GetTexture("my_texture");
@@ -176,6 +238,8 @@ if (texture) {
     texture->Bind(0);
 }
 ```
+
+**注意**: 其他 `Get*` 方法（`GetMesh()`、`GetMaterial()`、`GetShader()`）也会自动更新访问帧
 
 ### RemoveTexture()
 
@@ -370,15 +434,50 @@ resMgr.ClearType(ResourceType::Texture);
 清理未使用的资源（引用计数为1，仅被管理器持有）。
 
 ```cpp
-size_t CleanupUnused()
+size_t CleanupUnused(uint32_t unusedFrames = 60)
 ```
+
+**参数**:
+- `unusedFrames` - 资源多少帧未使用后清理（默认60帧）
 
 **返回值**: 清理的资源数量
 
+**清理策略**:
+1. **两阶段清理**: 先标记待删除资源，再检查并删除，避免竞态条件
+2. **帧数判断**: 只清理超过 `unusedFrames` 帧未访问的资源
+3. **引用计数**: 只清理引用计数为1（仅被管理器持有）的资源
+4. **详细日志**: 清理时输出资源名称和未使用的帧数
+
 **示例**:
 ```cpp
+// 清理60帧未使用的资源（默认）
 size_t cleaned = resMgr.CleanupUnused();
 LOG_INFO("清理了 " + std::to_string(cleaned) + " 个未使用资源");
+
+// 清理30帧未使用的资源（更激进）
+size_t cleaned = resMgr.CleanupUnused(30);
+
+// 立即清理所有未使用资源
+size_t cleaned = resMgr.CleanupUnused(0);
+```
+
+**最佳实践**:
+```cpp
+void MainLoop() {
+    auto& resMgr = ResourceManager::GetInstance();
+    int frameCount = 0;
+    
+    while (running) {
+        resMgr.BeginFrame();  // 更新帧计数
+        
+        // 渲染代码...
+        
+        // 每60帧清理一次
+        if (++frameCount % 60 == 0) {
+            resMgr.CleanupUnused(120);  // 清理120帧未使用的资源
+        }
+    }
+}
 ```
 
 ### CleanupUnusedType()
@@ -386,13 +485,20 @@ LOG_INFO("清理了 " + std::to_string(cleaned) + " 个未使用资源");
 清理指定类型的未使用资源。
 
 ```cpp
-size_t CleanupUnusedType(ResourceType type)
+size_t CleanupUnusedType(ResourceType type, uint32_t unusedFrames = 60)
 ```
+
+**参数**:
+- `type` - 资源类型
+- `unusedFrames` - 资源多少帧未使用后清理（默认60帧）
 
 **示例**:
 ```cpp
-// 只清理未使用的网格
-size_t cleaned = resMgr.CleanupUnusedType(ResourceType::Mesh);
+// 只清理60帧未使用的网格
+size_t cleaned = resMgr.CleanupUnusedType(ResourceType::Mesh, 60);
+
+// 立即清理所有未使用的纹理
+size_t cleaned = resMgr.CleanupUnusedType(ResourceType::Texture, 0);
 ```
 
 ---
@@ -549,13 +655,25 @@ int main() {
     material->SetDiffuseColor(Color::Red());
     resMgr.RegisterMaterial("my_material", material);
     
-    // 4. 使用资源
-    auto mesh = resMgr.GetMesh("my_cube");
-    auto mat = resMgr.GetMaterial("my_material");
-    
-    mat->Bind();
-    mesh->Draw();
-    mat->Unbind();
+    // 4. 主循环
+    while (running) {
+        // 每帧开始
+        resMgr.BeginFrame();
+        
+        // 使用资源
+        auto mesh = resMgr.GetMesh("my_cube");
+        auto mat = resMgr.GetMaterial("my_material");
+        
+        mat->Bind();
+        mesh->Draw();
+        mat->Unbind();
+        
+        // 定期清理
+        static int frameCount = 0;
+        if (++frameCount % 60 == 0) {
+            resMgr.CleanupUnused(60);
+        }
+    }
     
     // 5. 打印统计
     resMgr.PrintStatistics();
@@ -573,8 +691,8 @@ private:
     
 public:
     void LoadScene(const std::string& sceneName) {
-        // 清理旧场景资源
-        m_resourceMgr.CleanupUnused();
+        // 清理旧场景资源（立即清理）
+        m_resourceMgr.CleanupUnused(0);
         
         // 加载新场景资源
         if (sceneName == "level1") {
@@ -857,10 +975,89 @@ resMgr.CleanupUnused();
 
 完整示例请参考 `examples/15_resource_manager_test.cpp`。
 
-### 3. Clear() vs CleanupUnused()
+### 3. 帧追踪和清理策略
+
+**新的清理机制** (2025-10-30 更新):
+
+ResourceManager 现在使用基于帧追踪的智能清理策略：
+
+```cpp
+// 每帧更新
+void MainLoop() {
+    auto& resMgr = ResourceManager::GetInstance();
+    
+    while (running) {
+        // 步骤1: 开始新帧
+        resMgr.BeginFrame();  // 更新帧计数器
+        
+        // 步骤2: 获取和使用资源
+        auto mesh = resMgr.GetMesh("cube");  // 自动更新访问帧
+        mesh->Draw();
+        
+        // 步骤3: 定期清理
+        if (frameCount % 60 == 0) {
+            // 清理60帧未访问的资源
+            resMgr.CleanupUnused(60);
+        }
+    }
+}
+```
+
+**优势**:
+- ✅ **防止意外删除**: 刚使用的资源不会被立即清理
+- ✅ **避免竞态条件**: 两阶段清理确保引用计数检查的一致性
+- ✅ **灵活控制**: 可配置未使用帧数阈值
+- ✅ **详细日志**: 输出清理信息和资源未使用的帧数
+
+### 4. Clear() vs CleanupUnused()
 
 - `Clear()`: 立即移除管理器中的所有引用，但资源可能仍然存活（如果外部有引用）
-- `CleanupUnused()`: 只清理未被外部使用的资源（引用计数为1）
+- `CleanupUnused(unusedFrames)`: 只清理长时间未使用且未被外部持有的资源
+  - 基于帧数判断（默认60帧）
+  - 基于引用计数（必须为1）
+  - 使用两阶段清理，避免竞态条件
+
+---
+
+## 更新日志
+
+### 版本 2.0 (2025-10-30)
+
+**重大改进**: 引入帧追踪和两阶段清理机制
+
+#### 新增功能
+- ✅ 添加 `BeginFrame()` 方法，用于帧计数和资源访问追踪
+- ✅ 添加 `ResourceEntry<T>` 结构，封装资源引用和访问信息
+- ✅ `CleanupUnused()` 新增 `unusedFrames` 参数（默认60帧）
+- ✅ `CleanupUnusedType()` 新增 `unusedFrames` 参数（默认60帧）
+
+#### 改进
+- ✅ **两阶段清理策略**: 先标记，再删除，避免竞态条件
+- ✅ **帧数判断**: 基于最后访问帧号，不会删除刚使用的资源
+- ✅ **自动追踪**: 所有 `Get*` 方法自动更新资源访问帧
+- ✅ **详细日志**: 清理时输出资源未使用的帧数
+
+#### 示例
+```cpp
+// 新的使用方式
+while (running) {
+    resMgr.BeginFrame();  // 每帧调用
+    
+    // 使用资源
+    auto mesh = resMgr.GetMesh("cube");  // 自动更新访问帧
+    mesh->Draw();
+    
+    // 定期清理
+    if (frameCount % 60 == 0) {
+        resMgr.CleanupUnused(60);  // 清理60帧未使用的资源
+    }
+}
+```
+
+#### 向后兼容
+- ✅ 所有现有 API 保持兼容
+- ✅ `CleanupUnused()` 可不传参数（默认60帧）
+- ✅ 如果不调用 `BeginFrame()`，行为与旧版本类似（但建议调用）
 
 ---
 

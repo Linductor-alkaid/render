@@ -28,7 +28,7 @@ void TestThreadSafety_WrongThread(Renderer* renderer) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
     LOG_INFO("尝试在子线程中获取渲染上下文...");
-    OpenGLContext* context = renderer->GetContext();
+    auto context = renderer->GetContext();
     
     if (context) {
         LOG_INFO("尝试在子线程中调用 OpenGL 函数（应该会触发错误）...");
@@ -47,7 +47,7 @@ void TestThreadSafety_CorrectThread(Renderer* renderer) {
     LOG_INFO("测试：在正确的线程（主线程）中调用 OpenGL");
     LOG_INFO("========================================");
     
-    OpenGLContext* context = renderer->GetContext();
+    auto context = renderer->GetContext();
     if (context) {
         LOG_INFO("在主线程中获取 OpenGL 版本...");
         std::string version = context->GetGLVersion();

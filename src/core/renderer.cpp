@@ -22,9 +22,9 @@ Renderer::Renderer()
     , m_fpsUpdateTimer(0.0f)
     , m_frameCount(0) {
     
-    // 注意：unique_ptr的构造不需要锁保护，此时对象还未被其他线程访问
-    m_context = std::make_unique<OpenGLContext>();
-    m_renderState = std::make_unique<RenderState>();
+    // 注意：构造阶段尚未被其他线程访问
+    m_context = std::make_shared<OpenGLContext>();
+    m_renderState = std::make_shared<RenderState>();
 }
 
 Renderer::~Renderer() {

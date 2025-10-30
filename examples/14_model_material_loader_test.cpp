@@ -135,7 +135,7 @@ void UpdateScene(float deltaTime) {
  */
 void RenderScene(Renderer& renderer) {
     // 清空屏幕
-    auto* renderState = renderer.GetRenderState();
+    auto renderState = renderer.GetRenderState();
     renderState->SetClearColor(Color(0.15f, 0.15f, 0.2f, 1.0f));
     renderState->Clear();
     
@@ -198,7 +198,7 @@ void RenderScene(Renderer& renderer) {
         // 如果有材质，使用材质
         if (part.material && part.material->IsValid()) {
             // 应用材质
-            part.material->Bind(renderState);
+            part.material->Bind(renderState.get());
             
             // 设置变换矩阵
             auto* uniformMgr = part.material->GetShader()->GetUniformManager();

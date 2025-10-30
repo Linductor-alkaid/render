@@ -193,7 +193,7 @@ void RenderScene(Renderer& renderer) {
     auto& resMgr = ResourceManager::GetInstance();
     
     // 清空屏幕
-    auto* renderState = renderer.GetRenderState();
+    auto renderState = renderer.GetRenderState();
     renderState->SetClearColor(Color(0.15f, 0.15f, 0.2f, 1.0f));
     renderState->Clear();
     renderState->SetViewport(0, 0, renderer.GetWidth(), renderer.GetHeight());
@@ -261,7 +261,7 @@ void RenderScene(Renderer& renderer) {
         // 如果没有材质，使用默认着色器
         if (material && material->IsValid()) {
             // 使用材质渲染
-            material->Bind(renderState);
+            material->Bind(renderState.get());
             
             auto* uniformMgr = material->GetShader()->GetUniformManager();
             if (uniformMgr) {

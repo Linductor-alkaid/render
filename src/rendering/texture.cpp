@@ -40,6 +40,7 @@ Texture& Texture::operator=(Texture&& other) noexcept {
         
         // 释放当前纹理（内部实现，已持有锁）
         if (m_textureID != 0) {
+            GL_THREAD_CHECK();
             glDeleteTextures(1, &m_textureID);
             Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
         }
@@ -329,6 +330,7 @@ void Texture::Release() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (m_textureID != 0) {
+        GL_THREAD_CHECK();
         glDeleteTextures(1, &m_textureID);
         Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
         m_textureID = 0;

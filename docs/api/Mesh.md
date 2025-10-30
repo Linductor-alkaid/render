@@ -41,8 +41,19 @@ public:
     void DrawInstanced(uint32_t instanceCount, DrawMode mode = DrawMode::Triangles) const;
     void Clear();
     
-    const std::vector<Vertex>& GetVertices() const;
-    const std::vector<uint32_t>& GetIndices() const;
+    // 数据访问（推荐使用新方法）
+    template<typename Func>
+    void AccessVertices(Func&& func) const;
+    template<typename Func>
+    void AccessIndices(Func&& func) const;
+    
+    VertexGuard LockVertices() const;
+    IndexGuard LockIndices() const;
+    
+    // 已弃用（返回副本）
+    [[deprecated]] std::vector<Vertex> GetVertices() const;
+    [[deprecated]] std::vector<uint32_t> GetIndices() const;
+    
     size_t GetVertexCount() const;
     size_t GetIndexCount() const;
     size_t GetTriangleCount() const;
@@ -290,27 +301,151 @@ void Clear();
 
 ## 查询方法
 
-### GetVertices
+### GetVertices (已弃用)
 
-获取顶点数据。
+获取顶点数据（返回副本）。
 
 ```cpp
-const std::vector<Vertex>& GetVertices() const;
+[[deprecated("Use AccessVertices() or LockVertices() instead")]]
+std::vector<Vertex> GetVertices() const;
 ```
 
-**返回**: 顶点数组的常量引用
+**返回**: 顶点数组的副本
+
+**警告**: ⚠️ 此方法已弃用，返回副本可能较慢。推荐使用 `AccessVertices()` 或 `LockVertices()`。
 
 ---
 
-### GetIndices
+### GetIndices (已弃用)
 
-获取索引数据。
+获取索引数据（返回副本）。
 
 ```cpp
-const std::vector<uint32_t>& GetIndices() const;
+[[deprecated("Use AccessIndices() or LockIndices() instead")]]
+std::vector<uint32_t> GetIndices() const;
 ```
 
-**返回**: 索引数组的常量引用
+**返回**: 索引数组的副本
+
+**警告**: ⚠️ 此方法已弃用，返回副本可能较慢。推荐使用 `AccessIndices()` 或 `LockIndices()`。
+
+---
+
+### AccessVertices (推荐)
+
+通过回调访问顶点数据。
+
+```cpp
+template<typename Func>
+void AccessVertices(Func&& func) const;
+```
+
+**参数**:
+- `func` - 回调函数，接受 `const std::vector<Vertex>&` 参数
+
+**说明**: 
+- 在锁保护下执行回调，确保线程安全
+- 访问期间自动持有锁
+- **推荐使用此方法**进行顶点数据访问
+
+**示例**:
+```cpp
+mesh->AccessVertices([](const std::vector<Vertex>& vertices) {
+    for (const auto& v : vertices) {
+        // 处理顶点数据
+        std::cout << "Position: " << v.position << std::endl;
+    }
+});
+```
+
+---
+
+### AccessIndices (推荐)
+
+通过回调访问索引数据。
+
+```cpp
+template<typename Func>
+void AccessIndices(Func&& func) const;
+```
+
+**参数**:
+- `func` - 回调函数，接受 `const std::vector<uint32_t>&` 参数
+
+**说明**: 
+- 在锁保护下执行回调，确保线程安全
+- 访问期间自动持有锁
+- **推荐使用此方法**进行索引数据访问
+
+**示例**:
+```cpp
+mesh->AccessIndices([](const std::vector<uint32_t>& indices) {
+    for (const auto& idx : indices) {
+        // 处理索引数据
+        std::cout << "Index: " << idx << std::endl;
+    }
+});
+```
+
+---
+
+### LockVertices
+
+获取顶点数据的 RAII 守卫。
+
+```cpp
+Mesh::VertexGuard LockVertices() const;
+```
+
+**返回**: `VertexGuard` RAII 守卫对象
+
+**说明**: 
+- 返回守卫对象，在其生命周期内持有锁
+- 使用 `guard.Get()` 访问顶点数据
+- 作用域结束时自动释放锁
+
+**示例**:
+```cpp
+{
+    auto guard = mesh->LockVertices();
+    const auto& vertices = guard.Get();
+    
+    // 在锁保护下访问数据
+    for (const auto& v : vertices) {
+        // 处理顶点数据
+    }
+}  // 作用域结束，自动解锁
+```
+
+---
+
+### LockIndices
+
+获取索引数据的 RAII 守卫。
+
+```cpp
+Mesh::IndexGuard LockIndices() const;
+```
+
+**返回**: `IndexGuard` RAII 守卫对象
+
+**说明**: 
+- 返回守卫对象，在其生命周期内持有锁
+- 使用 `guard.Get()` 访问索引数据
+- 作用域结束时自动释放锁
+
+**示例**:
+```cpp
+{
+    auto guard = mesh->LockIndices();
+    const auto& indices = guard.Get();
+    
+    // 在锁保护下访问数据
+    for (const auto& idx : indices) {
+        // 处理索引数据
+    }
+}  // 作用域结束，自动解锁
+```
 
 ---
 
@@ -522,13 +657,163 @@ mesh->DrawInstanced(100);
 
 ---
 
+### 线程安全访问顶点数据
+
+#### 方法1: 使用回调访问器（推荐）
+
+```cpp
+// 在任意线程安全地访问顶点数据
+mesh->AccessVertices([](const std::vector<Vertex>& vertices) {
+    // 在锁保护下访问数据
+    std::cout << "顶点数量: " << vertices.size() << std::endl;
+    
+    for (const auto& v : vertices) {
+        // 处理顶点数据
+        Vector3 pos = v.position;
+        Vector2 uv = v.texCoord;
+    }
+});
+
+// 同时访问顶点和索引
+mesh->AccessVertices([&mesh](const std::vector<Vertex>& vertices) {
+    mesh->AccessIndices([&vertices](const std::vector<uint32_t>& indices) {
+        // 同时访问顶点和索引数据
+        for (auto idx : indices) {
+            const Vertex& v = vertices[idx];
+            // ... 处理 ...
+        }
+    });
+});
+```
+
+#### 方法2: 使用 RAII 守卫
+
+```cpp
+// 需要长时间访问数据时使用
+void ProcessMesh(const Ref<Mesh>& mesh) {
+    // 获取守卫，自动加锁
+    auto vertexGuard = mesh->LockVertices();
+    const auto& vertices = vertexGuard.Get();
+    
+    // 在整个作用域内持有锁
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const Vertex& v = vertices[i];
+        // 复杂的处理逻辑...
+    }
+    
+    // 作用域结束，自动释放锁
+}
+
+// 同时锁定顶点和索引
+{
+    auto vertexGuard = mesh->LockVertices();
+    auto indexGuard = mesh->LockIndices();
+    
+    const auto& vertices = vertexGuard.Get();
+    const auto& indices = indexGuard.Get();
+    
+    // 同时访问两者
+    for (auto idx : indices) {
+        const Vertex& v = vertices[idx];
+        // ... 处理 ...
+    }
+}
+```
+
+#### 方法3: 获取副本（简单但较慢）
+
+```cpp
+// ⚠️ 已弃用，但仍可使用（返回副本）
+// 适用于需要持久保存数据的场景
+#pragma warning(suppress: 4996)  // 抑制弃用警告
+auto vertices = mesh->GetVertices();
+
+// 可以在锁外使用，但是副本
+for (const auto& v : vertices) {
+    // 处理数据
+}
+```
+
+---
+
+### 多线程场景示例
+
+```cpp
+#include <thread>
+#include <render/mesh.h>
+
+auto mesh = CreateRef<Mesh>(vertices, indices);
+mesh->Upload();
+
+// 线程 1: 读取顶点数据
+std::thread reader([mesh]() {
+    mesh->AccessVertices([](const std::vector<Vertex>& vertices) {
+        std::cout << "顶点数量: " << vertices.size() << std::endl;
+    });
+});
+
+// 线程 2: 修改顶点数据
+std::thread writer([mesh]() {
+    std::vector<Vertex> newVertices(100);
+    // ... 填充数据 ...
+    mesh->SetVertices(newVertices);
+});
+
+reader.join();
+writer.join();
+```
+
+---
+
 ## 性能建议
+
+### 渲染性能
 
 1. **静态网格**: 创建后立即 `Upload()`，渲染时直接 `Draw()`
 2. **动态网格**: 使用 `UpdateVertices()` 而不是重新 `Upload()`
 3. **大量网格**: 考虑使用实例化渲染（`DrawInstanced()`）
 4. **索引缓冲**: 优先使用索引绘制，减少顶点数据
 5. **顶点数据**: 只包含必要的属性，减少内存和带宽
+
+### 数据访问性能
+
+6. **访问方式选择**:
+   - ✅ **推荐**: 使用 `AccessVertices()` 回调方式（最快，零拷贝）
+   - ✅ **可选**: 使用 `LockVertices()` RAII 守卫（需要长时间访问时）
+   - ⚠️ **避免**: 使用 `GetVertices()` 副本方式（会复制整个数组）
+
+7. **锁的持有时间**: 
+   - 回调方式自动控制锁的时间
+   - RAII 守卫要注意作用域，避免长时间持有锁
+   - 不要在锁内执行耗时操作
+
+8. **多线程读取**: 
+   - 多个线程可以同时使用 `AccessVertices()` 读取
+   - 不要在回调内修改外部状态（注意线程安全）
+
+9. **数据修改**:
+   - 修改数据使用 `SetVertices()` 或 `UpdateVertices()`
+   - 不要通过 `LockVertices()` 获取引用后修改（只读访问）
+
+### 示例：性能对比
+
+```cpp
+// ❌ 低效：创建副本
+#pragma warning(suppress: 4996)
+auto vertices = mesh->GetVertices();  // 复制整个数组
+for (const auto& v : vertices) { /* ... */ }
+
+// ✅ 高效：零拷贝访问
+mesh->AccessVertices([](const std::vector<Vertex>& vertices) {
+    for (const auto& v : vertices) { /* ... */ }
+});
+
+// ✅ 高效：需要多次访问时
+auto guard = mesh->LockVertices();
+const auto& vertices = guard.Get();  // 零拷贝
+for (const auto& v : vertices) { /* ... */ }
+// 更多处理...
+```
 
 ---
 

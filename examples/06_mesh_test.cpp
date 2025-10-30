@@ -102,7 +102,7 @@ bool InitScene(Renderer& renderer) {
     Logger::GetInstance().Info("创建了 " + std::to_string(meshes.size()) + " 个网格");
     
     // 设置渲染状态
-    auto* state = renderer.GetRenderState();
+    auto state = renderer.GetRenderState();
     state->SetDepthTest(true);
     state->SetCullFace(CullFace::Back);
     state->SetClearColor(Color(0.1f, 0.1f, 0.15f, 1.0f));
@@ -132,7 +132,7 @@ void RenderScene(Renderer& renderer) {
     renderer.Clear(true, true, false);
     
     // 对于平面图形（Quad, Triangle, Circle），需要禁用背面剔除
-    auto* state = renderer.GetRenderState();
+    auto state = renderer.GetRenderState();
     if (disableCulling || (currentMeshIndex >= 7 && currentMeshIndex <= 9)) {
         // 索引 7=Quad, 8=Triangle, 9=Circle 是单面的
         // 或者用户按 C 键禁用剔除

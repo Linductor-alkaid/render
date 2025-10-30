@@ -382,7 +382,7 @@ int main(int argc, char* argv[]) {
         renderer->Clear();
         
         // 确保深度测试启用
-        auto* renderState = renderer->GetRenderState();
+        auto renderState = renderer->GetRenderState();
         if (renderState) {
             renderState->SetDepthTest(true);
             renderState->SetDepthFunc(DepthFunc::Less);

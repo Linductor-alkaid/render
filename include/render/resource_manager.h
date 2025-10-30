@@ -24,6 +24,22 @@ enum class ResourceType {
 };
 
 /**
+ * @brief 资源条目
+ * 
+ * 封装资源引用和访问信息，用于更安全的资源生命周期管理
+ */
+template<typename T>
+struct ResourceEntry {
+    std::shared_ptr<T> resource;        // 资源引用
+    bool markedForDeletion = false;     // 删除标记（用于两阶段清理）
+    uint32_t lastAccessFrame = 0;       // 最后访问帧号
+    
+    ResourceEntry() = default;
+    ResourceEntry(std::shared_ptr<T> res, uint32_t frame)
+        : resource(std::move(res)), lastAccessFrame(frame) {}
+};
+
+/**
  * @brief 资源统计信息
  */
 struct ResourceStats {
@@ -184,14 +200,26 @@ public:
     
     /**
      * @brief 清理未使用的资源（引用计数为1，仅被管理器持有）
+     * @param unusedFrames 资源多少帧未使用后清理（默认60帧）
      * @return 清理的资源数量
+     * 
+     * 注意：使用两阶段清理策略，避免竞态条件
      */
-    size_t CleanupUnused();
+    size_t CleanupUnused(uint32_t unusedFrames = 60);
     
     /**
      * @brief 清理指定类型的未使用资源
+     * @param type 资源类型
+     * @param unusedFrames 资源多少帧未使用后清理（默认60帧）
      */
-    size_t CleanupUnusedType(ResourceType type);
+    size_t CleanupUnusedType(ResourceType type, uint32_t unusedFrames = 60);
+    
+    /**
+     * @brief 开始新的一帧
+     * 
+     * 应在每帧开始时调用，用于跟踪资源访问
+     */
+    void BeginFrame();
     
     // ========================================================================
     // 统计和监控
@@ -264,11 +292,14 @@ private:
     ResourceManager() = default;
     ~ResourceManager() = default;
     
-    // 资源存储
-    std::unordered_map<std::string, Ref<Texture>> m_textures;
-    std::unordered_map<std::string, Ref<Mesh>> m_meshes;
-    std::unordered_map<std::string, Ref<Material>> m_materials;
-    std::unordered_map<std::string, Ref<Shader>> m_shaders;
+    // 资源存储（使用 ResourceEntry 封装）
+    std::unordered_map<std::string, ResourceEntry<Texture>> m_textures;
+    std::unordered_map<std::string, ResourceEntry<Mesh>> m_meshes;
+    std::unordered_map<std::string, ResourceEntry<Material>> m_materials;
+    std::unordered_map<std::string, ResourceEntry<Shader>> m_shaders;
+    
+    // 帧计数器
+    uint32_t m_currentFrame = 0;
     
     // 线程安全
     mutable std::mutex m_mutex;

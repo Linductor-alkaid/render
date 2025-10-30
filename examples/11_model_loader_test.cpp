@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
     }
     
     // 设置渲染状态
-    auto* state = renderer.GetRenderState();
+    auto state = renderer.GetRenderState();
     state->SetDepthTest(true);
     state->SetCullFace(CullFace::Back);
     state->SetClearColor(Color(0.1f, 0.1f, 0.15f, 1.0f));
