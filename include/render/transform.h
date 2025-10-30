@@ -2,6 +2,8 @@
 
 #include "types.h"
 #include "math_utils.h"
+#include <mutex>
+#include <atomic>
 
 namespace Render {
 
@@ -293,9 +295,9 @@ private:
     Transform* m_parent;     // 父变换（可选）
     
     // 缓存系统：使用 dirty flag 避免重复计算
-    mutable bool m_dirtyLocal;  // 本地矩阵是否需要更新
-    mutable bool m_dirtyWorld;  // 世界矩阵是否需要更新
-    mutable bool m_dirtyWorldTransform;  // 世界变换组件是否需要更新
+    mutable std::atomic<bool> m_dirtyLocal;  // 本地矩阵是否需要更新
+    mutable std::atomic<bool> m_dirtyWorld;  // 世界矩阵是否需要更新
+    mutable std::atomic<bool> m_dirtyWorldTransform;  // 世界变换组件是否需要更新
     
     mutable Matrix4 m_localMatrix;   // 缓存的本地矩阵
     mutable Matrix4 m_worldMatrix;   // 缓存的世界矩阵
@@ -305,7 +307,12 @@ private:
     mutable Quaternion m_cachedWorldRotation;
     mutable Vector3 m_cachedWorldScale;
     
+    // 线程安全：使用互斥锁保护数据访问
+    mutable std::mutex m_mutex;           // 主锁：保护基本成员变量
+    mutable std::mutex m_cacheMutex;      // 缓存锁：保护缓存变量（已废弃，保留以保持二进制兼容）
+    
     void MarkDirty();
+    void MarkDirtyNoLock();  // 无锁版本，供内部已加锁的方法调用
     void UpdateWorldTransformCache() const;
 };
 

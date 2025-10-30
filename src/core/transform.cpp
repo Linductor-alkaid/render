@@ -39,29 +39,67 @@ Transform::Transform(const Vector3& position, const Quaternion& rotation, const 
 // ============================================================================
 
 void Transform::SetPosition(const Vector3& position) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_position = position;
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 Vector3 Transform::GetWorldPosition() const {
-    if (m_dirtyWorldTransform) {
-        UpdateWorldTransformCache();
+    // 先获取父节点指针和本地位置
+    Transform* parent = nullptr;
+    Vector3 localPos;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        parent = m_parent;
+        localPos = m_position;
     }
-    return m_cachedWorldPosition;
+    
+    // 递归计算（不持有任何锁）
+    if (parent) {
+        Vector3 parentPos = parent->GetWorldPosition();
+        Quaternion parentRot = parent->GetWorldRotation();
+        Vector3 parentScale = parent->GetWorldScale();
+        
+        Vector3 scaledPos(
+            localPos.x() * parentScale.x(),
+            localPos.y() * parentScale.y(),
+            localPos.z() * parentScale.z()
+        );
+        
+        return parentPos + parentRot * scaledPos;
+    } else {
+        return localPos;
+    }
 }
 
 void Transform::Translate(const Vector3& translation) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_position += translation;
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 void Transform::TranslateWorld(const Vector3& translation) {
-    if (m_parent) {
-        m_position += m_parent->InverseTransformDirection(translation);
-    } else {
-        m_position += translation;
+    // 先获取父节点指针（需要锁）
+    Transform* parent = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        parent = m_parent;
     }
-    MarkDirty();
+    
+    // 计算变换（不持有锁）
+    Vector3 localTranslation;
+    if (parent) {
+        localTranslation = parent->InverseTransformDirection(translation);
+    } else {
+        localTranslation = translation;
+    }
+    
+    // 更新位置（持有锁）
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_position += localTranslation;
+        MarkDirtyNoLock();
+    }
 }
 
 // ============================================================================
@@ -69,60 +107,101 @@ void Transform::TranslateWorld(const Vector3& translation) {
 // ============================================================================
 
 void Transform::SetRotation(const Quaternion& rotation) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_rotation = rotation.normalized();
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 void Transform::SetRotationEuler(const Vector3& euler) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_rotation = MathUtils::FromEuler(euler.x(), euler.y(), euler.z());
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 void Transform::SetRotationEulerDegrees(const Vector3& euler) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_rotation = MathUtils::FromEulerDegrees(euler.x(), euler.y(), euler.z());
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 Vector3 Transform::GetRotationEuler() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     return MathUtils::ToEuler(m_rotation);
 }
 
 Vector3 Transform::GetRotationEulerDegrees() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     return MathUtils::ToEulerDegrees(m_rotation);
 }
 
 Quaternion Transform::GetWorldRotation() const {
-    if (m_dirtyWorldTransform) {
-        UpdateWorldTransformCache();
+    // 先获取父节点指针和本地旋转
+    Transform* parent = nullptr;
+    Quaternion localRot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        parent = m_parent;
+        localRot = m_rotation;
     }
-    return m_cachedWorldRotation;
+    
+    // 递归计算（不持有任何锁）
+    if (parent) {
+        return parent->GetWorldRotation() * localRot;
+    } else {
+        return localRot;
+    }
 }
 
 void Transform::Rotate(const Quaternion& rotation) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_rotation = (m_rotation * rotation).normalized();
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 void Transform::RotateAround(const Vector3& axis, float angle) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     Quaternion rot = MathUtils::AngleAxis(angle, axis);
     m_rotation = (m_rotation * rot).normalized();
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
     Quaternion rot = MathUtils::AngleAxis(angle, axis);
-    if (m_parent) {
-        Quaternion parentRot = m_parent->GetWorldRotation();
-        Quaternion worldRot = parentRot * m_rotation;
-        worldRot = (rot * worldRot).normalized();
-        m_rotation = (parentRot.inverse() * worldRot).normalized();
-    } else {
-        m_rotation = (rot * m_rotation).normalized();
+    
+    // 先获取父节点指针
+    Transform* parent = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        parent = m_parent;
     }
-    MarkDirty();
+    
+    // 计算新的旋转（不持有锁）
+    Quaternion newRotation;
+    if (parent) {
+        Quaternion parentRot = parent->GetWorldRotation();
+        Quaternion localRot;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            localRot = m_rotation;
+        }
+        Quaternion worldRot = parentRot * localRot;
+        worldRot = (rot * worldRot).normalized();
+        newRotation = (parentRot.inverse() * worldRot).normalized();
+    } else {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        newRotation = (rot * m_rotation).normalized();
+    }
+    
+    // 更新旋转（持有锁）
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_rotation = newRotation;
+        MarkDirtyNoLock();
+    }
 }
 
 void Transform::LookAt(const Vector3& target, const Vector3& up) {
+    // 先获取世界位置（不持有锁）
     Vector3 worldPos = GetWorldPosition();
     Vector3 direction = (target - worldPos).normalized();
     
@@ -132,14 +211,28 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
     
     Quaternion lookRotation = MathUtils::LookRotation(direction, up);
     
-    if (m_parent) {
-        Quaternion parentRot = m_parent->GetWorldRotation();
-        m_rotation = parentRot.inverse() * lookRotation;
-    } else {
-        m_rotation = lookRotation;
+    // 获取父节点指针
+    Transform* parent = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        parent = m_parent;
     }
     
-    MarkDirty();
+    // 计算新的旋转（不持有锁）
+    Quaternion newRotation;
+    if (parent) {
+        Quaternion parentRot = parent->GetWorldRotation();
+        newRotation = parentRot.inverse() * lookRotation;
+    } else {
+        newRotation = lookRotation;
+    }
+    
+    // 更新旋转（持有锁）
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_rotation = newRotation;
+        MarkDirtyNoLock();
+    }
 }
 
 // ============================================================================
@@ -147,20 +240,38 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
 // ============================================================================
 
 void Transform::SetScale(const Vector3& scale) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_scale = scale;
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 void Transform::SetScale(float scale) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_scale = Vector3(scale, scale, scale);
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 Vector3 Transform::GetWorldScale() const {
-    if (m_dirtyWorldTransform) {
-        UpdateWorldTransformCache();
+    // 先获取父节点指针和本地缩放
+    Transform* parent = nullptr;
+    Vector3 localScale;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        parent = m_parent;
+        localScale = m_scale;
     }
-    return m_cachedWorldScale;
+    
+    // 递归计算（不持有任何锁）
+    if (parent) {
+        Vector3 parentScale = parent->GetWorldScale();
+        return Vector3(
+            localScale.x() * parentScale.x(),
+            localScale.y() * parentScale.y(),
+            localScale.z() * parentScale.z()
+        );
+    } else {
+        return localScale;
+    }
 }
 
 // ============================================================================
@@ -168,14 +279,17 @@ Vector3 Transform::GetWorldScale() const {
 // ============================================================================
 
 Vector3 Transform::GetForward() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     return m_rotation * Vector3::UnitZ();
 }
 
 Vector3 Transform::GetRight() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     return m_rotation * Vector3::UnitX();
 }
 
 Vector3 Transform::GetUp() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     return m_rotation * Vector3::UnitY();
 }
 
@@ -184,28 +298,43 @@ Vector3 Transform::GetUp() const {
 // ============================================================================
 
 Matrix4 Transform::GetLocalMatrix() const {
-    if (m_dirtyLocal) {
-        m_localMatrix = MathUtils::TRS(m_position, m_rotation, m_scale);
-        m_dirtyLocal = false;
+    // 读取数据并实时计算
+    Vector3 pos, scale;
+    Quaternion rot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        pos = m_position;
+        rot = m_rotation;
+        scale = m_scale;
     }
-    return m_localMatrix;
+    
+    // 计算并返回（无锁）
+    return MathUtils::TRS(pos, rot, scale);
 }
 
 Matrix4 Transform::GetWorldMatrix() const {
-    if (m_dirtyWorld) {
-        if (m_parent) {
-            m_worldMatrix = m_parent->GetWorldMatrix() * GetLocalMatrix();
-        } else {
-            m_worldMatrix = GetLocalMatrix();
-        }
-        m_dirtyWorld = false;
+    // 先获取父节点指针
+    Transform* parent = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        parent = m_parent;
     }
-    return m_worldMatrix;
+    
+    // 计算矩阵（不持有任何锁）
+    Matrix4 localMat = GetLocalMatrix();
+    
+    if (parent) {
+        Matrix4 parentWorldMat = parent->GetWorldMatrix();
+        return parentWorldMat * localMat;
+    } else {
+        return localMat;
+    }
 }
 
 void Transform::SetFromMatrix(const Matrix4& matrix) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     MathUtils::DecomposeMatrix(matrix, m_position, m_rotation, m_scale);
-    MarkDirty();
+    MarkDirtyNoLock();
 }
 
 // ============================================================================
@@ -213,14 +342,20 @@ void Transform::SetFromMatrix(const Matrix4& matrix) {
 // ============================================================================
 
 void Transform::SetParent(Transform* parent) {
-    if (m_parent == parent) {
-        return;
+    // 先检查是否相同
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_parent == parent) {
+            return;
+        }
     }
     
-    // 如果要保持世界变换不变，需要先转换为世界坐标
-    // 这里采用简单的方式，直接设置父对象
-    m_parent = parent;
-    MarkDirty();
+    // 设置父对象
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_parent = parent;
+        MarkDirtyNoLock();
+    }
 }
 
 // ============================================================================
@@ -228,6 +363,7 @@ void Transform::SetParent(Transform* parent) {
 // ============================================================================
 
 Vector3 Transform::TransformPoint(const Vector3& localPoint) const {
+    // GetWorldMatrix 内部已有线程安全保护
     Matrix4 worldMat = GetWorldMatrix();
     Vector4 point(localPoint.x(), localPoint.y(), localPoint.z(), 1.0f);
     Vector4 result = worldMat * point;
@@ -235,11 +371,13 @@ Vector3 Transform::TransformPoint(const Vector3& localPoint) const {
 }
 
 Vector3 Transform::TransformDirection(const Vector3& localDirection) const {
+    // GetWorldRotation 内部已有线程安全保护
     Quaternion worldRot = GetWorldRotation();
     return worldRot * localDirection;
 }
 
 Vector3 Transform::InverseTransformPoint(const Vector3& worldPoint) const {
+    // GetWorldMatrix 内部已有线程安全保护
     Matrix4 worldMat = GetWorldMatrix();
     Matrix4 invMat = worldMat.inverse();
     Vector4 point(worldPoint.x(), worldPoint.y(), worldPoint.z(), 1.0f);
@@ -248,6 +386,7 @@ Vector3 Transform::InverseTransformPoint(const Vector3& worldPoint) const {
 }
 
 Vector3 Transform::InverseTransformDirection(const Vector3& worldDirection) const {
+    // GetWorldRotation 内部已有线程安全保护
     Quaternion worldRot = GetWorldRotation();
     return worldRot.inverse() * worldDirection;
 }
@@ -257,38 +396,21 @@ Vector3 Transform::InverseTransformDirection(const Vector3& worldDirection) cons
 // ============================================================================
 
 void Transform::MarkDirty() {
-    m_dirtyLocal = true;
-    m_dirtyWorld = true;
-    m_dirtyWorldTransform = true;
+    // 使用原子操作标记为脏（无需加锁）
+    m_dirtyLocal.store(true, std::memory_order_release);
+    m_dirtyWorld.store(true, std::memory_order_release);
+    m_dirtyWorldTransform.store(true, std::memory_order_release);
+}
+
+void Transform::MarkDirtyNoLock() {
+    // 内部版本：假设调用者已经持有锁
+    m_dirtyLocal.store(true, std::memory_order_release);
+    m_dirtyWorld.store(true, std::memory_order_release);
+    m_dirtyWorldTransform.store(true, std::memory_order_release);
 }
 
 void Transform::UpdateWorldTransformCache() const {
-    if (m_parent) {
-        // 获取父节点的世界变换（可能触发父节点的缓存更新）
-        m_cachedWorldRotation = m_parent->GetWorldRotation() * m_rotation;
-        
-        Vector3 parentScale = m_parent->GetWorldScale();
-        m_cachedWorldScale = Vector3(
-            m_scale.x() * parentScale.x(),
-            m_scale.y() * parentScale.y(),
-            m_scale.z() * parentScale.z()
-        );
-        
-        // 世界位置 = 父世界位置 + 父世界旋转 * (父世界缩放 * 本地位置)
-        Vector3 scaledPosition = Vector3(
-            m_position.x() * parentScale.x(),
-            m_position.y() * parentScale.y(),
-            m_position.z() * parentScale.z()
-        );
-        m_cachedWorldPosition = m_parent->GetWorldPosition() + 
-                                m_parent->GetWorldRotation() * scaledPosition;
-    } else {
-        m_cachedWorldRotation = m_rotation;
-        m_cachedWorldScale = m_scale;
-        m_cachedWorldPosition = m_position;
-    }
-    
-    m_dirtyWorldTransform = false;
+    // 此方法已废弃，保留空实现以保持二进制兼容
 }
 
 // ============================================================================
@@ -297,7 +419,9 @@ void Transform::UpdateWorldTransformCache() const {
 
 void Transform::TransformPoints(const std::vector<Vector3>& localPoints, 
                                 std::vector<Vector3>& worldPoints) const {
-    const Matrix4& worldMat = GetWorldMatrix();
+    // GetWorldMatrix 内部已有线程安全保护
+    // 一次获取矩阵后，多线程可以安全地并行使用（只读）
+    const Matrix4 worldMat = GetWorldMatrix();
     worldPoints.resize(localPoints.size());
     
     const size_t count = localPoints.size();
@@ -328,7 +452,9 @@ void Transform::TransformPoints(const std::vector<Vector3>& localPoints,
 
 void Transform::TransformDirections(const std::vector<Vector3>& localDirections,
                                     std::vector<Vector3>& worldDirections) const {
-    const Quaternion& worldRot = GetWorldRotation();
+    // GetWorldRotation 内部已有线程安全保护
+    // 一次获取旋转后，多线程可以安全地并行使用（只读）
+    const Quaternion worldRot = GetWorldRotation();
     worldDirections.resize(localDirections.size());
     
     const size_t count = localDirections.size();
@@ -350,4 +476,3 @@ void Transform::TransformDirections(const std::vector<Vector3>& localDirections,
 }
 
 } // namespace Render
-
