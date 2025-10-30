@@ -12,6 +12,8 @@
 #include <atomic>
 #include <thread>
 #include <cstdarg>
+#include <queue>
+#include <condition_variable>
 
 namespace Render {
 
@@ -33,6 +35,26 @@ enum class LogLevel {
 using LogCallback = std::function<void(LogLevel level, const std::string& message)>;
 
 /**
+ * @brief 日志消息结构
+ */
+struct LogMessage {
+    LogLevel level;
+    std::string message;
+    const char* file;
+    int line;
+    std::chrono::system_clock::time_point timestamp;
+    std::thread::id threadId;
+    
+    LogMessage(LogLevel lvl, std::string msg, const char* f = nullptr, int l = 0)
+        : level(lvl)
+        , message(std::move(msg))
+        , file(f)
+        , line(l)
+        , timestamp(std::chrono::system_clock::now())
+        , threadId(std::this_thread::get_id()) {}
+};
+
+/**
  * @brief 线程安全的日志系统
  * 
  * 特性：
@@ -43,6 +65,7 @@ using LogCallback = std::function<void(LogLevel level, const std::string& messag
  * - 支持显示线程ID
  * - 支持日志回调机制
  * - 支持文件大小轮转
+ * - 异步日志队列，避免阻塞和丢失日志
  * - 向后兼容旧API
  */
 class Logger {
@@ -79,6 +102,24 @@ public:
      * @param callback 回调函数，nullptr表示取消回调
      */
     void SetLogCallback(LogCallback callback);
+    
+    /**
+     * @brief 启用/禁用异步日志
+     * @param enable true启用异步（默认），false禁用（同步模式）
+     * @note 更改此设置时会自动刷新队列
+     */
+    void SetAsyncLogging(bool enable);
+    
+    /**
+     * @brief 刷新日志队列，确保所有日志都已写入
+     * @note 此方法会阻塞直到队列为空
+     */
+    void Flush();
+    
+    /**
+     * @brief 获取当前队列中的日志数量
+     */
+    size_t GetQueueSize() const;
     
     // ========== 基本日志方法（向后兼容） ==========
     void Log(LogLevel level, const std::string& message);
@@ -122,11 +163,12 @@ private:
     
     // 辅助方法
     std::string GetTimestamp();
+    std::string GetTimestamp(const std::chrono::system_clock::time_point& timePoint);
     std::string GetFileTimestamp();
     std::string LevelToString(LogLevel level);
     std::string GetColorCode(LogLevel level);
     std::string GetResetColor();
-    std::string GetThreadIdString();
+    std::string GetThreadIdString(const std::thread::id& threadId);
     void CreateLogDirectory();
     std::string GenerateLogFileName();
     void CheckAndRotateLogFile();
@@ -135,6 +177,13 @@ private:
     // 核心日志输出（已经在锁内）
     void LogInternal(LogLevel level, const std::string& message, const char* file = nullptr, int line = 0);
     
+    // 异步日志相关
+    void StartAsyncThread();
+    void StopAsyncThread();
+    void AsyncWorker();
+    void ProcessLogMessage(const LogMessage& logMsg);
+    void EnqueueLog(LogLevel level, const std::string& message, const char* file = nullptr, int line = 0);
+    
     // 配置变量（使用atomic保证原子性）
     std::atomic<LogLevel> m_logLevel;
     std::atomic<bool> m_logToConsole;
@@ -142,6 +191,7 @@ private:
     std::atomic<bool> m_colorOutput;
     std::atomic<bool> m_showThreadId;
     std::atomic<size_t> m_maxFileSize;
+    std::atomic<bool> m_asyncLogging;
     
     // 需要锁保护的资源
     std::ofstream m_fileStream;
@@ -149,6 +199,15 @@ private:
     std::string m_currentLogFile;
     size_t m_currentFileSize;
     LogCallback m_callback;
+    
+    // 异步日志队列
+    std::queue<LogMessage> m_logQueue;
+    std::mutex m_queueMutex;
+    std::condition_variable m_queueCV;
+    
+    // 后台写入线程
+    std::thread m_asyncThread;
+    std::atomic<bool> m_stopAsyncThread;
     
     // 互斥锁（使用mutable允许在const方法中使用）
     mutable std::mutex m_mutex;

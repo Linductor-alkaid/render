@@ -20,8 +20,10 @@ Logger::Logger()
     , m_colorOutput(true)
     , m_showThreadId(false)
     , m_maxFileSize(0)
+    , m_asyncLogging(true)
     , m_logDirectory("logs")
-    , m_currentFileSize(0) {
+    , m_currentFileSize(0)
+    , m_stopAsyncThread(false) {
     
 #ifdef _WIN32
     // Windows 控制台 UTF-8 支持
@@ -36,9 +38,16 @@ Logger::Logger()
         }
     }
 #endif
+
+    // 启动异步日志线程
+    StartAsyncThread();
 }
 
 Logger::~Logger() {
+    // 停止异步线程
+    StopAsyncThread();
+    
+    // 关闭文件
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_fileStream.is_open()) {
         m_fileStream.close();
@@ -133,8 +142,14 @@ void Logger::Log(LogLevel level, const std::string& message) {
         return;
     }
     
-    std::lock_guard<std::mutex> lock(m_mutex);
-    LogInternal(level, message);
+    // 如果启用异步日志，将消息放入队列
+    if (m_asyncLogging.load(std::memory_order_acquire)) {
+        EnqueueLog(level, message);
+    } else {
+        // 同步模式：直接写入
+        std::lock_guard<std::mutex> lock(m_mutex);
+        LogInternal(level, message);
+    }
 }
 
 void Logger::Debug(const std::string& message) {
@@ -230,8 +245,14 @@ void Logger::LogWithLocation(LogLevel level, const char* file, int line, const s
         return;
     }
     
-    std::lock_guard<std::mutex> lock(m_mutex);
-    LogInternal(level, message, file, line);
+    // 如果启用异步日志，将消息放入队列
+    if (m_asyncLogging.load(std::memory_order_acquire)) {
+        EnqueueLog(level, message, file, line);
+    } else {
+        // 同步模式：直接写入
+        std::lock_guard<std::mutex> lock(m_mutex);
+        LogInternal(level, message, file, line);
+    }
 }
 
 std::string Logger::GetCurrentLogFile() const {
@@ -241,9 +262,13 @@ std::string Logger::GetCurrentLogFile() const {
 
 std::string Logger::GetTimestamp() {
     auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
+    return GetTimestamp(now);
+}
+
+std::string Logger::GetTimestamp(const std::chrono::system_clock::time_point& timePoint) {
+    auto time = std::chrono::system_clock::to_time_t(timePoint);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;
+        timePoint.time_since_epoch()) % 1000;
     
     // 使用线程安全的时间函数
     std::tm timeInfo;
@@ -320,13 +345,14 @@ std::string Logger::GetResetColor() {
     return "\033[0m";
 }
 
-std::string Logger::GetThreadIdString() {
+
+std::string Logger::GetThreadIdString(const std::thread::id& threadId) {
     if (!m_showThreadId.load(std::memory_order_acquire)) {
         return "";
     }
     
     std::stringstream ss;
-    ss << " [TID:" << std::this_thread::get_id() << "]";
+    ss << " [TID:" << threadId << "]";
     return ss.str();
 }
 
@@ -398,7 +424,7 @@ void Logger::LogInternal(LogLevel level, const std::string& message, const char*
     // 构建完整的日志消息
     std::string timestamp = GetTimestamp();
     std::string levelStr = LevelToString(level);
-    std::string threadId = GetThreadIdString();
+    std::string threadId = GetThreadIdString(std::this_thread::get_id());
     
     std::stringstream ss;
     ss << "[" << timestamp << "]" << threadId << " [" << levelStr << "] ";
@@ -451,6 +477,174 @@ void Logger::LogInternal(LogLevel level, const std::string& message, const char*
             // 忽略回调中的异常，避免影响日志系统
         }
     }
+}
+
+// ========== 异步日志实现 ==========
+
+void Logger::StartAsyncThread() {
+    m_stopAsyncThread.store(false, std::memory_order_release);
+    m_asyncThread = std::thread(&Logger::AsyncWorker, this);
+}
+
+void Logger::StopAsyncThread() {
+    // 设置停止标志
+    m_stopAsyncThread.store(true, std::memory_order_release);
+    
+    // 唤醒工作线程
+    m_queueCV.notify_one();
+    
+    // 等待线程结束
+    if (m_asyncThread.joinable()) {
+        m_asyncThread.join();
+    }
+}
+
+void Logger::AsyncWorker() {
+    while (true) {
+        std::unique_lock<std::mutex> lock(m_queueMutex);
+        
+        // 等待队列有消息或停止信号
+        m_queueCV.wait(lock, [this]() {
+            return !m_logQueue.empty() || m_stopAsyncThread.load(std::memory_order_acquire);
+        });
+        
+        // 处理队列中的所有消息
+        while (!m_logQueue.empty()) {
+            LogMessage logMsg = std::move(m_logQueue.front());
+            m_logQueue.pop();
+            
+            // 释放队列锁，避免阻塞其他线程
+            lock.unlock();
+            
+            // 处理日志消息
+            ProcessLogMessage(logMsg);
+            
+            // 重新获取锁以继续处理
+            lock.lock();
+        }
+        
+        // 如果收到停止信号且队列为空，退出
+        if (m_stopAsyncThread.load(std::memory_order_acquire) && m_logQueue.empty()) {
+            break;
+        }
+    }
+}
+
+void Logger::ProcessLogMessage(const LogMessage& logMsg) {
+    // 构建完整的日志消息
+    std::string timestamp = GetTimestamp(logMsg.timestamp);
+    std::string levelStr = LevelToString(logMsg.level);
+    std::string threadId = GetThreadIdString(logMsg.threadId);
+    
+    std::stringstream ss;
+    ss << "[" << timestamp << "]" << threadId << " [" << levelStr << "] ";
+    
+    // 如果有源文件位置信息
+    if (logMsg.file != nullptr) {
+        // 只保留文件名，去掉路径
+        std::string filename(logMsg.file);
+        size_t pos = filename.find_last_of("/\\");
+        if (pos != std::string::npos) {
+            filename = filename.substr(pos + 1);
+        }
+        ss << "[" << filename << ":" << logMsg.line << "] ";
+    }
+    
+    ss << logMsg.message;
+    std::string fullMessage = ss.str();
+    
+    // 输出到控制台（带颜色）
+    if (m_logToConsole.load(std::memory_order_acquire)) {
+        std::string colorCode = GetColorCode(logMsg.level);
+        std::string resetColor = GetResetColor();
+        
+        if (logMsg.level == LogLevel::Error) {
+            std::cerr << colorCode << fullMessage << resetColor << std::endl;
+        } else {
+            std::cout << colorCode << fullMessage << resetColor << std::endl;
+        }
+    }
+    
+    // 输出到文件（不带颜色）
+    if (m_logToFile.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_fileStream.is_open()) {
+            // 检查是否需要轮转日志
+            CheckAndRotateLogFile();
+            
+            if (m_fileStream.is_open()) {
+                m_fileStream << fullMessage << std::endl;
+                m_fileStream.flush();
+                
+                // 更新文件大小
+                m_currentFileSize = static_cast<size_t>(m_fileStream.tellp());
+            }
+        }
+    }
+    
+    // 调用回调函数
+    LogCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        callback = m_callback;
+    }
+    
+    if (callback) {
+        try {
+            callback(logMsg.level, fullMessage);
+        } catch (...) {
+            // 忽略回调中的异常，避免影响日志系统
+        }
+    }
+}
+
+void Logger::EnqueueLog(LogLevel level, const std::string& message, const char* file, int line) {
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        m_logQueue.emplace(level, message, file, line);
+    }
+    m_queueCV.notify_one();
+}
+
+void Logger::SetAsyncLogging(bool enable) {
+    bool oldValue = m_asyncLogging.exchange(enable, std::memory_order_acq_rel);
+    
+    // 如果状态改变
+    if (oldValue != enable) {
+        if (enable) {
+            // 启用异步：启动线程
+            if (!m_asyncThread.joinable()) {
+                StartAsyncThread();
+            }
+        } else {
+            // 禁用异步：刷新队列并停止线程
+            Flush();
+            StopAsyncThread();
+        }
+    }
+}
+
+void Logger::Flush() {
+    if (!m_asyncLogging.load(std::memory_order_acquire)) {
+        return; // 同步模式不需要刷新
+    }
+    
+    // 等待队列为空
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(m_queueMutex);
+            if (m_logQueue.empty()) {
+                break;
+            }
+        }
+        // 短暂休眠，避免忙等
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+size_t Logger::GetQueueSize() const {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_queueMutex));
+    return m_logQueue.size();
 }
 
 } // namespace Render

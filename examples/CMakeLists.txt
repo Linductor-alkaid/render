@@ -25,6 +25,7 @@ set(EXAMPLES
     21_transform_thread_safe_test
     22_gl_thread_safety_test
     23_logger_test
+    24_async_logger_test
 )
 
 # 批量创建示例程序
