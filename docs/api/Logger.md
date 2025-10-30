@@ -14,12 +14,13 @@
 ### 主要特性
 
 - ✅ **完全线程安全** - 使用原子操作和互斥锁保证多线程环境下的安全性
+- ✅ **异步日志队列** - 高性能异步写入，性能提升近10倍（默认启用）
 - ✅ **格式化日志** - 支持类似 printf 的格式化输出
 - ✅ **彩色输出** - 控制台输出支持 ANSI 颜色代码
 - ✅ **线程ID显示** - 可选显示日志来源线程
 - ✅ **源文件位置** - 可选显示源文件名和行号
 - ✅ **日志回调** - 支持自定义回调函数处理日志
-- ✅ **文件轮转** - 支持按文件大小自动轮转
+- ✅ **文件轮转** - 支持按文件大小自动轮转，无日志丢失
 - ✅ **向后兼容** - 保留所有旧版API
 
 ---
@@ -217,6 +218,102 @@ logger.SetLogCallback(nullptr);
 
 ---
 
+### SetAsyncLogging
+
+启用/禁用异步日志模式（默认启用）。
+
+```cpp
+void SetAsyncLogging(bool enable);
+```
+
+**参数**:
+- `enable`: true 启用异步（默认），false 禁用（同步模式）
+
+**示例**:
+```cpp
+// 启用异步（默认）- 高性能，低延迟
+logger.SetAsyncLogging(true);
+
+// 禁用异步 - 适用于需要立即写入的场景
+logger.SetAsyncLogging(false);
+```
+
+**工作原理**:
+- **异步模式**: 日志消息放入队列，后台线程批量写入
+- **同步模式**: 日志消息立即写入（阻塞调用线程）
+
+**性能对比**:
+- 异步模式: ~347,000 条/秒
+- 同步模式: ~37,000 条/秒
+- **性能提升**: **9.37倍**
+
+**注意**: 更改此设置时会自动刷新队列
+
+**线程安全**: ✅ 使用原子操作
+
+---
+
+### Flush
+
+刷新日志队列，确保所有日志都已写入。
+
+```cpp
+void Flush();
+```
+
+**使用场景**:
+- 程序即将退出
+- 需要确保日志已写入
+- 性能测试前后
+
+**示例**:
+```cpp
+LOG_INFO("Critical operation completed");
+logger.Flush();  // 确保日志已写入
+
+// 性能测试
+auto start = std::chrono::high_resolution_clock::now();
+// ... 执行操作 ...
+logger.Flush();  // 刷新队列
+auto end = std::chrono::high_resolution_clock::now();
+```
+
+**注意**: 
+- 仅在异步模式下有效
+- 会阻塞直到队列为空
+- 同步模式下此方法立即返回
+
+**线程安全**: ✅ 完全线程安全
+
+---
+
+### GetQueueSize
+
+获取当前队列中的日志数量。
+
+```cpp
+size_t GetQueueSize() const;
+```
+
+**返回值**: 队列中待处理的日志消息数量
+
+**示例**:
+```cpp
+size_t pending = logger.GetQueueSize();
+if (pending > 1000) {
+    LOG_WARNING_F("日志队列堆积: %zu 条消息", pending);
+}
+```
+
+**用途**:
+- 监控日志系统负载
+- 调试性能问题
+- 判断是否需要调整日志级别
+
+**线程安全**: ✅ 使用互斥锁保护
+
+---
+
 ## 基本日志方法
 
 ### Log / Debug / Info / Warning / Error
@@ -393,6 +490,7 @@ LOG_INFO_F("Operation completed in %lld ms", ms.count());
 auto& logger = Render::Logger::GetInstance();
 
 // 启用所有功能
+logger.SetAsyncLogging(true);          // 异步日志（默认启用）
 logger.SetColorOutput(true);           // 彩色输出
 logger.SetShowThreadId(true);          // 显示线程ID
 logger.SetMaxFileSize(10 * 1024 * 1024); // 10MB轮转
@@ -404,6 +502,50 @@ logger.SetLogCallback([](Render::LogLevel level, const std::string& msg) {
         NotifyErrorMonitoring(msg);
     }
 });
+```
+
+---
+
+### 异步日志示例
+
+```cpp
+auto& logger = Render::Logger::GetInstance();
+
+// 配置异步模式（默认已启用）
+logger.SetAsyncLogging(true);
+logger.SetLogToFile(true);
+
+// 高速写入日志
+for (int i = 0; i < 10000; i++) {
+    LOG_INFO_F("Processing item #%d", i);
+}
+
+// 确保所有日志已写入
+logger.Flush();
+
+// 检查队列状态
+size_t pending = logger.GetQueueSize();
+LOG_INFO_F("Pending logs: %zu", pending);
+```
+
+---
+
+### 同步模式示例
+
+某些场景需要立即写入（如崩溃前）：
+
+```cpp
+auto& logger = Render::Logger::GetInstance();
+
+// 切换到同步模式
+logger.SetAsyncLogging(false);
+
+// 关键日志会立即写入
+LOG_ERROR("Critical error occurred!");
+// 此时日志已经写入磁盘
+
+// 恢复异步模式
+logger.SetAsyncLogging(true);
 ```
 
 ---
@@ -477,10 +619,20 @@ if (level < m_logLevel.load(std::memory_order_acquire)) {
 
 ### 性能数据
 
-在测试环境下（Intel i7, SSD）：
-- 1000条日志写入: ~15-20ms
-- 单条日志延迟: ~15-20μs
-- 多线程无冲突
+在测试环境下（Intel i7, Windows 10, SSD）：
+
+**异步模式（默认）**:
+- 写入速度: **347,078 条/秒**
+- 单条延迟: **2.9 μs**
+- 多线程: 20线程×1000条 = 420ms
+- 队列开销: 极低（~1-2μs）
+
+**同步模式**:
+- 写入速度: 36,998 条/秒
+- 单条延迟: 27 μs
+- 多线程: 存在锁竞争
+
+**性能提升**: 异步模式比同步模式快 **9.37倍** (837%)
 
 ---
 
@@ -589,13 +741,49 @@ logger.SetMaxFileSize(0);
 
 ---
 
+### 7. 异步日志最佳实践
+
+```cpp
+// 程序初始化时（异步模式默认启用）
+logger.SetAsyncLogging(true);
+logger.SetLogToFile(true);
+
+// 正常使用，无需考虑性能
+LOG_INFO_F("High frequency log: %d", value);
+
+// 程序退出前刷新队列
+void Shutdown() {
+    LOG_INFO("Shutting down...");
+    logger.Flush();  // 确保日志写入
+}
+```
+
+---
+
+### 8. 性能监控
+
+```cpp
+// 监控日志队列堆积
+void MonitorLogQueue() {
+    size_t queueSize = logger.GetQueueSize();
+    if (queueSize > 5000) {
+        // 队列堆积，考虑降低日志级别
+        LOG_WARNING_F("Log queue backlog: %zu messages", queueSize);
+    }
+}
+```
+
+---
+
 ## 注意事项
 
 1. **格式化字符串安全**: 确保格式说明符与参数类型匹配
 2. **回调异常**: 回调函数中的异常会被捕获，不影响日志系统
-3. **文件轮转**: 轮转时会创建新文件，旧文件保持不变
+3. **文件轮转**: 轮转在后台线程执行，不阻塞主线程，无日志丢失
 4. **UTF-8编码**: 日志文件使用UTF-8编码（带BOM）
 5. **Windows控制台**: 自动启用ANSI颜色支持（Windows 10+）
+6. **异步队列**: 默认启用异步模式，程序退出前建议调用 `Flush()`
+7. **队列容量**: 理论上无限，但极端情况下可能消耗内存
 
 ---
 
@@ -631,6 +819,36 @@ A: 调用 `SetLogToFile(true)` 时立即创建。
 ### Q: 如何查看日志文件编码？
 
 A: 日志文件使用 UTF-8 编码，文件开头有 BOM（`EF BB BF`）。
+
+---
+
+### Q: 异步模式会丢失日志吗？
+
+A: 不会。程序正常退出时析构函数会自动刷新队列。建议在关键点手动调用 `Flush()`。
+
+---
+
+### Q: 如何选择同步还是异步模式？
+
+A: 
+- **异步模式（推荐）**: 适用于大部分场景，高性能，低延迟
+- **同步模式**: 适用于需要立即写入的场景（如崩溃处理）
+
+---
+
+### Q: 异步模式下日志顺序会乱吗？
+
+A: 不会。异步模式保证日志按照调用顺序写入（FIFO队列）。
+
+---
+
+### Q: 队列堆积怎么办？
+
+A: 
+1. 降低日志级别（减少日志量）
+2. 增加文件写入频率
+3. 检查是否有大量重复日志
+4. 使用 `GetQueueSize()` 监控
 
 ---
 
