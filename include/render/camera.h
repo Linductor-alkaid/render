@@ -448,6 +448,9 @@ private:
  * 围绕目标点旋转的相机，类似3D建模软件
  */
 class OrbitCameraController : public CameraController {
+    // 确保正确的内存对齐以使用 Eigen 的 SIMD 优化
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    
 public:
     OrbitCameraController(Camera* camera, const Vector3& target = Vector3::Zero());
     
@@ -498,6 +501,9 @@ private:
  * 跟随目标的相机，用于第三人称游戏
  */
 class ThirdPersonCameraController : public CameraController {
+    // 确保正确的内存对齐以使用 Eigen 的 SIMD 优化
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    
 public:
     ThirdPersonCameraController(Camera* camera);
     

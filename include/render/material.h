@@ -45,6 +45,9 @@ class Texture;
  * @endcode
  */
 class Material {
+    // 确保正确的内存对齐以使用 Eigen 的 SIMD 优化
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    
 public:
     /**
      * @brief 构造函数

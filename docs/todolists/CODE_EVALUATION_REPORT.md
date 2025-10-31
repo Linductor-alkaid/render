@@ -395,13 +395,89 @@ context.SetWindowSize(1280, 720);
 
 ---
 
-### 警告 5: Transform 类使用 Eigen 但没有对齐宏
+### 警告 5: Transform 类使用 Eigen 但没有对齐宏 ✅ **已修复**
 
-**位置**: `include/render/transform.h`
+**修复日期**: 2025-10-31
 
-**问题描述**: Eigen 矩阵需要对齐，但类定义可能缺少 `EIGEN_MAKE_ALIGNED_OPERATOR_NEW`
+**位置**: 
+- `include/render/transform.h` - ✅ 已有对齐宏
+- `include/render/camera.h` - ✅ 已有对齐宏  
+- `include/render/material.h` - ✅ 已添加对齐宏
 
-**修复**: 已在 Camera 类中看到使用，建议 Transform 类也添加
+**问题描述**: 
+
+包含Eigen矩阵/向量类型的类需要添加 `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` 宏以确保正确的内存对齐，否则可能导致：
+- SIMD指令访问未对齐内存导致崩溃（尤其在某些CPU架构上）
+- 性能下降（无法使用SIMD优化）
+- 未定义行为
+
+**已实施的修复**:
+
+1. ✅ **Transform 类**（第19行）- 已存在对齐宏
+```cpp
+class Transform {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    // ...
+private:
+    Vector3 m_position;
+    Quaternion m_rotation;
+    Vector3 m_scale;
+    mutable Matrix4 m_localMatrix;
+    mutable Matrix4 m_worldMatrix;
+    mutable Vector3 m_cachedWorldPosition;
+    mutable Quaternion m_cachedWorldRotation;
+    mutable Vector3 m_cachedWorldScale;
+};
+```
+
+2. ✅ **Camera 类**（第64行）- 已存在对齐宏
+```cpp
+class Camera {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    // ...
+private:
+    mutable Matrix4 m_projectionMatrix;
+    mutable Matrix4 m_viewMatrix;
+    mutable Matrix4 m_viewProjectionMatrix;
+};
+```
+
+3. ✅ **Material 类**（新添加）- 包含Eigen类型的容器
+```cpp
+class Material {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    // ...
+private:
+    std::unordered_map<std::string, Vector2> m_vector2Params;
+    std::unordered_map<std::string, Vector3> m_vector3Params;
+    std::unordered_map<std::string, Vector4> m_vector4Params;
+    std::unordered_map<std::string, Matrix4> m_matrix4Params;
+};
+```
+
+**为什么需要对齐宏？**
+
+Eigen的固定大小类型（如Matrix4f）默认使用16字节对齐以支持SSE/AVX等SIMD指令：
+- `new` 操作符默认只保证对齐到 `sizeof(T)` 或 `alignof(T)`
+- SIMD指令要求16字节对齐（SSE）或32字节对齐（AVX）
+- `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` 重载 `operator new` 以满足对齐要求
+
+**影响范围**:
+- 所有使用这些类的代码都会自动受益于正确的内存对齐
+- 性能提升：SIMD优化可用
+- 稳定性提升：避免未对齐访问崩溃
+
+**验证方法**:
+```cpp
+// 编译时检查对齐
+static_assert(alignof(Transform) >= 16, "Transform requires 16-byte alignment");
+static_assert(alignof(Camera) >= 16, "Camera requires 16-byte alignment");
+static_assert(alignof(Material) >= 16, "Material requires 16-byte alignment");
+
+// 运行时检查
+Transform t;
+assert(reinterpret_cast<uintptr_t>(&t) % 16 == 0);
+```
 
 ---
 
