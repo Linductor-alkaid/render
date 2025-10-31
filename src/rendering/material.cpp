@@ -111,6 +111,11 @@ void Material::SetShader(std::shared_ptr<Shader> shader) {
     m_shader = shader;
 }
 
+std::shared_ptr<Shader> Material::GetShader() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_shader;
+}
+
 // ============================================================================
 // 材质属性 - 颜色
 // ============================================================================

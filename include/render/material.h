@@ -91,10 +91,10 @@ public:
     void SetShader(std::shared_ptr<Shader> shader);
     
     /**
-     * @brief 获取着色器
+     * @brief 获取着色器（线程安全）
      * @return 着色器指针
      */
-    std::shared_ptr<Shader> GetShader() const { return m_shader; }
+    std::shared_ptr<Shader> GetShader() const;
     
     // ========================================================================
     // 材质属性 - 颜色
