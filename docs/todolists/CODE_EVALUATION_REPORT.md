@@ -263,9 +263,11 @@ Matrix4 GetViewMatrix() const {
 
 ## 🟡 警告问题 (Warning Issues)
 
-### 警告 1: RenderState 的状态缓存可能与 OpenGL 实际状态不同步
+### 警告 1: RenderState 的状态缓存可能与 OpenGL 实际状态不同步 ✅ **已修复**
 
-**位置**: `src/core/render_state.cpp`
+**修复日期**: 2025-10-31
+
+**位置**: `src/core/render_state.cpp`, `include/render/render_state.h`
 
 **问题描述**:
 ```cpp
@@ -280,16 +282,25 @@ void RenderState::BindTexture(uint32_t unit, uint32_t textureId, uint32_t target
 
 **风险**: 如果外部代码直接调用 OpenGL API，缓存会失效
 
-**修复建议**:
-```cpp
-// 添加强制更新方法
-void InvalidateCache() {
-    m_boundTextures.fill(0);
-    m_boundVAO = 0;
-    // ...
-}
+**已实施的修复**:
+1. ✅ 添加了 `InvalidateCache()` 及相关方法（分类清空缓存）
+2. ✅ 添加了 `SyncFromGL()` 方法（从 OpenGL 同步状态）
+3. ✅ 添加了严格模式支持（可选择不使用缓存）
+4. ✅ 更新了所有绑定方法以支持严格模式
+5. ✅ 更新了 API 文档（`docs/api/RenderState.md`）
 
-// 或者提供"严格模式"，总是调用 OpenGL API
+**使用示例**:
+```cpp
+// 方法 1: 清空缓存（推荐）
+ImGui::Render();
+state->InvalidateCache();
+
+// 方法 2: 同步状态
+ImGui::Render();
+state->SyncFromGL();
+
+// 方法 3: 启用严格模式（调试）
+state->SetStrictMode(true);
 ```
 
 ---

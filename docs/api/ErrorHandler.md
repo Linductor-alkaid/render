@@ -1053,14 +1053,6 @@ if (!texture) {
 
 ---
 
-## 另请参阅
-
-- [错误处理完整文档](../ERROR_HANDLING.md)
-- [错误处理示例](../ERROR_HANDLING_EXAMPLES.md)
-- [错误处理集成总结](../ERROR_HANDLING_INTEGRATION_SUMMARY.md)
-
----
-
 **API 版本**: 1.0  
 **最后更新**: 2025-10-31
 

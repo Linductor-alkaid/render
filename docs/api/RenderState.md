@@ -329,6 +329,324 @@ CullFace GetCullFace() const;
 
 ---
 
+## 缓存同步管理
+
+### 问题背景
+
+`RenderState` 使用内部缓存来优化性能，避免重复的 OpenGL 状态切换。但如果外部代码直接调用 OpenGL API（例如使用第三方库），内部缓存可能与 OpenGL 实际状态不同步，导致后续渲染出错。
+
+---
+
+### InvalidateCache
+
+使所有状态缓存失效。
+
+```cpp
+void InvalidateCache();
+```
+
+**使用场景**:
+- 在使用第三方 OpenGL 库后（如 ImGui、Dear ImGui）
+- 在直接调用 OpenGL API 后
+- 在 OpenGL 上下文切换后
+- 当怀疑缓存与实际状态不一致时
+
+**示例**:
+```cpp
+// 使用第三方库前保存状态
+auto savedState = renderer->GetRenderState();
+
+// 使用第三方 OpenGL 库
+ImGui::Render();
+ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+// 清空缓存，因为第三方库可能改变了 OpenGL 状态
+savedState->InvalidateCache();
+
+// 继续渲染，此时状态会重新同步
+savedState->SetDepthTest(true);
+```
+
+---
+
+### InvalidateTextureCache
+
+仅使纹理绑定缓存失效。
+
+```cpp
+void InvalidateTextureCache();
+```
+
+**示例**:
+```cpp
+// 外部代码直接绑定了纹理
+glBindTexture(GL_TEXTURE_2D, someTexture);
+
+// 清空纹理缓存
+state->InvalidateTextureCache();
+
+// 继续使用 RenderState
+state->BindTexture(0, myTexture);
+```
+
+---
+
+### InvalidateBufferCache
+
+仅使缓冲区绑定缓存失效。
+
+```cpp
+void InvalidateBufferCache();
+```
+
+**示例**:
+```cpp
+// 外部代码直接绑定了 VAO/VBO
+glBindVertexArray(someVAO);
+glBindBuffer(GL_ARRAY_BUFFER, someVBO);
+
+// 清空缓冲区缓存
+state->InvalidateBufferCache();
+```
+
+---
+
+### InvalidateShaderCache
+
+仅使着色器程序缓存失效。
+
+```cpp
+void InvalidateShaderCache();
+```
+
+**示例**:
+```cpp
+// 外部代码直接使用了着色器
+glUseProgram(someProgram);
+
+// 清空着色器缓存
+state->InvalidateShaderCache();
+```
+
+---
+
+### InvalidateRenderStateCache
+
+仅使渲染状态缓存失效（深度测试、混合模式等）。
+
+```cpp
+void InvalidateRenderStateCache();
+```
+
+**示例**:
+```cpp
+// 外部代码直接改变了渲染状态
+glDisable(GL_DEPTH_TEST);
+glEnable(GL_BLEND);
+
+// 清空渲染状态缓存
+state->InvalidateRenderStateCache();
+```
+
+---
+
+### SyncFromGL
+
+从 OpenGL 查询并同步状态到缓存。
+
+```cpp
+void SyncFromGL();
+```
+
+**功能**:
+- 查询 OpenGL 当前的实际状态
+- 更新内部缓存以匹配 OpenGL 状态
+- 同步所有状态：深度、混合、剔除、纹理、缓冲区、着色器等
+
+**注意**: 此操作相对耗时，不建议频繁调用。
+
+**示例**:
+```cpp
+// 在不确定状态是否同步时
+state->SyncFromGL();
+
+// 现在缓存已与 OpenGL 状态同步
+// 继续渲染...
+```
+
+---
+
+### 严格模式
+
+#### SetStrictMode
+
+启用/禁用严格模式。
+
+```cpp
+void SetStrictMode(bool enable);
+```
+
+**严格模式说明**:
+- **启用严格模式**: 所有状态设置都直接调用 OpenGL API，不使用缓存优化
+- **禁用严格模式**: 使用缓存优化（默认）
+
+**性能影响**:
+- 严格模式会降低性能（增加约 10-20% 的状态切换开销）
+- 但保证状态总是正确的，适合调试和与第三方库混用
+
+**示例**:
+```cpp
+// 调试模式或与第三方库混用时启用严格模式
+#ifdef DEBUG
+    state->SetStrictMode(true);
+#endif
+
+// 生产环境使用缓存优化
+#ifdef RELEASE
+    state->SetStrictMode(false);
+#endif
+```
+
+---
+
+#### IsStrictMode
+
+检查是否处于严格模式。
+
+```cpp
+bool IsStrictMode() const;
+```
+
+**示例**:
+```cpp
+if (state->IsStrictMode()) {
+    Logger::Info("严格模式已启用");
+}
+```
+
+---
+
+### 使用建议
+
+#### 方案 1：选择性失效缓存（推荐）
+
+```cpp
+// 正常渲染
+state->SetDepthTest(true);
+state->BindTexture(0, texture);
+// ...
+
+// 使用第三方库
+ImGui::Render();
+
+// 只清空可能被修改的缓存
+state->InvalidateTextureCache();
+state->InvalidateRenderStateCache();
+
+// 继续渲染
+state->SetDepthTest(true);
+```
+
+**优点**: 性能最优，只清空必要的缓存
+
+---
+
+#### 方案 2：全部失效（简单）
+
+```cpp
+// 使用第三方库后
+ImGui::Render();
+
+// 清空所有缓存
+state->InvalidateCache();
+
+// 继续渲染
+state->SetDepthTest(true);
+```
+
+**优点**: 简单可靠，适合调试
+
+---
+
+#### 方案 3：同步状态（保守）
+
+```cpp
+// 使用第三方库后
+ImGui::Render();
+
+// 从 OpenGL 同步状态
+state->SyncFromGL();
+
+// 继续渲染（不需要重新设置状态）
+```
+
+**优点**: 保留第三方库设置的状态，不需要重新设置
+**缺点**: 性能开销较大（需要多次查询 OpenGL）
+
+---
+
+#### 方案 4：严格模式（调试）
+
+```cpp
+// 启用严格模式
+state->SetStrictMode(true);
+
+// 所有操作都不使用缓存，总是正确
+state->SetDepthTest(true);
+ImGui::Render();
+state->SetDepthTest(true);  // 会重新调用 OpenGL API
+```
+
+**优点**: 总是正确，适合调试
+**缺点**: 性能降低 10-20%
+
+---
+
+### 完整示例：与 ImGui 混用
+
+```cpp
+void Render() {
+    auto state = renderer->GetRenderState();
+    
+    // === 1. 渲染 3D 场景 ===
+    state->SetDepthTest(true);
+    state->SetBlendMode(BlendMode::None);
+    state->UseProgram(sceneShader);
+    state->BindTexture(0, sceneTexture);
+    
+    // 渲染 3D 场景...
+    RenderScene();
+    
+    // === 2. 渲染 ImGui（第三方库）===
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    
+    // === 3. 清空缓存（ImGui 改变了 OpenGL 状态）===
+    state->InvalidateCache();
+    
+    // === 4. 继续渲染自己的内容 ===
+    state->SetDepthTest(false);
+    state->SetBlendMode(BlendMode::Alpha);
+    state->UseProgram(uiShader);
+    
+    // 渲染 UI...
+    RenderUI();
+}
+```
+
+---
+
+### 性能对比
+
+| 方法 | 性能影响 | 正确性 | 推荐场景 |
+|------|---------|--------|---------|
+| 不处理 | 0% | ❌ 可能错误 | 纯自己的渲染代码 |
+| InvalidateCache | ~1% | ✅ 正确 | 偶尔使用第三方库 |
+| SyncFromGL | ~5% | ✅ 正确 | 需要保留第三方状态 |
+| 严格模式 | ~15% | ✅ 总是正确 | 调试和开发 |
+
+---
+
 ## 纹理绑定管理
 
 ### BindTexture
