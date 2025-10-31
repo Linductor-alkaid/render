@@ -1,5 +1,6 @@
 #include "render/gl_thread_checker.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <sstream>
 #include <iomanip>
 
@@ -30,13 +31,14 @@ void GLThreadChecker::RegisterGLThread() {
         } else {
             // 不同线程尝试注册，这通常是一个错误
             std::ostringstream oss;
-            oss << "Attempting to register OpenGL thread from different thread! "
-                << "Registered thread ID: " << m_glThreadId 
-                << ", Current thread ID: " << currentThreadId;
-            LOG_ERROR(oss.str());
+            oss << "GLThreadChecker: 尝试从不同线程注册 OpenGL 线程! "
+                << "已注册线程 ID: " << m_glThreadId 
+                << ", 当前线程 ID: " << currentThreadId;
+            
+            HANDLE_ERROR(RENDER_CRITICAL(ErrorCode::ThreadCreationFailed, oss.str()));
             
             if (m_terminateOnError.load()) {
-                LOG_ERROR("CRITICAL: Terminating due to OpenGL thread registration conflict");
+                LOG_ERROR("CRITICAL: 由于 OpenGL 线程注册冲突而终止");
                 std::terminate();
             }
             return;
@@ -61,13 +63,14 @@ void GLThreadChecker::UnregisterGLThread() {
     
     if (m_glThreadId != currentThreadId) {
         std::ostringstream oss;
-        oss << "Attempting to unregister OpenGL thread from wrong thread! "
-            << "Registered thread ID: " << m_glThreadId 
-            << ", Current thread ID: " << currentThreadId;
-        LOG_ERROR(oss.str());
+        oss << "GLThreadChecker: 尝试从错误线程注销 OpenGL 线程! "
+            << "已注册线程 ID: " << m_glThreadId 
+            << ", 当前线程 ID: " << currentThreadId;
+        
+        HANDLE_ERROR(RENDER_CRITICAL(ErrorCode::ThreadSynchronizationFailed, oss.str()));
         
         if (m_terminateOnError.load()) {
-            LOG_ERROR("CRITICAL: Terminating due to OpenGL thread unregistration from wrong thread");
+            LOG_ERROR("CRITICAL: 由于从错误线程注销 OpenGL 线程而终止");
             std::terminate();
         }
         return;
@@ -97,20 +100,20 @@ bool GLThreadChecker::ValidateGLThread(const char* file, int line, const char* f
     if (m_glThreadId != currentThreadId) {
         // 构建错误消息
         std::ostringstream oss;
-        oss << "OpenGL call from wrong thread!\n"
-            << "  Expected thread ID: " << m_glThreadId << "\n"
-            << "  Current thread ID:  " << currentThreadId << "\n"
-            << "  Location: " << file << ":" << line;
+        oss << "GLThreadChecker: OpenGL 调用来自错误线程!\n"
+            << "  期望线程 ID: " << m_glThreadId << "\n"
+            << "  当前线程 ID: " << currentThreadId << "\n"
+            << "  位置: " << file << ":" << line;
         
         if (function) {
             oss << " in " << function << "()";
         }
         
-        LOG_ERROR(oss.str());
+        HANDLE_ERROR(RENDER_CRITICAL(ErrorCode::WrongThread, oss.str()));
         
         // 如果设置了终止选项，立即终止程序
         if (m_terminateOnError.load()) {
-            LOG_ERROR("CRITICAL: Terminating due to OpenGL thread violation");
+            LOG_ERROR("CRITICAL: 由于 OpenGL 线程违规而终止");
             std::terminate();
         }
         

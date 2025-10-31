@@ -1,5 +1,6 @@
 #include "render/opengl_context.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <glad/glad.h>
 
 namespace Render {
@@ -21,66 +22,71 @@ bool OpenGLContext::Initialize(const std::string& title,
                                int width, 
                                int height, 
                                const OpenGLConfig& config) {
-    if (m_initialized) {
-        LOG_WARNING("OpenGLContext already initialized");
+    RENDER_TRY {
+        if (m_initialized) {
+            throw RENDER_WARNING(ErrorCode::AlreadyInitialized, 
+                               "OpenGLContext: 上下文已经初始化");
+        }
+        
+        LOG_INFO("Initializing OpenGL Context...");
+        
+        // 初始化 SDL
+        if (!SDL_Init(SDL_INIT_VIDEO)) {
+            throw RENDER_ERROR(ErrorCode::InitializationFailed, 
+                             "OpenGLContext: SDL 初始化失败: " + std::string(SDL_GetError()));
+        }
+        LOG_INFO("SDL initialized successfully");
+        
+        m_width = width;
+        m_height = height;
+        
+        // 创建窗口
+        if (!CreateWindow(title, width, height)) {
+            throw RENDER_ERROR(ErrorCode::InitializationFailed, 
+                             "OpenGLContext: 窗口创建失败");
+        }
+        
+        // 创建 OpenGL 上下文
+        if (!CreateGLContext(config)) {
+            throw RENDER_ERROR(ErrorCode::GLContextCreationFailed, 
+                             "OpenGLContext: OpenGL 上下文创建失败");
+        }
+        
+        // 初始化 GLAD
+        if (!InitializeGLAD()) {
+            throw RENDER_ERROR(ErrorCode::InitializationFailed, 
+                             "OpenGLContext: GLAD 初始化失败");
+        }
+        
+        // 输出 OpenGL 信息
+        LogGLInfo();
+        
+        // 注册 OpenGL 线程 - 必须在所有 OpenGL 调用之前
+        GL_THREAD_REGISTER();
+        LOG_INFO("OpenGL thread registered for thread safety checks");
+        
+        // 设置视口
+        GL_THREAD_CHECK();
+        glViewport(0, 0, width, height);
+        
+        // 启用深度测试
+        GL_THREAD_CHECK();
+        glEnable(GL_DEPTH_TEST);
+        
+        // 启用面剔除
+        GL_THREAD_CHECK();
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+        
+        m_initialized = true;
+        LOG_INFO("OpenGL Context initialized successfully");
+        
         return true;
     }
-    
-    LOG_INFO("Initializing OpenGL Context...");
-    
-    // 初始化 SDL
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        LOG_ERROR(std::string("Failed to initialize SDL: ") + SDL_GetError());
+    RENDER_CATCH {
         return false;
     }
-    LOG_INFO("SDL initialized successfully");
-    
-    m_width = width;
-    m_height = height;
-    
-    // 创建窗口
-    if (!CreateWindow(title, width, height)) {
-        LOG_ERROR("Failed to create window");
-        return false;
-    }
-    
-    // 创建 OpenGL 上下文
-    if (!CreateGLContext(config)) {
-        LOG_ERROR("Failed to create OpenGL context");
-        return false;
-    }
-    
-    // 初始化 GLAD
-    if (!InitializeGLAD()) {
-        LOG_ERROR("Failed to initialize GLAD");
-        return false;
-    }
-    
-    // 输出 OpenGL 信息
-    LogGLInfo();
-    
-    // 注册 OpenGL 线程 - 必须在所有 OpenGL 调用之前
-    GL_THREAD_REGISTER();
-    LOG_INFO("OpenGL thread registered for thread safety checks");
-    
-    // 设置视口
-    GL_THREAD_CHECK();
-    glViewport(0, 0, width, height);
-    
-    // 启用深度测试
-    GL_THREAD_CHECK();
-    glEnable(GL_DEPTH_TEST);
-    
-    // 启用面剔除
-    GL_THREAD_CHECK();
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glFrontFace(GL_CCW);
-    
-    m_initialized = true;
-    LOG_INFO("OpenGL Context initialized successfully");
-    
-    return true;
 }
 
 void OpenGLContext::Shutdown() {

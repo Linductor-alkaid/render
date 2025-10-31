@@ -1,5 +1,6 @@
 #include "render/render_state.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <glad/glad.h>
 
 namespace Render {

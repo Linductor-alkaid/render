@@ -1,5 +1,6 @@
 #include "render/texture.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include "render/gl_thread_checker.h"
 #include <SDL3_image/SDL_image.h>
 #include <SDL3/SDL.h>
@@ -59,10 +60,19 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 }
 
 bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
+    // 参数验证
+    if (filepath.empty()) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument, 
+                                 "Texture::LoadFromFile: 文件路径为空"));
+        return false;
+    }
+    
     // 在锁外加载图片文件（避免长时间持锁）
     SDL_Surface* surface = IMG_Load(filepath.c_str());
     if (!surface) {
-        Logger::GetInstance().Error("从文件加载纹理失败: " + filepath + " - " + SDL_GetError());
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::FileOpenFailed, 
+                                 "Texture::LoadFromFile: 加载纹理失败: " + filepath + 
+                                 " - " + std::string(SDL_GetError())));
         return false;
     }
 
@@ -87,7 +97,9 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
         SDL_DestroySurface(surface);
         
         if (!convertedSurface) {
-            Logger::GetInstance().Error("转换纹理格式失败: " + std::string(SDL_GetError()));
+            HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceInvalidFormat, 
+                                     "Texture::LoadFromFile: 转换纹理格式失败: " + 
+                                     std::string(SDL_GetError())));
             return false;
         }
         
@@ -115,8 +127,9 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
     int height = surface->h;
     
     if (width <= 0 || height <= 0) {
-        Logger::GetInstance().Error("无效的纹理尺寸: " + 
-                     std::to_string(width) + "x" + std::to_string(height));
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument, 
+                                 "Texture::LoadFromFile: 无效的纹理尺寸: " + 
+                                 std::to_string(width) + "x" + std::to_string(height)));
         SDL_DestroySurface(surface);
         return false;
     }
@@ -182,13 +195,21 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
 
 bool Texture::CreateFromData(const void* data, int width, int height, 
                              TextureFormat format, bool generateMipmap) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
+    // 参数验证
     if (width <= 0 || height <= 0) {
-        Logger::GetInstance().Error("无效的纹理尺寸: " + 
-                     std::to_string(width) + "x" + std::to_string(height));
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument, 
+                                 "Texture::CreateFromData: 无效的纹理尺寸: " + 
+                                 std::to_string(width) + "x" + std::to_string(height)));
         return false;
     }
+    
+    if (width > 8192 || height > 8192) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange, 
+                                   "Texture::CreateFromData: 纹理尺寸超过推荐限制: " + 
+                                   std::to_string(width) + "x" + std::to_string(height)));
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
 
     // 释放旧纹理（内部方法，无需再加锁）
     if (m_textureID != 0) {

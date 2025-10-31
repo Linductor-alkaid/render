@@ -1,5 +1,6 @@
 #include "render/camera.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <cmath>
 #include <algorithm>
 
@@ -142,6 +143,29 @@ Camera::Camera()
 // ============================================================================
 
 void Camera::SetPerspective(float fovYDegrees, float aspect, float nearPlane, float farPlane) {
+    // 参数验证
+    if (fovYDegrees <= 0.0f || fovYDegrees >= 180.0f) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange, 
+                                   "Camera::SetPerspective: FOV 超出有效范围 (0, 180): " + 
+                                   std::to_string(fovYDegrees)));
+        fovYDegrees = std::clamp(fovYDegrees, 1.0f, 179.0f);
+    }
+    
+    if (aspect <= 0.0f) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "Camera::SetPerspective: 宽高比必须大于 0: " + 
+                                   std::to_string(aspect)));
+        aspect = 1.0f;
+    }
+    
+    if (nearPlane <= 0.0f || farPlane <= nearPlane) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "Camera::SetPerspective: 裁剪面参数无效 (near: " + 
+                                   std::to_string(nearPlane) + ", far: " + std::to_string(farPlane) + ")"));
+        nearPlane = std::max(0.01f, nearPlane);
+        farPlane = std::max(nearPlane + 1.0f, farPlane);
+    }
+    
     std::lock_guard<std::mutex> lock(m_mutex);
     
     m_projectionType = ProjectionType::Perspective;
@@ -182,10 +206,18 @@ ProjectionType Camera::GetProjectionType() const {
 }
 
 void Camera::SetFieldOfView(float fovYDegrees) {
+    if (fovYDegrees <= 0.0f || fovYDegrees >= 180.0f) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange, 
+                                   "Camera::SetFieldOfView: FOV 超出有效范围: " + 
+                                   std::to_string(fovYDegrees)));
+        fovYDegrees = std::clamp(fovYDegrees, 1.0f, 179.0f);
+    }
+    
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (m_projectionType != ProjectionType::Perspective) {
-        Logger::GetInstance().Warning("SetFieldOfView called on non-perspective camera");
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Camera::SetFieldOfView: 相机不是透视模式"));
         return;
     }
     

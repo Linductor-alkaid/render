@@ -1,5 +1,6 @@
 #include "render/shader_cache.h"
 #include "render/logger.h"
+#include "render/error.h"
 
 namespace Render {
 
@@ -28,7 +29,8 @@ std::shared_ptr<Shader> ShaderCache::LoadShader(const std::string& name,
     auto shader = std::make_shared<Shader>();
     
     if (!shader->LoadFromFile(vertexPath, fragmentPath, geometryPath)) {
-        LOG_ERROR("Failed to load shader: " + name);
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::ShaderCompileFailed, 
+                                 "ShaderCache: 着色器加载失败: " + name));
         return nullptr;
     }
     
@@ -70,7 +72,8 @@ std::shared_ptr<Shader> ShaderCache::LoadShaderFromSource(const std::string& nam
     auto shader = std::make_shared<Shader>();
     
     if (!shader->LoadFromSource(vertexSource, fragmentSource, geometrySource)) {
-        LOG_ERROR("Failed to load shader from source: " + name);
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::ShaderCompileFailed, 
+                                 "ShaderCache: 从源码加载着色器失败: " + name));
         return nullptr;
     }
     
@@ -99,7 +102,8 @@ std::shared_ptr<Shader> ShaderCache::GetShader(const std::string& name) {
         return it->second;
     }
     
-    LOG_WARNING("Shader '" + name + "' not found in cache");
+    HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceNotFound, 
+                                "ShaderCache: 着色器未找到: " + name));
     return nullptr;
 }
 

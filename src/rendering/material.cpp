@@ -3,6 +3,7 @@
 #include "render/texture.h"
 #include "render/render_state.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <utility>
 #include <map>
 #include <unordered_map>
@@ -107,6 +108,12 @@ std::string Material::GetName() const {
 // ============================================================================
 
 void Material::SetShader(std::shared_ptr<Shader> shader) {
+    if (!shader) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::NullPointer, 
+                                   "Material::SetShader: 尝试设置空着色器"));
+        return;
+    }
+    
     std::lock_guard<std::mutex> lock(m_mutex);
     m_shader = shader;
 }
@@ -311,8 +318,15 @@ void Material::Bind(RenderState* renderState) {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         
-        if (!m_shader || !m_shader->IsValid()) {
-            LOG_WARNING("Attempting to bind invalid material '" + m_name + "'");
+        if (!m_shader) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::NullPointer, 
+                                       "Material::Bind: 材质 '" + m_name + "' 没有着色器"));
+            return;
+        }
+        
+        if (!m_shader->IsValid()) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                       "Material::Bind: 材质 '" + m_name + "' 的着色器无效"));
             return;
         }
         

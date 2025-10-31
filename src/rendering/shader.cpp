@@ -2,6 +2,7 @@
 #include "render/uniform_manager.h"
 #include "render/file_utils.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include "render/gl_thread_checker.h"
 #include <glad/glad.h>
 

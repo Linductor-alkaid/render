@@ -1,5 +1,6 @@
 #include "render/resource_manager.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <algorithm>
 
 namespace Render {
@@ -20,14 +21,16 @@ void ResourceManager::BeginFrame() {
 
 bool ResourceManager::RegisterTexture(const std::string& name, Ref<Texture> texture) {
     if (!texture) {
-        Logger::GetInstance().Error("ResourceManager: 尝试注册空纹理: " + name);
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer, 
+                                 "ResourceManager: 尝试注册空纹理: " + name));
         return false;
     }
     
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (m_textures.find(name) != m_textures.end()) {
-        Logger::GetInstance().Warning("ResourceManager: 纹理已存在: " + name);
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists, 
+                                   "ResourceManager: 纹理已存在: " + name));
         return false;
     }
     
@@ -72,14 +75,16 @@ bool ResourceManager::HasTexture(const std::string& name) const {
 
 bool ResourceManager::RegisterMesh(const std::string& name, Ref<Mesh> mesh) {
     if (!mesh) {
-        Logger::GetInstance().Error("ResourceManager: 尝试注册空网格: " + name);
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer, 
+                                 "ResourceManager: 尝试注册空网格: " + name));
         return false;
     }
     
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (m_meshes.find(name) != m_meshes.end()) {
-        Logger::GetInstance().Warning("ResourceManager: 网格已存在: " + name);
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists, 
+                                   "ResourceManager: 网格已存在: " + name));
         return false;
     }
     

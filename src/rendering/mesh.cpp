@@ -1,5 +1,6 @@
 #include "render/mesh.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include "render/gl_thread_checker.h"
 #include <algorithm>
 #include <unordered_map>
@@ -199,7 +200,14 @@ void Mesh::Draw(DrawMode mode) const {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
     if (!m_Uploaded) {
-        Logger::GetInstance().Error("Mesh::Draw - Mesh not uploaded yet");
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Mesh::Draw: 网格数据尚未上传到 GPU"));
+        return;
+    }
+    
+    if (m_Vertices.empty()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Mesh::Draw: 网格顶点数据为空"));
         return;
     }
     
@@ -223,7 +231,14 @@ void Mesh::DrawInstanced(uint32_t instanceCount, DrawMode mode) const {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
     if (!m_Uploaded) {
-        Logger::GetInstance().Error("Mesh::DrawInstanced - Mesh not uploaded yet");
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Mesh::DrawInstanced: 网格数据尚未上传到 GPU"));
+        return;
+    }
+    
+    if (instanceCount == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "Mesh::DrawInstanced: 实例数量为 0"));
         return;
     }
     

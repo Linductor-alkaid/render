@@ -1,5 +1,6 @@
 #include "render/texture_loader.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <algorithm>
 
 namespace Render {
@@ -25,10 +26,11 @@ TexturePtr TextureLoader::LoadTexture(const std::string& name,
     
     // 在锁外加载纹理（避免长时间持锁）
     Logger::GetInstance().Info("加载新纹理: " + name + " (路径: " + filepath + ")");
-    auto texture = LoadTextureInternal(filepath, generateMipmap);
     
+    auto texture = LoadTextureInternal(filepath, generateMipmap);
     if (!texture) {
-        Logger::GetInstance().Error("加载纹理失败: " + name);
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::TextureUploadFailed, 
+                                 "TextureLoader: 加载纹理失败: " + name));
         return nullptr;
     }
     
@@ -73,7 +75,8 @@ TexturePtr TextureLoader::CreateTexture(const std::string& name,
     
     auto texture = std::make_shared<Texture>();
     if (!texture->CreateFromData(data, width, height, format, generateMipmap)) {
-        Logger::GetInstance().Error("创建纹理失败: " + name);
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::TextureUploadFailed, 
+                                 "TextureLoader: 创建纹理失败: " + name));
         return nullptr;
     }
     

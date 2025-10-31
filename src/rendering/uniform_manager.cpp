@@ -1,5 +1,6 @@
 #include "render/uniform_manager.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include "render/gl_thread_checker.h"
 #include <glad/glad.h>
 
@@ -223,7 +224,9 @@ int UniformManager::GetOrFindUniformLocation(const std::string& name) {
         // 只在首次查找时警告，避免重复警告
         std::lock_guard<std::mutex> warnLock(warnedMutex);
         if (warnedUniforms.find(name) == warnedUniforms.end()) {
-            LOG_WARNING("Uniform '" + name + "' not found in shader program " + std::to_string(m_programID));
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::ShaderUniformNotFound, 
+                                       "UniformManager: Uniform '" + name + 
+                                       "' 未在着色器程序 " + std::to_string(m_programID) + " 中找到"));
             warnedUniforms[name] = true;
         }
     }

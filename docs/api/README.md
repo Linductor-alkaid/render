@@ -47,8 +47,20 @@
 - **[MathUtils](MathUtils.md)** - 数学工具函数库（角度转换、向量/四元数/矩阵工具）⚡ **性能优化**
 - **[Transform](Transform.md)** - 3D变换类（位置、旋转、缩放、层级关系）⚡ **高性能缓存**
 
+### 错误处理系统
+- **[ErrorHandler](ErrorHandler.md)** - 统一错误处理器 🔒 **线程安全** 
+  - 统一的错误码体系（50+ 错误码）
+  - 多级严重程度（Info/Warning/Error/Critical）
+  - 自动源代码位置追踪
+  - OpenGL 错误检查
+  - 回调系统和错误统计
+- **[RenderError](RenderError.md)** - 渲染错误异常类
+  - 详细的错误信息
+  - 错误分类和严重程度
+  - C++20 source_location 支持
+
 ### 工具类
-- **[Logger](Logger.md)** - 日志系统
+- **[Logger](Logger.md)** - 日志系统 🔒 **线程安全**
 - **[FileUtils](FileUtils.md)** - 文件工具
 - **[GLThreadChecker](GLThreadChecker.md)** - OpenGL 线程安全检查（参见上方"渲染核心"部分）
 
@@ -70,6 +82,8 @@
 - [渲染状态设置](RenderState.md#状态设置)
 - [OpenGL 状态封装（纹理/VAO/着色器）](RenderState.md#opengl-状态封装)
 - [OpenGL 线程安全检查](GLThreadChecker.md#使用示例) 🔒 
+- [错误处理](ErrorHandler.md#基本使用) ⚠️
+- [异常处理](RenderError.md#使用示例) ⚠️
 - [着色器热重载](ShaderCache.md#热重载)
 - [加载纹理](TextureLoader.md#基本使用)
 - [创建几何形状](MeshLoader.md#几何形状生成方法)
@@ -133,6 +147,16 @@ Transform (3D变换)
   ├── 父子关系
   └── 高性能缓存
 
+ErrorHandler (单例)
+  ├── 错误处理
+  ├── 回调系统
+  └── 错误统计
+
+RenderError (异常类)
+  ├── 错误码和类别
+  ├── 严重程度
+  └── 源代码位置
+
 Logger (单例)
 FileUtils (静态工具类)
 MathUtils (静态工具类)
@@ -142,13 +166,28 @@ MathUtils (静态工具类)
 
 ## API 版本
 
-- **Engine Version**: 0.10.0
-- **API Version**: 0.10.0
+- **Engine Version**: 0.11.0
+- **API Version**: 0.11.0
 - **OpenGL Version**: 4.5+
-- **C++ Standard**: C++17
-- **Last Updated**: 2025-10-30
+- **C++ Standard**: C++20
+- **Last Updated**: 2025-10-31
 
 ### 版本更新记录
+- **v0.11.0** (2025-10-31): ⚠️ **统一错误处理系统**
+  - ✅ 新增 `ErrorHandler` 类 - 统一错误处理器（单例）
+  - ✅ 新增 `RenderError` 类 - 渲染错误异常类
+  - ✅ 统一的错误码体系（50+ 错误码，7个类别）
+  - ✅ 多级严重程度（Info/Warning/Error/Critical）
+  - ✅ C++20 `std::source_location` 自动位置追踪
+  - ✅ OpenGL 错误自动检查（CHECK_GL_ERROR 宏）
+  - ✅ 错误回调系统（支持多个回调）
+  - ✅ 错误统计功能（按严重程度统计）
+  - ✅ 便捷宏（RENDER_ERROR、RENDER_TRY/CATCH、RENDER_ASSERT 等）
+  - 🔒 **全面线程安全** - 所有操作都是线程安全的
+  - ✅ 集成到所有单例类（ResourceManager、ShaderCache、TextureLoader 等）
+  - ✅ 集成到所有核心类（Texture、Mesh、Material、Camera 等）
+  - ✅ 完整的错误处理 API 文档和使用指南
+  - ⚠️ **提升代码健壮性** - 统一的错误处理和追踪机制
 - **v0.10.0** (2025-10-30): 🔒 **OpenGL 线程安全检查系统**
   - ✅ 新增 `GLThreadChecker` 类 - OpenGL 线程安全检查器（单例）
   - ✅ 自动检测所有 OpenGL 调用是否在正确的线程中执行

@@ -515,7 +515,9 @@ resourceManager.CleanupUnused(0);
 
 ---
 
-### 任务 2.2: 实现统一的错误处理机制
+### 任务 2.2: 实现统一的错误处理机制 ✅ 已完成
+
+**实施日期**: 2025-10-31
 
 **新文件**: `include/render/error.h`, `src/utils/error.cpp`
 
@@ -655,32 +657,91 @@ private:
 } // namespace Render
 ```
 
+**已实施内容**:
+
+1. **核心实现** ✅
+   - 创建 `include/render/error.h`（493 行）
+   - 创建 `src/utils/error.cpp`（379 行）
+   - 更新 `CMakeLists.txt`（C++20 + 新文件）
+
+2. **错误分类体系** ✅
+   - 50+ 错误码，7个类别
+   - 4个严重级别（Info/Warning/Error/Critical）
+   - 自动位置追踪（C++20 source_location）
+
+3. **集成到单例类** ✅
+   - ResourceManager - 资源注册错误处理
+   - ShaderCache - 着色器加载错误处理
+   - TextureLoader - 纹理加载错误处理
+   - GLThreadChecker - 线程错误处理
+   - Renderer - 初始化错误处理
+   - OpenGLContext - OpenGL 错误检查
+
+4. **集成到核心类** ✅
+   - Texture - 参数验证、文件加载、格式转换
+   - Mesh - 绘制状态检查、参数验证
+   - Material - 着色器验证
+   - Camera - 参数验证和自动修正
+   - UniformManager - Uniform 未找到警告
+   - RenderState - 预备集成
+   - Transform - 预备集成
+
+5. **便捷宏** ✅
+   - `RENDER_ERROR/WARNING/CRITICAL` - 创建错误
+   - `RENDER_ASSERT` - 断言检查
+   - `CHECK_GL_ERROR` - GL 错误检查（只记录）
+   - `CHECK_GL_ERROR_THROW` - GL 错误检查（抛出异常）
+   - `HANDLE_ERROR` - 处理错误（不抛出）
+   - `RENDER_TRY/CATCH/CATCH_ALL` - Try-Catch 包装
+
+6. **完整文档** ✅
+   - `docs/ERROR_HANDLING.md` - 完整文档
+   - `docs/ERROR_HANDLING_EXAMPLES.md` - 使用示例
+   - `docs/ERROR_HANDLING_SUMMARY.md` - 实施总结
+   - `docs/ERROR_HANDLING_INTEGRATION_SUMMARY.md` - 集成总结
+   - `docs/api/ErrorHandler.md` - ErrorHandler API 文档
+   - `docs/api/RenderError.md` - RenderError API 文档
+   - 更新 `docs/api/README.md` - 添加错误处理链接
+
 **使用示例**:
 
 ```cpp
-// 在 Shader::LoadFromFile 中
-bool Shader::LoadFromFile(const std::string& vertexPath,
-                          const std::string& fragmentPath,
-                          const std::string& geometryPath) {
-    try {
-        std::string vertexSource = FileUtils::ReadFile(vertexPath);
-        if (vertexSource.empty()) {
-            throw RenderError(ErrorCode::ResourceLoadFailed,
-                            "无法读取顶点着色器: " + vertexPath);
-        }
-        
-        // ...
-        
-        CHECK_GL_ERROR();  // 自动检查 OpenGL 错误
-        
-        return true;
-    }
-    catch (const RenderError& e) {
-        ErrorHandler::GetInstance().Handle(e);
-        return false;
-    }
+// 1. 基本错误处理
+RENDER_TRY {
+    LoadTexture("test.png");
 }
+RENDER_CATCH {
+    // 错误已自动记录
+}
+
+// 2. 参数验证
+if (width <= 0 || height <= 0) {
+    HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument, 
+                             "纹理尺寸无效"));
+    return false;
+}
+
+// 3. OpenGL 错误检查
+glBindTexture(GL_TEXTURE_2D, id);
+CHECK_GL_ERROR();  // 只记录，不抛出
+
+// 4. 断言检查
+RENDER_ASSERT(texture != nullptr, "纹理不能为空");
+
+// 5. 自定义回调
+ErrorHandler::GetInstance().AddCallback([](const RenderError& e) {
+    if (e.GetSeverity() == ErrorSeverity::Critical) {
+        SaveCrashDump(e);
+    }
+});
 ```
+
+**优势**:
+- ✅ 统一的错误处理机制
+- ✅ 详细的错误信息和位置追踪
+- ✅ 灵活的错误恢复策略
+- ✅ 线程安全的全局错误处理器
+- ✅ 性能友好（正常情况几乎无开销）
 
 ---
 

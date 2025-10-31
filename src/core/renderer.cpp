@@ -1,5 +1,6 @@
 #include "render/renderer.h"
 #include "render/logger.h"
+#include "render/error.h"
 #include <SDL3/SDL.h>
 
 namespace Render {
@@ -32,34 +33,39 @@ Renderer::~Renderer() {
 }
 
 bool Renderer::Initialize(const std::string& title, int width, int height) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    if (m_initialized) {
-        LOG_WARNING("Renderer already initialized");
+    RENDER_TRY {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        if (m_initialized) {
+            throw RENDER_WARNING(ErrorCode::AlreadyInitialized, 
+                               "Renderer: 渲染器已经初始化");
+        }
+        
+        LOG_INFO("========================================");
+        LOG_INFO("Initializing RenderEngine...");
+        LOG_INFO("========================================");
+        
+        // 初始化 OpenGL 上下文
+        if (!m_context->Initialize(title, width, height)) {
+            throw RENDER_ERROR(ErrorCode::InitializationFailed, 
+                             "Renderer: OpenGL 上下文初始化失败");
+        }
+        
+        // 重置渲染状态
+        m_renderState->Reset();
+        
+        m_lastFrameTime = static_cast<float>(SDL_GetTicks()) * 0.001f;
+        m_initialized = true;
+        
+        LOG_INFO("========================================");
+        LOG_INFO("RenderEngine initialized successfully!");
+        LOG_INFO("========================================");
+        
         return true;
     }
-    
-    LOG_INFO("========================================");
-    LOG_INFO("Initializing RenderEngine...");
-    LOG_INFO("========================================");
-    
-    // 初始化 OpenGL 上下文
-    if (!m_context->Initialize(title, width, height)) {
-        LOG_ERROR("Failed to initialize OpenGL context");
+    RENDER_CATCH {
         return false;
     }
-    
-    // 重置渲染状态
-    m_renderState->Reset();
-    
-    m_lastFrameTime = static_cast<float>(SDL_GetTicks()) * 0.001f;
-    m_initialized = true;
-    
-    LOG_INFO("========================================");
-    LOG_INFO("RenderEngine initialized successfully!");
-    LOG_INFO("========================================");
-    
-    return true;
 }
 
 void Renderer::Shutdown() {

@@ -1,4 +1,5 @@
 #include "render/transform.h"
+#include "render/error.h"
 
 namespace Render {
 
