@@ -5,6 +5,8 @@
 #include "mesh.h"
 #include "material.h"
 #include "shader.h"
+#include "resource_handle.h"
+#include "resource_slot.h"
 #include <unordered_map>
 #include <mutex>
 #include <string>
@@ -288,15 +290,191 @@ public:
      */
     void ForEachShader(std::function<void(const std::string&, Ref<Shader>)> callback);
     
+    // ========================================================================
+    // 智能句柄系统（新增）
+    // ========================================================================
+    
+    /**
+     * @brief 创建纹理句柄
+     * @param name 纹理名称
+     * @param texture 纹理对象
+     * @return 纹理句柄
+     * 
+     * 句柄系统提供以下优势：
+     * - 更好的缓存局部性（句柄只有8字节）
+     * - 支持资源热重载（保持句柄，替换资源）
+     * - 防止循环引用（不使用引用计数）
+     * - 自动检测悬空引用（代数机制）
+     */
+    TextureHandle CreateTextureHandle(const std::string& name, Ref<Texture> texture);
+    
+    /**
+     * @brief 创建网格句柄
+     */
+    MeshHandle CreateMeshHandle(const std::string& name, Ref<Mesh> mesh);
+    
+    /**
+     * @brief 创建材质句柄
+     */
+    MaterialHandle CreateMaterialHandle(const std::string& name, Ref<Material> material);
+    
+    /**
+     * @brief 创建着色器句柄
+     */
+    ShaderHandle CreateShaderHandle(const std::string& name, Ref<Shader> shader);
+    
+    /**
+     * @brief 通过句柄获取纹理指针
+     * @param handle 纹理句柄
+     * @return 纹理指针，如果句柄无效返回 nullptr
+     */
+    Texture* GetTextureByHandle(const TextureHandle& handle);
+    
+    /**
+     * @brief 通过句柄获取纹理的 shared_ptr
+     */
+    Ref<Texture> GetTextureSharedByHandle(const TextureHandle& handle);
+    
+    /**
+     * @brief 检查纹理句柄是否有效
+     */
+    bool IsTextureHandleValid(const TextureHandle& handle) const;
+    
+    /**
+     * @brief 通过句柄获取网格指针
+     */
+    Mesh* GetMeshByHandle(const MeshHandle& handle);
+    
+    /**
+     * @brief 通过句柄获取网格的 shared_ptr
+     */
+    Ref<Mesh> GetMeshSharedByHandle(const MeshHandle& handle);
+    
+    /**
+     * @brief 检查网格句柄是否有效
+     */
+    bool IsMeshHandleValid(const MeshHandle& handle) const;
+    
+    /**
+     * @brief 通过句柄获取材质指针
+     */
+    Material* GetMaterialByHandle(const MaterialHandle& handle);
+    
+    /**
+     * @brief 通过句柄获取材质的 shared_ptr
+     */
+    Ref<Material> GetMaterialSharedByHandle(const MaterialHandle& handle);
+    
+    /**
+     * @brief 检查材质句柄是否有效
+     */
+    bool IsMaterialHandleValid(const MaterialHandle& handle) const;
+    
+    /**
+     * @brief 通过句柄获取着色器指针
+     */
+    Shader* GetShaderByHandle(const ShaderHandle& handle);
+    
+    /**
+     * @brief 通过句柄获取着色器的 shared_ptr
+     */
+    Ref<Shader> GetShaderSharedByHandle(const ShaderHandle& handle);
+    
+    /**
+     * @brief 检查着色器句柄是否有效
+     */
+    bool IsShaderHandleValid(const ShaderHandle& handle) const;
+    
+    /**
+     * @brief 热重载纹理
+     * @param handle 纹理句柄
+     * @param newTexture 新纹理
+     * @return 是否成功
+     * 
+     * 保持句柄不变，只替换纹理内容。
+     * 所有持有该句柄的对象会自动使用新纹理。
+     */
+    bool ReloadTexture(const TextureHandle& handle, Ref<Texture> newTexture);
+    
+    /**
+     * @brief 热重载网格
+     */
+    bool ReloadMesh(const MeshHandle& handle, Ref<Mesh> newMesh);
+    
+    /**
+     * @brief 热重载材质
+     */
+    bool ReloadMaterial(const MaterialHandle& handle, Ref<Material> newMaterial);
+    
+    /**
+     * @brief 热重载着色器
+     */
+    bool ReloadShader(const ShaderHandle& handle, Ref<Shader> newShader);
+    
+    /**
+     * @brief 通过句柄移除纹理
+     */
+    bool RemoveTextureByHandle(const TextureHandle& handle);
+    
+    /**
+     * @brief 通过句柄移除网格
+     */
+    bool RemoveMeshByHandle(const MeshHandle& handle);
+    
+    /**
+     * @brief 通过句柄移除材质
+     */
+    bool RemoveMaterialByHandle(const MaterialHandle& handle);
+    
+    /**
+     * @brief 通过句柄移除着色器
+     */
+    bool RemoveShaderByHandle(const ShaderHandle& handle);
+    
+    /**
+     * @brief 获取句柄系统统计信息
+     */
+    struct HandleStats {
+        size_t textureSlots = 0;
+        size_t textureActiveSlots = 0;
+        size_t textureFreeSlots = 0;
+        
+        size_t meshSlots = 0;
+        size_t meshActiveSlots = 0;
+        size_t meshFreeSlots = 0;
+        
+        size_t materialSlots = 0;
+        size_t materialActiveSlots = 0;
+        size_t materialFreeSlots = 0;
+        
+        size_t shaderSlots = 0;
+        size_t shaderActiveSlots = 0;
+        size_t shaderFreeSlots = 0;
+    };
+    
+    HandleStats GetHandleStats() const;
+    
 private:
     ResourceManager() = default;
     ~ResourceManager() = default;
     
-    // 资源存储（使用 ResourceEntry 封装）
+    // 资源存储（使用 ResourceEntry 封装）- 传统方式
     std::unordered_map<std::string, ResourceEntry<Texture>> m_textures;
     std::unordered_map<std::string, ResourceEntry<Mesh>> m_meshes;
     std::unordered_map<std::string, ResourceEntry<Material>> m_materials;
     std::unordered_map<std::string, ResourceEntry<Shader>> m_shaders;
+    
+    // 智能句柄系统 - 新方式
+    ResourceSlotManager<Texture> m_textureSlots;
+    ResourceSlotManager<Mesh> m_meshSlots;
+    ResourceSlotManager<Material> m_materialSlots;
+    ResourceSlotManager<Shader> m_shaderSlots;
+    
+    // 名称到句柄的映射（用于通过名称查找句柄）
+    std::unordered_map<std::string, TextureHandle> m_textureHandles;
+    std::unordered_map<std::string, MeshHandle> m_meshHandles;
+    std::unordered_map<std::string, MaterialHandle> m_materialHandles;
+    std::unordered_map<std::string, ShaderHandle> m_shaderHandles;
     
     // 帧计数器
     uint32_t m_currentFrame = 0;

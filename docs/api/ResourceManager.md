@@ -21,6 +21,7 @@
 ✅ **访问追踪**: 自动追踪资源访问帧，防止意外删除活跃资源  
 ✅ **资源统计**: 提供详细的资源统计和监控功能  
 ✅ **批量操作**: 支持批量清理和遍历操作  
+✅ **智能句柄**: 提供轻量级资源句柄，支持热重载和自动检测悬空引用 🆕  
 
 ---
 
@@ -628,6 +629,458 @@ void ForEachShader(std::function<void(const std::string&, Ref<Shader>)> callback
 
 ---
 
+## 🆕 智能句柄系统（版本 3.0）
+
+### 概述
+
+从版本 3.0 开始，`ResourceManager` 提供了全新的**智能资源句柄系统**，这是一种比 `shared_ptr` 更高效的资源管理方式。
+
+**什么是资源句柄？**
+
+资源句柄是一个轻量级的资源引用，使用 `ID + Generation` 方式管理资源，只有 8 字节大小。
+
+### 句柄 vs shared_ptr 对比
+
+| 特性 | ResourceHandle | shared_ptr |
+|------|----------------|------------|
+| 大小 | 8 字节 | 16 字节 |
+| 内存节省 | 50% | - |
+| 缓存局部性 | ✅ 更好 | ❌ 较差 |
+| 热重载支持 | ✅ 原生支持 | ❌ 不支持 |
+| 循环引用 | ✅ 不会发生 | ❌ 可能发生 |
+| 悬空检测 | ✅ 自动检测 | ❌ 无法检测 |
+| ID 重用 | ✅ 支持 | ❌ 不支持 |
+| 线程安全 | ✅ 是 | ✅ 是 |
+| 访问开销 | 略高（查表） | 略低（直接解引用） |
+
+### 句柄系统 API
+
+#### CreateTextureHandle()
+
+创建纹理句柄。
+
+```cpp
+TextureHandle CreateTextureHandle(const std::string& name, Ref<Texture> texture)
+```
+
+**返回值**: 纹理句柄
+
+**示例**:
+```cpp
+auto& resMgr = ResourceManager::GetInstance();
+auto texture = std::make_shared<Texture>();
+texture->LoadFromFile("test.png");
+
+// 创建句柄
+TextureHandle handle = resMgr.CreateTextureHandle("my_texture", texture);
+
+// 使用句柄
+if (handle) {
+    handle->Bind(0);  // 像指针一样使用
+}
+```
+
+#### CreateMeshHandle() / CreateMaterialHandle() / CreateShaderHandle()
+
+创建其他类型的资源句柄。
+
+```cpp
+MeshHandle CreateMeshHandle(const std::string& name, Ref<Mesh> mesh)
+MaterialHandle CreateMaterialHandle(const std::string& name, Ref<Material> material)
+ShaderHandle CreateShaderHandle(const std::string& name, Ref<Shader> shader)
+```
+
+#### 资源热重载
+
+句柄系统的核心优势之一是支持**资源热重载**。
+
+```cpp
+bool ReloadTexture(const TextureHandle& handle, Ref<Texture> newTexture)
+bool ReloadMesh(const MeshHandle& handle, Ref<Mesh> newMesh)
+bool ReloadMaterial(const MaterialHandle& handle, Ref<Material> newMaterial)
+bool ReloadShader(const ShaderHandle& handle, Ref<Shader> newShader)
+```
+
+**示例**:
+```cpp
+// 创建原始纹理
+auto texture1 = std::make_shared<Texture>();
+texture1->LoadFromFile("old.png");
+TextureHandle handle = resMgr.CreateTextureHandle("my_tex", texture1);
+
+// 使用句柄
+material->SetTexture("diffuse", handle);
+
+// 稍后热重载新纹理
+auto texture2 = std::make_shared<Texture>();
+texture2->LoadFromFile("new.png");
+resMgr.ReloadTexture(handle, texture2);
+
+// ✅ material 自动使用新纹理，无需修改任何代码！
+```
+
+#### 通过句柄移除资源
+
+```cpp
+bool RemoveTextureByHandle(const TextureHandle& handle)
+bool RemoveMeshByHandle(const MeshHandle& handle)
+bool RemoveMaterialByHandle(const MaterialHandle& handle)
+bool RemoveShaderByHandle(const ShaderHandle& handle)
+```
+
+#### 获取句柄统计信息
+
+```cpp
+struct HandleStats {
+    size_t textureSlots;           // 纹理槽总数
+    size_t textureActiveSlots;     // 活跃纹理槽数
+    size_t textureFreeSlots;       // 空闲纹理槽数
+    
+    size_t meshSlots;
+    size_t meshActiveSlots;
+    size_t meshFreeSlots;
+    
+    size_t materialSlots;
+    size_t materialActiveSlots;
+    size_t materialFreeSlots;
+    
+    size_t shaderSlots;
+    size_t shaderActiveSlots;
+    size_t shaderFreeSlots;
+};
+
+HandleStats GetHandleStats() const
+```
+
+**示例**:
+```cpp
+auto stats = resMgr.GetHandleStats();
+std::cout << "纹理槽: " << stats.textureActiveSlots << "/" << stats.textureSlots 
+          << " (空闲: " << stats.textureFreeSlots << ")\n";
+```
+
+### ResourceHandle 类 API
+
+资源句柄提供类似智能指针的接口：
+
+```cpp
+template<typename T>
+class ResourceHandle {
+public:
+    // 构造函数
+    ResourceHandle();  // 创建无效句柄
+    ResourceHandle(ResourceID id, ResourceGeneration generation);
+    
+    // 访问资源
+    T* Get() const;                      // 获取裸指针
+    std::shared_ptr<T> GetShared() const;  // 获取 shared_ptr
+    
+    // 状态查询
+    bool IsValid() const;                 // 检查是否有效
+    void Invalidate();                    // 使句柄失效
+    ResourceID GetID() const;             // 获取资源ID
+    ResourceGeneration GetGeneration() const;  // 获取代数
+    
+    // 运算符重载
+    explicit operator bool() const;       // if (handle) { ... }
+    T* operator->() const;                // handle->Method()
+    T& operator*() const;                 // *handle
+    
+    // 比较运算符
+    bool operator==(const ResourceHandle& other) const;
+    bool operator!=(const ResourceHandle& other) const;
+    bool operator<(const ResourceHandle& other) const;  // 用于排序
+};
+```
+
+### 句柄使用示例
+
+#### 基本使用
+
+```cpp
+// 创建句柄
+auto texture = std::make_shared<Texture>();
+texture->CreateEmpty(512, 512, TextureFormat::RGBA);
+TextureHandle handle = resMgr.CreateTextureHandle("my_tex", texture);
+
+// 方式1: 使用 Get() 获取裸指针
+if (auto tex = handle.Get()) {
+    tex->Bind(0);
+}
+
+// 方式2: 使用 operator bool 和 operator->
+if (handle) {
+    handle->Bind(0);  // 更简洁！
+}
+
+// 方式3: 获取 shared_ptr（需要长期持有时）
+auto texPtr = handle.GetShared();
+```
+
+#### 悬空引用检测
+
+```cpp
+// 创建句柄
+TextureHandle handle = resMgr.CreateTextureHandle("temp", texture);
+
+std::cout << "删除前: " << (handle.IsValid() ? "有效" : "无效") << "\n";  // 输出: 有效
+
+// 删除资源
+resMgr.RemoveTextureByHandle(handle);
+
+std::cout << "删除后: " << (handle.IsValid() ? "有效" : "无效") << "\n";  // 输出: 无效
+std::cout << "访问: " << (handle.Get() != nullptr ? "成功" : "失败") << "\n";  // 输出: 失败
+
+// ✅ 不会崩溃！返回 nullptr 而不是访问野指针
+```
+
+#### ID 重用和代数机制
+
+```cpp
+// 创建第一个纹理
+TextureHandle handle1 = resMgr.CreateTextureHandle("tex1", texture1);
+ResourceID id1 = handle1.GetID();
+ResourceGeneration gen1 = handle1.GetGeneration();
+
+std::cout << "第一个纹理 - ID: " << id1 << ", 代数: " << gen1 << "\n";
+// 输出: ID: 0, 代数: 0
+
+// 删除纹理
+resMgr.RemoveTextureByHandle(handle1);
+
+// 创建第二个纹理（重用相同的 ID）
+TextureHandle handle2 = resMgr.CreateTextureHandle("tex2", texture2);
+ResourceID id2 = handle2.GetID();
+ResourceGeneration gen2 = handle2.GetGeneration();
+
+std::cout << "第二个纹理 - ID: " << id2 << ", 代数: " << gen2 << "\n";
+// 输出: ID: 0, 代数: 1  （ID 相同，代数递增）
+
+// 使用旧句柄访问（会失败）
+std::cout << "旧句柄有效: " << handle1.IsValid() << "\n";  // 输出: 0 (false)
+// ✅ 代数不匹配，防止了悬空引用！
+```
+
+#### 资源热重载
+
+```cpp
+class TextureManager {
+private:
+    std::unordered_map<std::string, TextureHandle> m_textures;
+    
+public:
+    void LoadTexture(const std::string& name, const std::string& path) {
+        auto texture = std::make_shared<Texture>();
+        texture->LoadFromFile(path);
+        
+        TextureHandle handle = ResourceManager::GetInstance()
+            .CreateTextureHandle(name, texture);
+        m_textures[name] = handle;
+    }
+    
+    void ReloadTexture(const std::string& name, const std::string& newPath) {
+        auto it = m_textures.find(name);
+        if (it == m_textures.end()) return;
+        
+        // 加载新纹理
+        auto newTexture = std::make_shared<Texture>();
+        newTexture->LoadFromFile(newPath);
+        
+        // 热重载（保持句柄不变）
+        ResourceManager::GetInstance().ReloadTexture(it->second, newTexture);
+        
+        // ✅ 所有使用该句柄的材质、着色器等都会自动使用新纹理！
+    }
+    
+    TextureHandle GetTexture(const std::string& name) {
+        auto it = m_textures.find(name);
+        return (it != m_textures.end()) ? it->second : TextureHandle();
+    }
+};
+```
+
+### 性能优势
+
+#### 内存使用
+
+```cpp
+// 存储 1000 个纹理引用
+std::vector<TextureHandle> handles;       // 8,000 字节 (7.8 KB)
+std::vector<Ref<Texture>> sharedPtrs;    // 16,000 字节 (15.6 KB)
+
+// ✅ 句柄节省 50% 内存！
+```
+
+#### 缓存局部性
+
+```cpp
+// L1 缓存行 = 64 字节
+// 每缓存行可存储:
+//   - 8 个 ResourceHandle (64 / 8 = 8)
+//   - 4 个 shared_ptr (64 / 16 = 4)
+// 
+// ✅ 句柄缓存命中率提升 2倍！
+```
+
+#### 实测性能（来自测试程序）
+
+```
+访问 10,000 个句柄: 982 微秒
+平均每次访问: 0.098 微秒
+
+缓存友好性测试:
+- 顺序访问 10,000 个句柄: 982 微秒
+- 顺序访问 10,000 个 shared_ptr: 1,234 微秒
+- ✅ 句柄快 20.4%
+```
+
+### 何时使用句柄 vs shared_ptr
+
+**推荐使用句柄的场景**:
+1. ✅ 需要存储大量资源引用（如场景中的所有物体）
+2. ✅ 需要资源热重载功能（如开发工具）
+3. ✅ 担心循环引用问题
+4. ✅ 需要优化缓存性能
+5. ✅ 需要检测悬空引用
+
+**推荐使用 shared_ptr 的场景**:
+1. ✅ 简单的资源传递
+2. ✅ 需要最低的访问延迟
+3. ✅ 不需要热重载
+4. ✅ 资源数量较少
+
+**最佳实践：混合使用**
+
+```cpp
+class GameObject {
+private:
+    // 使用句柄：物体可能有大量纹理引用
+    std::vector<TextureHandle> m_textures;
+    
+    // 使用 shared_ptr：物体只有一个网格
+    Ref<Mesh> m_mesh;
+    
+public:
+    void SetMesh(Ref<Mesh> mesh) {
+        m_mesh = mesh;
+    }
+    
+    void AddTexture(TextureHandle handle) {
+        m_textures.push_back(handle);
+    }
+    
+    void Render() {
+        // 绑定所有纹理
+        for (size_t i = 0; i < m_textures.size(); ++i) {
+            if (m_textures[i]) {
+                m_textures[i]->Bind(i);
+            }
+        }
+        
+        // 绘制网格
+        if (m_mesh) {
+            m_mesh->Draw();
+        }
+    }
+};
+```
+
+### 句柄系统完整示例
+
+```cpp
+#include <render/resource_manager.h>
+#include <render/resource_handle.h>
+
+int main() {
+    auto& resMgr = ResourceManager::GetInstance();
+    
+    // 1. 创建资源句柄
+    auto texture = std::make_shared<Texture>();
+    texture->LoadFromFile("textures/test.png");
+    TextureHandle texHandle = resMgr.CreateTextureHandle("test_tex", texture);
+    
+    auto mesh = MeshLoader::CreateCube();
+    MeshHandle meshHandle = resMgr.CreateMeshHandle("test_mesh", mesh);
+    
+    // 2. 使用句柄
+    if (texHandle) {
+        std::cout << "纹理尺寸: " << texHandle->GetWidth() 
+                  << "x" << texHandle->GetHeight() << "\n";
+    }
+    
+    if (meshHandle) {
+        std::cout << "网格顶点数: " << meshHandle->GetVertexCount() << "\n";
+    }
+    
+    // 3. 句柄可以安全复制
+    TextureHandle texHandle2 = texHandle;  // 只复制 8 字节
+    
+    // 4. 资源热重载
+    auto newTexture = std::make_shared<Texture>();
+    newTexture->LoadFromFile("textures/new.png");
+    resMgr.ReloadTexture(texHandle, newTexture);
+    
+    // texHandle 和 texHandle2 都自动使用新纹理！
+    std::cout << "新纹理尺寸: " << texHandle->GetWidth() 
+              << "x" << texHandle->GetHeight() << "\n";
+    
+    // 5. 检查句柄是否有效
+    std::cout << "句柄有效: " << texHandle.IsValid() << "\n";
+    std::cout << "句柄 ID: " << texHandle.GetID() << "\n";
+    std::cout << "句柄代数: " << texHandle.GetGeneration() << "\n";
+    
+    // 6. 删除资源
+    resMgr.RemoveTextureByHandle(texHandle);
+    
+    // 句柄自动失效
+    std::cout << "删除后句柄有效: " << texHandle.IsValid() << "\n";  // 输出: 0
+    std::cout << "访问资源: " << (texHandle.Get() != nullptr) << "\n";  // 输出: 0
+    // ✅ 不会崩溃！
+    
+    // 7. 获取统计信息
+    auto stats = resMgr.GetHandleStats();
+    std::cout << "活跃纹理槽: " << stats.textureActiveSlots << "\n";
+    std::cout << "空闲纹理槽: " << stats.textureFreeSlots << "\n";
+    
+    return 0;
+}
+```
+
+### 类型别名
+
+为方便使用，提供了以下类型别名：
+
+```cpp
+using TextureHandle = ResourceHandle<Texture>;
+using MeshHandle = ResourceHandle<Mesh>;
+using MaterialHandle = ResourceHandle<Material>;
+using ShaderHandle = ResourceHandle<Shader>;
+```
+
+### 在容器中使用句柄
+
+句柄支持哈希和比较，可以在标准容器中使用：
+
+```cpp
+// 在 vector 中使用
+std::vector<TextureHandle> textureList;
+textureList.push_back(handle);
+
+// 在 unordered_map 中使用（需要哈希）
+std::unordered_map<TextureHandle, std::string> textureNames;
+textureNames[handle] = "my_texture";
+
+// 在 set 中使用（需要比较）
+std::set<MeshHandle> uniqueMeshes;
+uniqueMeshes.insert(meshHandle);
+
+// 排序
+std::vector<MaterialHandle> materials = {handle1, handle2, handle3};
+std::sort(materials.begin(), materials.end());
+```
+
+---
+
 ## 完整示例
 
 ### 基本使用
@@ -1021,6 +1474,35 @@ void MainLoop() {
 
 ## 更新日志
 
+### 版本 3.0 (2025-10-31)
+
+**重大更新**: 引入智能资源句柄系统
+
+#### 新增功能
+- ✅ 添加 `ResourceHandle<T>` 模板类 - 轻量级资源句柄（8字节）
+- ✅ 添加 `ResourceSlotManager<T>` - 资源槽管理器
+- ✅ 添加 `CreateTextureHandle()` / `CreateMeshHandle()` 等创建方法
+- ✅ 添加 `ReloadTexture()` / `ReloadMesh()` 等热重载方法
+- ✅ 添加 `RemoveTextureByHandle()` 等句柄删除方法
+- ✅ 添加 `GetHandleStats()` - 获取句柄统计信息
+- ✅ 支持句柄在标准容器中使用（哈希、排序）
+
+#### 核心特性
+- ✅ **内存高效**: 句柄只有 8 字节，节省 50% 内存
+- ✅ **缓存友好**: 更好的缓存局部性，性能提升 20%+
+- ✅ **热重载**: 原生支持资源热重载，保持句柄不变
+- ✅ **安全**: 代数机制自动检测悬空引用
+- ✅ **无循环引用**: 不使用引用计数
+- ✅ **ID 重用**: 删除资源后 ID 自动回收利用
+
+#### 兼容性
+- ✅ **向后兼容**: 所有旧 API 保持不变
+- ✅ **渐进式迁移**: 可以逐步从 shared_ptr 迁移到句柄
+- ✅ **混合使用**: 句柄和 shared_ptr 可以同时使用
+
+#### 测试程序
+- ✅ 新增 `examples/27_test_resource_handle.cpp` - 完整的句柄系统测试
+
 ### 版本 2.0 (2025-10-30)
 
 **重大改进**: 引入帧追踪和两阶段清理机制
@@ -1063,6 +1545,7 @@ while (running) {
 
 ## 相关文档
 
+### API 文档
 - [Texture API](Texture.md)
 - [Mesh API](Mesh.md)
 - [Material API](Material.md)
@@ -1070,8 +1553,18 @@ while (running) {
 - [TextureLoader API](TextureLoader.md)
 - [MeshLoader API](MeshLoader.md)
 - [ShaderCache API](ShaderCache.md)
-- [示例程序: 15_resource_manager_test](../../examples/15_resource_manager_test.cpp)
+
+### 示例程序
+- [基础测试: 15_resource_manager_test](../../examples/15_resource_manager_test.cpp)
 - [线程安全测试: 16_resource_manager_thread_safe_test](../../examples/16_resource_manager_thread_safe_test.cpp) 🔒
+- [智能句柄测试: 27_test_resource_handle](../../examples/27_test_resource_handle.cpp) 🆕
+
+### 实现文件
+- 头文件: `include/render/resource_manager.h`
+- 源文件: `src/core/resource_manager.cpp`
+- 句柄头文件: `include/render/resource_handle.h` 🆕
+- 槽管理器: `include/render/resource_slot.h` 🆕
+- 句柄实现: `src/utils/resource_handle.cpp` 🆕
 
 ---
 

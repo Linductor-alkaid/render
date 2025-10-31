@@ -234,12 +234,27 @@ bool ResourceManager::HasShader(const std::string& name) const {
 void ResourceManager::Clear() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
+    Logger::GetInstance().Info("ResourceManager: 开始清空所有资源");
+    
+    // 清理传统资源存储
     m_textures.clear();
     m_meshes.clear();
     m_materials.clear();
     m_shaders.clear();
     
-    Logger::GetInstance().Info("ResourceManager: 清空所有资源");
+    // 清理句柄系统
+    m_textureSlots.Clear();
+    m_meshSlots.Clear();
+    m_materialSlots.Clear();
+    m_shaderSlots.Clear();
+    
+    // 清理名称到句柄的映射
+    m_textureHandles.clear();
+    m_meshHandles.clear();
+    m_materialHandles.clear();
+    m_shaderHandles.clear();
+    
+    Logger::GetInstance().Info("ResourceManager: 所有资源已清空");
 }
 
 void ResourceManager::ClearType(ResourceType type) {
@@ -630,6 +645,317 @@ void ResourceManager::ForEachShader(std::function<void(const std::string&, Ref<S
     for (const auto& [name, entry] : m_shaders) {
         callback(name, entry.resource);
     }
+}
+
+// ============================================================================
+// 智能句柄系统
+// ============================================================================
+
+// 纹理句柄
+TextureHandle ResourceManager::CreateTextureHandle(const std::string& name, Ref<Texture> texture) {
+    if (!texture) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer, 
+                                 "ResourceManager: 尝试创建空纹理句柄: " + name));
+        return TextureHandle();
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 检查是否已存在
+    auto it = m_textureHandles.find(name);
+    if (it != m_textureHandles.end()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists, 
+                                   "ResourceManager: 纹理句柄已存在: " + name));
+        return it->second;
+    }
+    
+    // 创建句柄
+    TextureHandle handle = m_textureSlots.Allocate(texture, name, m_currentFrame);
+    m_textureHandles[name] = handle;
+    
+    Logger::GetInstance().Debug("ResourceManager: 创建纹理句柄: " + name + 
+                               " (ID: " + std::to_string(handle.GetID()) + ")");
+    return handle;
+}
+
+MeshHandle ResourceManager::CreateMeshHandle(const std::string& name, Ref<Mesh> mesh) {
+    if (!mesh) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer, 
+                                 "ResourceManager: 尝试创建空网格句柄: " + name));
+        return MeshHandle();
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto it = m_meshHandles.find(name);
+    if (it != m_meshHandles.end()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists, 
+                                   "ResourceManager: 网格句柄已存在: " + name));
+        return it->second;
+    }
+    
+    MeshHandle handle = m_meshSlots.Allocate(mesh, name, m_currentFrame);
+    m_meshHandles[name] = handle;
+    
+    Logger::GetInstance().Debug("ResourceManager: 创建网格句柄: " + name + 
+                               " (ID: " + std::to_string(handle.GetID()) + ")");
+    return handle;
+}
+
+MaterialHandle ResourceManager::CreateMaterialHandle(const std::string& name, Ref<Material> material) {
+    if (!material) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer, 
+                                 "ResourceManager: 尝试创建空材质句柄: " + name));
+        return MaterialHandle();
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto it = m_materialHandles.find(name);
+    if (it != m_materialHandles.end()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists, 
+                                   "ResourceManager: 材质句柄已存在: " + name));
+        return it->second;
+    }
+    
+    MaterialHandle handle = m_materialSlots.Allocate(material, name, m_currentFrame);
+    m_materialHandles[name] = handle;
+    
+    Logger::GetInstance().Debug("ResourceManager: 创建材质句柄: " + name + 
+                               " (ID: " + std::to_string(handle.GetID()) + ")");
+    return handle;
+}
+
+ShaderHandle ResourceManager::CreateShaderHandle(const std::string& name, Ref<Shader> shader) {
+    if (!shader) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer, 
+                                 "ResourceManager: 尝试创建空着色器句柄: " + name));
+        return ShaderHandle();
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto it = m_shaderHandles.find(name);
+    if (it != m_shaderHandles.end()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists, 
+                                   "ResourceManager: 着色器句柄已存在: " + name));
+        return it->second;
+    }
+    
+    ShaderHandle handle = m_shaderSlots.Allocate(shader, name, m_currentFrame);
+    m_shaderHandles[name] = handle;
+    
+    Logger::GetInstance().Debug("ResourceManager: 创建着色器句柄: " + name + 
+                               " (ID: " + std::to_string(handle.GetID()) + ")");
+    return handle;
+}
+
+// 通过句柄获取资源
+Texture* ResourceManager::GetTextureByHandle(const TextureHandle& handle) {
+    m_textureSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_textureSlots.Get(handle);
+}
+
+Ref<Texture> ResourceManager::GetTextureSharedByHandle(const TextureHandle& handle) {
+    m_textureSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_textureSlots.GetShared(handle);
+}
+
+bool ResourceManager::IsTextureHandleValid(const TextureHandle& handle) const {
+    return m_textureSlots.IsValid(handle);
+}
+
+Mesh* ResourceManager::GetMeshByHandle(const MeshHandle& handle) {
+    m_meshSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_meshSlots.Get(handle);
+}
+
+Ref<Mesh> ResourceManager::GetMeshSharedByHandle(const MeshHandle& handle) {
+    m_meshSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_meshSlots.GetShared(handle);
+}
+
+bool ResourceManager::IsMeshHandleValid(const MeshHandle& handle) const {
+    return m_meshSlots.IsValid(handle);
+}
+
+Material* ResourceManager::GetMaterialByHandle(const MaterialHandle& handle) {
+    m_materialSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_materialSlots.Get(handle);
+}
+
+Ref<Material> ResourceManager::GetMaterialSharedByHandle(const MaterialHandle& handle) {
+    m_materialSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_materialSlots.GetShared(handle);
+}
+
+bool ResourceManager::IsMaterialHandleValid(const MaterialHandle& handle) const {
+    return m_materialSlots.IsValid(handle);
+}
+
+Shader* ResourceManager::GetShaderByHandle(const ShaderHandle& handle) {
+    m_shaderSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_shaderSlots.Get(handle);
+}
+
+Ref<Shader> ResourceManager::GetShaderSharedByHandle(const ShaderHandle& handle) {
+    m_shaderSlots.UpdateAccessFrame(handle, m_currentFrame);
+    return m_shaderSlots.GetShared(handle);
+}
+
+bool ResourceManager::IsShaderHandleValid(const ShaderHandle& handle) const {
+    return m_shaderSlots.IsValid(handle);
+}
+
+// 热重载
+bool ResourceManager::ReloadTexture(const TextureHandle& handle, Ref<Texture> newTexture) {
+    if (!newTexture) {
+        return false;
+    }
+    
+    bool result = m_textureSlots.Reload(handle, newTexture);
+    
+    if (result) {
+        Logger::GetInstance().Info("ResourceManager: 热重载纹理 (ID: " + 
+                                  std::to_string(handle.GetID()) + ")");
+    }
+    
+    return result;
+}
+
+bool ResourceManager::ReloadMesh(const MeshHandle& handle, Ref<Mesh> newMesh) {
+    if (!newMesh) {
+        return false;
+    }
+    
+    bool result = m_meshSlots.Reload(handle, newMesh);
+    
+    if (result) {
+        Logger::GetInstance().Info("ResourceManager: 热重载网格 (ID: " + 
+                                  std::to_string(handle.GetID()) + ")");
+    }
+    
+    return result;
+}
+
+bool ResourceManager::ReloadMaterial(const MaterialHandle& handle, Ref<Material> newMaterial) {
+    if (!newMaterial) {
+        return false;
+    }
+    
+    bool result = m_materialSlots.Reload(handle, newMaterial);
+    
+    if (result) {
+        Logger::GetInstance().Info("ResourceManager: 热重载材质 (ID: " + 
+                                  std::to_string(handle.GetID()) + ")");
+    }
+    
+    return result;
+}
+
+bool ResourceManager::ReloadShader(const ShaderHandle& handle, Ref<Shader> newShader) {
+    if (!newShader) {
+        return false;
+    }
+    
+    bool result = m_shaderSlots.Reload(handle, newShader);
+    
+    if (result) {
+        Logger::GetInstance().Info("ResourceManager: 热重载着色器 (ID: " + 
+                                  std::to_string(handle.GetID()) + ")");
+    }
+    
+    return result;
+}
+
+// 通过句柄移除资源
+bool ResourceManager::RemoveTextureByHandle(const TextureHandle& handle) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 从槽管理器中释放
+    m_textureSlots.Free(handle);
+    
+    // 从名称映射中移除
+    for (auto it = m_textureHandles.begin(); it != m_textureHandles.end(); ++it) {
+        if (it->second == handle) {
+            Logger::GetInstance().Debug("ResourceManager: 移除纹理句柄: " + it->first);
+            m_textureHandles.erase(it);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+bool ResourceManager::RemoveMeshByHandle(const MeshHandle& handle) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    m_meshSlots.Free(handle);
+    
+    for (auto it = m_meshHandles.begin(); it != m_meshHandles.end(); ++it) {
+        if (it->second == handle) {
+            Logger::GetInstance().Debug("ResourceManager: 移除网格句柄: " + it->first);
+            m_meshHandles.erase(it);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+bool ResourceManager::RemoveMaterialByHandle(const MaterialHandle& handle) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    m_materialSlots.Free(handle);
+    
+    for (auto it = m_materialHandles.begin(); it != m_materialHandles.end(); ++it) {
+        if (it->second == handle) {
+            Logger::GetInstance().Debug("ResourceManager: 移除材质句柄: " + it->first);
+            m_materialHandles.erase(it);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+bool ResourceManager::RemoveShaderByHandle(const ShaderHandle& handle) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    m_shaderSlots.Free(handle);
+    
+    for (auto it = m_shaderHandles.begin(); it != m_shaderHandles.end(); ++it) {
+        if (it->second == handle) {
+            Logger::GetInstance().Debug("ResourceManager: 移除着色器句柄: " + it->first);
+            m_shaderHandles.erase(it);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// 统计信息
+ResourceManager::HandleStats ResourceManager::GetHandleStats() const {
+    HandleStats stats;
+    
+    stats.textureSlots = m_textureSlots.GetTotalSlots();
+    stats.textureActiveSlots = m_textureSlots.GetActiveCount();
+    stats.textureFreeSlots = m_textureSlots.GetFreeSlots();
+    
+    stats.meshSlots = m_meshSlots.GetTotalSlots();
+    stats.meshActiveSlots = m_meshSlots.GetActiveCount();
+    stats.meshFreeSlots = m_meshSlots.GetFreeSlots();
+    
+    stats.materialSlots = m_materialSlots.GetTotalSlots();
+    stats.materialActiveSlots = m_materialSlots.GetActiveCount();
+    stats.materialFreeSlots = m_materialSlots.GetFreeSlots();
+    
+    stats.shaderSlots = m_shaderSlots.GetTotalSlots();
+    stats.shaderActiveSlots = m_shaderSlots.GetActiveCount();
+    stats.shaderFreeSlots = m_shaderSlots.GetFreeSlots();
+    
+    return stats;
 }
 
 } // namespace Render
