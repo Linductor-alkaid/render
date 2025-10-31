@@ -352,11 +352,46 @@ std::shared_ptr<Shader> GetShader() const {
 
 ---
 
-### 警告 4: OpenGLContext::SetWindowSize 直接修改成员变量
+### 警告 4: OpenGLContext::SetWindowSize 直接修改成员变量 ✅ **已修复**
+
+**修复日期**: 2025-10-31
 
 **位置**: `src/core/opengl_context.cpp:143-152`
 
 **问题描述**: 窗口大小改变时没有通知观察者，可能导致相机宽高比等不更新
+
+**已实施的修复**:
+1. ✅ 添加了 `WindowResizeCallback` 回调类型定义
+2. ✅ 添加了 `AddResizeCallback()` 方法（注册回调）
+3. ✅ 添加了 `ClearResizeCallbacks()` 方法（清除所有回调）
+4. ✅ 添加了 `NotifyResizeCallbacks()` 私有方法（触发回调）
+5. ✅ 修改了 `SetWindowSize()` 方法以自动触发所有已注册的回调
+6. ✅ 使用互斥锁保护回调列表，确保线程安全
+7. ✅ 回调执行时捕获异常，防止单个回调失败影响其他回调
+8. ✅ 更新了 API 文档（`docs/api/OpenGLContext.md`）
+
+**使用示例**:
+```cpp
+// 方法 1: 更新相机宽高比
+context.AddResizeCallback([&camera](int width, int height) {
+    camera.SetAspectRatio(static_cast<float>(width) / height);
+});
+
+// 方法 2: 更新渲染目标
+context.AddResizeCallback([&renderTarget](int width, int height) {
+    renderTarget.Resize(width, height);
+});
+
+// 改变窗口大小，所有回调会自动被调用
+context.SetWindowSize(1280, 720);
+```
+
+**优势**:
+- ✅ 实现了观察者模式，解耦组件之间的依赖
+- ✅ 支持多个观察者同时监听窗口大小变化
+- ✅ 线程安全的回调管理
+- ✅ 异常安全，单个回调失败不影响其他回调
+- ✅ 易于使用，支持 lambda 表达式
 
 ---
 
@@ -373,12 +408,11 @@ std::shared_ptr<Shader> GetShader() const {
 ### 警告 6-12: 其他小问题
 
 6. UniformManager 的缓存可能在着色器重新编译后失效
-7. TextureLoader 和 MeshLoader 没有看到实现（可能是分离的）
-8. 没有看到帧缓冲（FBO）管理
-9. 没有看到渲染队列或批处理机制
-10. 缺少性能分析工具（Profiler）
-11. 缺少资源热重载的完整机制
-12. 日志系统没有异步写入，可能影响性能
+7. 没有看到帧缓冲（FBO）管理
+8. 没有看到渲染队列或批处理机制
+9. 缺少性能分析工具（Profiler）
+10. 缺少资源热重载的完整机制
+11. 日志系统没有异步写入，可能影响性能
 
 ---
 

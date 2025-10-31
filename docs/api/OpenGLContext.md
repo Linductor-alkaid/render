@@ -138,6 +138,24 @@ void SetWindowTitle(const std::string& title);
 void SetWindowSize(int width, int height);
 ```
 
+**功能**:
+- 调整窗口尺寸
+- 更新视口大小
+- **自动触发所有已注册的窗口大小变化回调** ⭐ **新增**
+
+**示例**:
+```cpp
+// 注册回调（例如更新相机宽高比）
+context.AddResizeCallback([&camera](int w, int h) {
+    camera.SetAspectRatio(static_cast<float>(w) / h);
+});
+
+// 改变窗口大小，相机会自动更新
+context.SetWindowSize(1280, 720);
+```
+
+**参考**: [窗口大小变化回调](#窗口大小变化回调)
+
 ---
 
 ### SetFullscreen
@@ -151,6 +169,107 @@ void SetFullscreen(bool fullscreen);
 **示例**:
 ```cpp
 context.SetFullscreen(true);  // 全屏
+```
+
+---
+
+## 窗口大小变化回调
+
+⭐ **新增功能 (2025-10-31)**: OpenGLContext 现在支持观察者模式，可以注册回调以响应窗口大小变化。
+
+### WindowResizeCallback
+
+窗口大小变化回调函数类型。
+
+```cpp
+using WindowResizeCallback = std::function<void(int width, int height)>;
+```
+
+**参数**:
+- `width` - 新的窗口宽度
+- `height` - 新的窗口高度
+
+---
+
+### AddResizeCallback
+
+添加窗口大小变化回调。
+
+```cpp
+void AddResizeCallback(WindowResizeCallback callback);
+```
+
+**功能**: 当窗口大小改变时（通过 `SetWindowSize` 调用），所有已注册的回调将被调用。
+
+**线程安全**: 是
+
+**示例**:
+```cpp
+// 示例 1: 更新相机宽高比
+context.AddResizeCallback([&camera](int width, int height) {
+    float aspectRatio = static_cast<float>(width) / height;
+    camera.SetAspectRatio(aspectRatio);
+    LOG_INFO("Camera aspect ratio updated: " + std::to_string(aspectRatio));
+});
+
+// 示例 2: 更新渲染目标
+context.AddResizeCallback([&renderTarget](int width, int height) {
+    renderTarget.Resize(width, height);
+});
+
+// 示例 3: 多个回调
+context.AddResizeCallback([](int w, int h) {
+    LOG_INFO("Window resized to " + std::to_string(w) + "x" + std::to_string(h));
+});
+```
+
+**注意事项**:
+1. 回调会在 `SetWindowSize` 方法内部调用
+2. 回调执行时已经持有内部互斥锁，避免在回调中执行耗时操作
+3. 如果回调抛出异常，会被捕获并记录，不会影响其他回调的执行
+
+---
+
+### ClearResizeCallbacks
+
+清除所有窗口大小变化回调。
+
+```cpp
+void ClearResizeCallbacks();
+```
+
+**示例**:
+```cpp
+// 清除所有回调
+context.ClearResizeCallbacks();
+```
+
+---
+
+### 完整使用示例
+
+```cpp
+#include "render/opengl_context.h"
+#include "render/camera.h"
+
+// 创建上下文和相机
+OpenGLContext context;
+Camera camera;
+
+// 初始化
+context.Initialize("My App", 1920, 1080);
+camera.SetPerspective(45.0f, 1920.0f / 1080.0f, 0.1f, 1000.0f);
+
+// 注册回调：当窗口大小改变时自动更新相机
+context.AddResizeCallback([&camera](int width, int height) {
+    camera.SetAspectRatio(static_cast<float>(width) / height);
+});
+
+// 现在改变窗口大小，相机会自动更新
+context.SetWindowSize(1280, 720);  // 相机宽高比自动更新为 1280/720
+
+// 也可以清除回调
+context.ClearResizeCallbacks();
 ```
 
 ---
@@ -253,6 +372,7 @@ bool IsInitialized() const;
 
 ```cpp
 #include "render/opengl_context.h"
+#include "render/camera.h"
 #include "render/logger.h"
 
 int main() {
@@ -279,10 +399,21 @@ int main() {
     // 启用 VSync
     context.SetVSync(true);
     
+    // 创建相机
+    Camera camera;
+    camera.SetPerspective(45.0f, 1920.0f / 1080.0f, 0.1f, 1000.0f);
+    
+    // ⭐ 新增：注册窗口大小变化回调
+    context.AddResizeCallback([&camera](int width, int height) {
+        camera.SetAspectRatio(static_cast<float>(width) / height);
+        LOG_INFO("Window resized, camera aspect ratio updated");
+    });
+    
     // 主循环
     bool running = true;
     while (running) {
         // 处理事件...
+        // 如果用户调整窗口大小，相机会自动更新
         
         // 渲染...
         
@@ -305,6 +436,11 @@ int main() {
 2. **调试上下文**: 开发时启用，可获取详细错误信息
 3. **VSync**: 启用可避免画面撕裂，但限制帧率
 4. **MSAA**: 采样数越高，抗锯齿效果越好，但性能开销越大
+5. **窗口大小变化回调** ⭐ **新增**: 
+   - 使用回调机制响应窗口大小变化
+   - 避免在回调中执行耗时操作
+   - 回调是线程安全的
+   - 适用场景：更新相机宽高比、调整渲染目标大小等
 
 ---
 

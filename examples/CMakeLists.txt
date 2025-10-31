@@ -26,6 +26,7 @@ set(EXAMPLES
     22_gl_thread_safety_test
     23_logger_test
     24_async_logger_test
+    25_test_window_resize_callback
 )
 
 # 批量创建示例程序

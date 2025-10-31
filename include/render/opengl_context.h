@@ -4,6 +4,9 @@
 #include "render/gl_thread_checker.h"
 #include <SDL3/SDL.h>
 #include <string>
+#include <functional>
+#include <vector>
+#include <mutex>
 
 namespace Render {
 
@@ -20,6 +23,13 @@ struct OpenGLConfig {
     int msaaSamples = 4;
     bool doubleBuffer = true;
 };
+
+/**
+ * @brief 窗口大小变化回调函数类型
+ * @param width 新的窗口宽度
+ * @param height 新的窗口高度
+ */
+using WindowResizeCallback = std::function<void(int width, int height)>;
 
 /**
  * @brief OpenGL 上下文管理类
@@ -121,11 +131,24 @@ public:
      */
     bool IsExtensionSupported(const std::string& extension) const;
     
+    /**
+     * @brief 添加窗口大小变化回调
+     * @param callback 回调函数
+     * @note 当窗口大小改变时，所有已注册的回调将被调用
+     */
+    void AddResizeCallback(WindowResizeCallback callback);
+    
+    /**
+     * @brief 清除所有窗口大小变化回调
+     */
+    void ClearResizeCallbacks();
+    
 private:
     bool CreateWindow(const std::string& title, int width, int height);
     bool CreateGLContext(const OpenGLConfig& config);
     bool InitializeGLAD();
     void LogGLInfo();
+    void NotifyResizeCallbacks(int width, int height);
     
     SDL_Window* m_window;
     SDL_GLContext m_glContext;
@@ -133,6 +156,8 @@ private:
     int m_height;
     bool m_initialized;
     bool m_vsyncEnabled;
+    std::vector<WindowResizeCallback> m_resizeCallbacks;
+    mutable std::mutex m_callbackMutex;
 };
 
 } // namespace Render

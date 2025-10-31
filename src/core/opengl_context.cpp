@@ -154,6 +154,9 @@ void OpenGLContext::SetWindowSize(int width, int height) {
         GL_THREAD_CHECK();
         glViewport(0, 0, width, height);
         LOG_INFO("Window resized to " + std::to_string(width) + "x" + std::to_string(height));
+        
+        // 通知所有已注册的观察者
+        NotifyResizeCallbacks(width, height);
     }
 }
 
@@ -266,6 +269,47 @@ void OpenGLContext::LogGLInfo() {
     glGetIntegerv(GL_MAJOR_VERSION, &majorVersion);
     glGetIntegerv(GL_MINOR_VERSION, &minorVersion);
     LOG_INFO("  Context Version: " + std::to_string(majorVersion) + "." + std::to_string(minorVersion));
+}
+
+void OpenGLContext::AddResizeCallback(WindowResizeCallback callback) {
+    if (callback) {
+        std::lock_guard<std::mutex> lock(m_callbackMutex);
+        m_resizeCallbacks.push_back(std::move(callback));
+        LOG_DEBUG("OpenGLContext: 添加了窗口大小变化回调，当前回调数量: " + 
+                  std::to_string(m_resizeCallbacks.size()));
+    }
+}
+
+void OpenGLContext::ClearResizeCallbacks() {
+    std::lock_guard<std::mutex> lock(m_callbackMutex);
+    size_t count = m_resizeCallbacks.size();
+    m_resizeCallbacks.clear();
+    LOG_DEBUG("OpenGLContext: 清除了 " + std::to_string(count) + " 个窗口大小变化回调");
+}
+
+void OpenGLContext::NotifyResizeCallbacks(int width, int height) {
+    std::lock_guard<std::mutex> lock(m_callbackMutex);
+    
+    if (m_resizeCallbacks.empty()) {
+        return;
+    }
+    
+    LOG_DEBUG("OpenGLContext: 通知 " + std::to_string(m_resizeCallbacks.size()) + 
+              " 个回调窗口大小变化: " + std::to_string(width) + "x" + std::to_string(height));
+    
+    for (const auto& callback : m_resizeCallbacks) {
+        if (callback) {
+            try {
+                callback(width, height);
+            }
+            catch (const std::exception& e) {
+                LOG_ERROR("OpenGLContext: 窗口大小变化回调执行失败: " + std::string(e.what()));
+            }
+            catch (...) {
+                LOG_ERROR("OpenGLContext: 窗口大小变化回调执行失败: 未知异常");
+            }
+        }
+    }
 }
 
 } // namespace Render
