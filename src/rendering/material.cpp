@@ -258,6 +258,17 @@ std::vector<std::string> Material::GetTextureNames() const {
     return names;
 }
 
+void Material::ForEachTexture(std::function<void(const std::string&, const Ref<Texture>&)> callback) const {
+    if (!callback) {
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& pair : m_textures) {
+        callback(pair.first, pair.second);
+    }
+}
+
 // ============================================================================
 // 自定义参数
 // ============================================================================

@@ -242,8 +242,27 @@ public:
     /**
      * @brief 获取所有纹理名称
      * @return 纹理名称列表
+     * 
+     * @note 性能说明：此方法返回副本，频繁调用可能有性能开销。
+     *       对于高性能场景，考虑使用 ForEachTexture() 方法。
      */
     std::vector<std::string> GetTextureNames() const;
+    
+    /**
+     * @brief 通过回调遍历所有纹理（高性能版本）
+     * @param callback 回调函数 (name, texture)
+     * 
+     * 避免拷贝纹理名称，直接在锁保护下遍历。
+     * 适用于频繁访问纹理的场景。
+     * 
+     * @example
+     * @code
+     * material->ForEachTexture([](const std::string& name, const Ref<Texture>& tex) {
+     *     std::cout << "Texture: " << name << std::endl;
+     * });
+     * @endcode
+     */
+    void ForEachTexture(std::function<void(const std::string&, const Ref<Texture>&)> callback) const;
     
     // ========================================================================
     // 自定义参数（Uniform）

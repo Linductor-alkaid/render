@@ -19,52 +19,66 @@ Shader::~Shader() {
 bool Shader::LoadFromFile(const std::string& vertexPath,
                           const std::string& fragmentPath,
                           const std::string& geometryPath) {
-    // 立即复制路径参数，确保读取和保存使用完全相同的路径
-    // 这样可以防止在读取文件和保存路径之间的任何潜在修改
-    const std::string vertexPathCopy = vertexPath;
-    const std::string fragmentPathCopy = fragmentPath;
-    const std::string geometryPathCopy = geometryPath;
-    
-    LOG_INFO("Loading shader from files:");
-    LOG_INFO("  Vertex: " + vertexPathCopy);
-    LOG_INFO("  Fragment: " + fragmentPathCopy);
-    if (!geometryPathCopy.empty()) {
-        LOG_INFO("  Geometry: " + geometryPathCopy);
-    }
-    
-    // 读取文件（在锁外进行，避免长时间持锁）
-    // 使用路径副本确保一致性
-    std::string vertexSource = FileUtils::ReadFile(vertexPathCopy);
-    if (vertexSource.empty()) {
-        LOG_ERROR("Failed to read vertex shader: " + vertexPathCopy);
-        return false;
-    }
-    
-    std::string fragmentSource = FileUtils::ReadFile(fragmentPathCopy);
-    if (fragmentSource.empty()) {
-        LOG_ERROR("Failed to read fragment shader: " + fragmentPathCopy);
-        return false;
-    }
-    
-    std::string geometrySource;
-    if (!geometryPathCopy.empty()) {
-        geometrySource = FileUtils::ReadFile(geometryPathCopy);
-        if (geometrySource.empty()) {
-            LOG_ERROR("Failed to read geometry shader: " + geometryPathCopy);
+    try {
+        // 立即复制路径参数，确保读取和保存使用完全相同的路径
+        // 这样可以防止在读取文件和保存路径之间的任何潜在修改
+        const std::string vertexPathCopy = vertexPath;
+        const std::string fragmentPathCopy = fragmentPath;
+        const std::string geometryPathCopy = geometryPath;
+        
+        LOG_INFO("Loading shader from files:");
+        LOG_INFO("  Vertex: " + vertexPathCopy);
+        LOG_INFO("  Fragment: " + fragmentPathCopy);
+        if (!geometryPathCopy.empty()) {
+            LOG_INFO("  Geometry: " + geometryPathCopy);
+        }
+        
+        // 读取文件（在锁外进行，避免长时间持锁）
+        // 使用路径副本确保一致性
+        std::string vertexSource = FileUtils::ReadFile(vertexPathCopy);
+        if (vertexSource.empty()) {
+            LOG_ERROR("Failed to read vertex shader: " + vertexPathCopy);
             return false;
         }
+        
+        std::string fragmentSource = FileUtils::ReadFile(fragmentPathCopy);
+        if (fragmentSource.empty()) {
+            LOG_ERROR("Failed to read fragment shader: " + fragmentPathCopy);
+            return false;
+        }
+        
+        std::string geometrySource;
+        if (!geometryPathCopy.empty()) {
+            geometrySource = FileUtils::ReadFile(geometryPathCopy);
+            if (geometrySource.empty()) {
+                LOG_ERROR("Failed to read geometry shader: " + geometryPathCopy);
+                return false;
+            }
+        }
+        
+        // 加锁保护路径更新和着色器加载
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // 保存路径用于重载（使用相同的路径副本）
+        m_vertexPath = vertexPathCopy;
+        m_fragmentPath = fragmentPathCopy;
+        m_geometryPath = geometryPathCopy;
+        
+        // 从源码加载（内部不需要锁，因为已经持有锁）
+        return LoadFromSource_Locked(vertexSource, fragmentSource, geometrySource);
+        
+    } catch (const std::exception& e) {
+        // 异常处理：文件读取或字符串操作可能抛出异常
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Shader::LoadFromFile: Exception during shader loading - " + std::string(e.what())));
+        return false;
+        
+    } catch (...) {
+        // 捕获所有异常
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Shader::LoadFromFile: Unknown exception during shader loading"));
+        return false;
     }
-    
-    // 加锁保护路径更新和着色器加载
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    // 保存路径用于重载（使用相同的路径副本）
-    m_vertexPath = vertexPathCopy;
-    m_fragmentPath = fragmentPathCopy;
-    m_geometryPath = geometryPathCopy;
-    
-    // 从源码加载（内部不需要锁，因为已经持有锁）
-    return LoadFromSource_Locked(vertexSource, fragmentSource, geometrySource);
 }
 
 bool Shader::LoadFromSource(const std::string& vertexSource,

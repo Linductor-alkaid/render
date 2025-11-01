@@ -156,65 +156,118 @@ void Mesh::Upload() {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
     if (m_Vertices.empty()) {
-        Logger::GetInstance().Warning("Mesh::Upload - No vertices to upload");
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Mesh::Upload: No vertices to upload"));
         return;
     }
     
-    // 如果已经上传过，先清理旧资源（内部实现，已持有锁）
-    if (m_Uploaded) {
+    try {
+        // 如果已经上传过，先清理旧资源（内部实现，已持有锁）
+        if (m_Uploaded) {
+            if (m_VAO != 0) {
+                GL_THREAD_CHECK();
+                glDeleteVertexArrays(1, &m_VAO);
+                m_VAO = 0;
+            }
+            if (m_VBO != 0) {
+                GL_THREAD_CHECK();
+                glDeleteBuffers(1, &m_VBO);
+                m_VBO = 0;
+            }
+            if (m_EBO != 0) {
+                GL_THREAD_CHECK();
+                glDeleteBuffers(1, &m_EBO);
+                m_EBO = 0;
+            }
+            m_Uploaded = false;
+        }
+        
+        // 创建 VAO
+        GL_THREAD_CHECK();
+        glGenVertexArrays(1, &m_VAO);
+        if (m_VAO == 0) {
+            throw std::runtime_error("Failed to generate VAO");
+        }
+        glBindVertexArray(m_VAO);
+        
+        // 创建并填充 VBO
+        glGenBuffers(1, &m_VBO);
+        if (m_VBO == 0) {
+            throw std::runtime_error("Failed to generate VBO");
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
+        glBufferData(GL_ARRAY_BUFFER, 
+                     m_Vertices.size() * sizeof(Vertex), 
+                     m_Vertices.data(), 
+                     GL_STATIC_DRAW);
+        
+        // 创建并填充 EBO（如果有索引）
+        if (!m_Indices.empty()) {
+            glGenBuffers(1, &m_EBO);
+            if (m_EBO == 0) {
+                throw std::runtime_error("Failed to generate EBO");
+            }
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, 
+                         m_Indices.size() * sizeof(uint32_t), 
+                         m_Indices.data(), 
+                         GL_STATIC_DRAW);
+        }
+        
+        // 设置顶点属性
+        SetupVertexAttributes();
+        
+        // 解绑
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        
+        m_Uploaded = true;
+        
+        Logger::GetInstance().Info("Mesh uploaded: " + std::to_string(m_Vertices.size()) + " vertices, " + 
+                                   std::to_string(m_Indices.size()) + " indices");
+                                   
+    } catch (const std::exception& e) {
+        // 异常处理：清理部分创建的资源
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Mesh::Upload: Exception during upload - " + std::string(e.what())));
+        
+        // 清理资源
         if (m_VAO != 0) {
-            GL_THREAD_CHECK();
             glDeleteVertexArrays(1, &m_VAO);
             m_VAO = 0;
         }
         if (m_VBO != 0) {
-            GL_THREAD_CHECK();
             glDeleteBuffers(1, &m_VBO);
             m_VBO = 0;
         }
         if (m_EBO != 0) {
-            GL_THREAD_CHECK();
             glDeleteBuffers(1, &m_EBO);
             m_EBO = 0;
         }
+        
+        m_Uploaded = false;
+    } catch (...) {
+        // 捕获所有异常
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Mesh::Upload: Unknown exception during upload"));
+        
+        // 清理资源
+        if (m_VAO != 0) {
+            glDeleteVertexArrays(1, &m_VAO);
+            m_VAO = 0;
+        }
+        if (m_VBO != 0) {
+            glDeleteBuffers(1, &m_VBO);
+            m_VBO = 0;
+        }
+        if (m_EBO != 0) {
+            glDeleteBuffers(1, &m_EBO);
+            m_EBO = 0;
+        }
+        
         m_Uploaded = false;
     }
-    
-    // 创建 VAO
-    GL_THREAD_CHECK();
-    glGenVertexArrays(1, &m_VAO);
-    glBindVertexArray(m_VAO);
-    
-    // 创建并填充 VBO
-    glGenBuffers(1, &m_VBO);
-    glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
-    glBufferData(GL_ARRAY_BUFFER, 
-                 m_Vertices.size() * sizeof(Vertex), 
-                 m_Vertices.data(), 
-                 GL_STATIC_DRAW);
-    
-    // 创建并填充 EBO（如果有索引）
-    if (!m_Indices.empty()) {
-        glGenBuffers(1, &m_EBO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, 
-                     m_Indices.size() * sizeof(uint32_t), 
-                     m_Indices.data(), 
-                     GL_STATIC_DRAW);
-    }
-    
-    // 设置顶点属性
-    SetupVertexAttributes();
-    
-    // 解绑
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    
-    m_Uploaded = true;
-    
-    Logger::GetInstance().Info("Mesh uploaded: " + std::to_string(m_Vertices.size()) + " vertices, " + 
-                               std::to_string(m_Indices.size()) + " indices");
 }
 
 void Mesh::Draw(DrawMode mode) const {

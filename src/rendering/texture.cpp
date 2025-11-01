@@ -110,87 +110,126 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
     // 现在在锁内创建 OpenGL 纹理
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    // 释放旧纹理（内部方法，无需再加锁）
-    if (m_textureID != 0) {
-        // 直接释放，不调用 Release()，因为已经持有锁
-        glDeleteTextures(1, &m_textureID);
-        Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
-        m_textureID = 0;
+    try {
+        // 释放旧纹理（内部方法，无需再加锁）
+        if (m_textureID != 0) {
+            // 直接释放，不调用 Release()，因为已经持有锁
+            glDeleteTextures(1, &m_textureID);
+            Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
+            m_textureID = 0;
+            m_width = 0;
+            m_height = 0;
+            m_hasMipmap = false;
+        }
+
+        // 创建纹理数据（内部实现，无需调用 CreateFromData 以避免重复加锁）
+        const void* data = surface->pixels;
+        int width = surface->w;
+        int height = surface->h;
+        
+        if (width <= 0 || height <= 0) {
+            HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument, 
+                                     "Texture::LoadFromFile: 无效的纹理尺寸: " + 
+                                     std::to_string(width) + "x" + std::to_string(height)));
+            SDL_DestroySurface(surface);
+            return false;
+        }
+
+        m_width = width;
+        m_height = height;
+        m_format = format;
+
+        // 生成纹理
+        glGenTextures(1, &m_textureID);
+        if (m_textureID == 0) {
+            throw std::runtime_error("Failed to generate texture ID");
+        }
+        glBindTexture(GL_TEXTURE_2D, m_textureID);
+
+        // 设置纹理数据
+        GLenum glFormat = ToGLFormat(format);
+        GLenum glInternalFormat = ToGLInternalFormat(format);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 
+                     0, glFormat, GL_UNSIGNED_BYTE, data);
+        
+        // 验证纹理数据是否上传成功
+        GLenum err = glGetError();
+        if (err != GL_NO_ERROR) {
+            Logger::GetInstance().Error("glTexImage2D 失败，OpenGL 错误: " + std::to_string(err));
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glDeleteTextures(1, &m_textureID);
+            m_textureID = 0;
+            SDL_DestroySurface(surface);
+            return false;
+        }
+
+        // 设置默认过滤参数
+        if (generateMipmap) {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        } else {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+
+        // 设置默认环绕模式
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        
+        // 生成 Mipmap（必须在所有参数设置后）
+        if (generateMipmap) {
+            glGenerateMipmap(GL_TEXTURE_2D);
+            m_hasMipmap = true;
+            Logger::GetInstance().Debug("为纹理生成 Mipmap，ID: " + std::to_string(m_textureID));
+        }
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        Logger::GetInstance().Debug("从文件创建纹理: " + std::to_string(width) + "x" + 
+                     std::to_string(height) + ", ID: " + std::to_string(m_textureID) + 
+                     ", 格式: " + std::to_string(static_cast<int>(format)) + 
+                     ", Mipmap: " + (m_hasMipmap ? "是" : "否"));
+
+        // 释放 SDL Surface
+        SDL_DestroySurface(surface);
+
+        return true;
+        
+    } catch (const std::exception& e) {
+        // 异常处理：清理部分创建的资源
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Texture::LoadFromFile: Exception during texture creation - " + std::string(e.what())));
+        
+        // 清理资源
+        if (m_textureID != 0) {
+            glDeleteTextures(1, &m_textureID);
+            m_textureID = 0;
+        }
         m_width = 0;
         m_height = 0;
         m_hasMipmap = false;
-    }
-
-    // 创建纹理数据（内部实现，无需调用 CreateFromData 以避免重复加锁）
-    const void* data = surface->pixels;
-    int width = surface->w;
-    int height = surface->h;
-    
-    if (width <= 0 || height <= 0) {
-        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument, 
-                                 "Texture::LoadFromFile: 无效的纹理尺寸: " + 
-                                 std::to_string(width) + "x" + std::to_string(height)));
+        
+        SDL_DestroySurface(surface);
+        return false;
+        
+    } catch (...) {
+        // 捕获所有异常
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Texture::LoadFromFile: Unknown exception during texture creation"));
+        
+        // 清理资源
+        if (m_textureID != 0) {
+            glDeleteTextures(1, &m_textureID);
+            m_textureID = 0;
+        }
+        m_width = 0;
+        m_height = 0;
+        m_hasMipmap = false;
+        
         SDL_DestroySurface(surface);
         return false;
     }
-
-    m_width = width;
-    m_height = height;
-    m_format = format;
-
-    // 生成纹理
-    glGenTextures(1, &m_textureID);
-    glBindTexture(GL_TEXTURE_2D, m_textureID);
-
-    // 设置纹理数据
-    GLenum glFormat = ToGLFormat(format);
-    GLenum glInternalFormat = ToGLInternalFormat(format);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 
-                 0, glFormat, GL_UNSIGNED_BYTE, data);
-    
-    // 验证纹理数据是否上传成功
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        Logger::GetInstance().Error("glTexImage2D 失败，OpenGL 错误: " + std::to_string(err));
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glDeleteTextures(1, &m_textureID);
-        m_textureID = 0;
-        SDL_DestroySurface(surface);
-        return false;
-    }
-
-    // 设置默认过滤参数
-    if (generateMipmap) {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    } else {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    }
-
-    // 设置默认环绕模式
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    
-    // 生成 Mipmap（必须在所有参数设置后）
-    if (generateMipmap) {
-        glGenerateMipmap(GL_TEXTURE_2D);
-        m_hasMipmap = true;
-        Logger::GetInstance().Debug("为纹理生成 Mipmap，ID: " + std::to_string(m_textureID));
-    }
-
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    Logger::GetInstance().Debug("从文件创建纹理: " + std::to_string(width) + "x" + 
-                 std::to_string(height) + ", ID: " + std::to_string(m_textureID) + 
-                 ", 格式: " + std::to_string(static_cast<int>(format)) + 
-                 ", Mipmap: " + (m_hasMipmap ? "是" : "否"));
-
-    // 释放 SDL Surface
-    SDL_DestroySurface(surface);
-
-    return true;
 }
 
 bool Texture::CreateFromData(const void* data, int width, int height, 
@@ -211,69 +250,106 @@ bool Texture::CreateFromData(const void* data, int width, int height,
     
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    // 释放旧纹理（内部方法，无需再加锁）
-    if (m_textureID != 0) {
-        glDeleteTextures(1, &m_textureID);
-        Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
-        m_textureID = 0;
+    try {
+        // 释放旧纹理（内部方法，无需再加锁）
+        if (m_textureID != 0) {
+            glDeleteTextures(1, &m_textureID);
+            Logger::GetInstance().Debug("释放纹理 ID: " + std::to_string(m_textureID));
+            m_textureID = 0;
+            m_width = 0;
+            m_height = 0;
+            m_hasMipmap = false;
+        }
+
+        m_width = width;
+        m_height = height;
+        m_format = format;
+
+        // 生成纹理
+        glGenTextures(1, &m_textureID);
+        if (m_textureID == 0) {
+            throw std::runtime_error("Failed to generate texture ID");
+        }
+        glBindTexture(GL_TEXTURE_2D, m_textureID);
+
+        // 设置纹理数据
+        GLenum glFormat = ToGLFormat(format);
+        GLenum glInternalFormat = ToGLInternalFormat(format);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 
+                     0, glFormat, GL_UNSIGNED_BYTE, data);
+        
+        // 验证纹理数据是否上传成功
+        GLenum err = glGetError();
+        if (err != GL_NO_ERROR) {
+            Logger::GetInstance().Error("glTexImage2D 失败，OpenGL 错误: " + std::to_string(err));
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glDeleteTextures(1, &m_textureID);
+            m_textureID = 0;
+            return false;
+        }
+
+        // 设置默认过滤参数
+        if (generateMipmap) {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        } else {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+
+        // 设置默认环绕模式
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        
+        // 生成 Mipmap（必须在所有参数设置后）
+        if (generateMipmap) {
+            glGenerateMipmap(GL_TEXTURE_2D);
+            m_hasMipmap = true;
+            Logger::GetInstance().Debug("为纹理生成 Mipmap，ID: " + std::to_string(m_textureID));
+        }
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        Logger::GetInstance().Debug("从数据创建纹理: " + std::to_string(width) + "x" + 
+                     std::to_string(height) + ", ID: " + std::to_string(m_textureID) + 
+                     ", 格式: " + std::to_string(static_cast<int>(format)) + 
+                     ", Mipmap: " + (m_hasMipmap ? "是" : "否"));
+
+        return true;
+        
+    } catch (const std::exception& e) {
+        // 异常处理：清理部分创建的资源
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Texture::CreateFromData: Exception during texture creation - " + std::string(e.what())));
+        
+        // 清理资源
+        if (m_textureID != 0) {
+            glDeleteTextures(1, &m_textureID);
+            m_textureID = 0;
+        }
         m_width = 0;
         m_height = 0;
         m_hasMipmap = false;
-    }
-
-    m_width = width;
-    m_height = height;
-    m_format = format;
-
-    // 生成纹理
-    glGenTextures(1, &m_textureID);
-    glBindTexture(GL_TEXTURE_2D, m_textureID);
-
-    // 设置纹理数据
-    GLenum glFormat = ToGLFormat(format);
-    GLenum glInternalFormat = ToGLInternalFormat(format);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, glInternalFormat, width, height, 
-                 0, glFormat, GL_UNSIGNED_BYTE, data);
-    
-    // 验证纹理数据是否上传成功
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        Logger::GetInstance().Error("glTexImage2D 失败，OpenGL 错误: " + std::to_string(err));
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glDeleteTextures(1, &m_textureID);
-        m_textureID = 0;
+        
+        return false;
+        
+    } catch (...) {
+        // 捕获所有异常
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Texture::CreateFromData: Unknown exception during texture creation"));
+        
+        // 清理资源
+        if (m_textureID != 0) {
+            glDeleteTextures(1, &m_textureID);
+            m_textureID = 0;
+        }
+        m_width = 0;
+        m_height = 0;
+        m_hasMipmap = false;
+        
         return false;
     }
-
-    // 设置默认过滤参数
-    if (generateMipmap) {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    } else {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    }
-
-    // 设置默认环绕模式
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    
-    // 生成 Mipmap（必须在所有参数设置后）
-    if (generateMipmap) {
-        glGenerateMipmap(GL_TEXTURE_2D);
-        m_hasMipmap = true;
-        Logger::GetInstance().Debug("为纹理生成 Mipmap，ID: " + std::to_string(m_textureID));
-    }
-
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    Logger::GetInstance().Debug("从数据创建纹理: " + std::to_string(width) + "x" + 
-                 std::to_string(height) + ", ID: " + std::to_string(m_textureID) + 
-                 ", 格式: " + std::to_string(static_cast<int>(format)) + 
-                 ", Mipmap: " + (m_hasMipmap ? "是" : "否"));
-
-    return true;
 }
 
 bool Texture::CreateEmpty(int width, int height, TextureFormat format) {
@@ -439,11 +515,34 @@ size_t Texture::GetMemoryUsage() const {
             break;
     }
     
-    // 基础纹理内存
-    size_t baseMemory = static_cast<size_t>(m_width) * static_cast<size_t>(m_height) * bytesPerPixel;
+    // 溢出检查：检查 width * height 是否溢出
+    if (m_width > 0 && m_height > SIZE_MAX / static_cast<size_t>(m_width)) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange, 
+                                   "Texture::GetMemoryUsage: Size calculation overflow (width=" + 
+                                   std::to_string(m_width) + ", height=" + std::to_string(m_height) + ")"));
+        return SIZE_MAX;
+    }
+    
+    size_t pixelCount = static_cast<size_t>(m_width) * static_cast<size_t>(m_height);
+    
+    // 溢出检查：检查 pixelCount * bytesPerPixel 是否溢出
+    if (pixelCount > SIZE_MAX / bytesPerPixel) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange, 
+                                   "Texture::GetMemoryUsage: Memory calculation overflow (pixels=" + 
+                                   std::to_string(pixelCount) + ", bytesPerPixel=" + std::to_string(bytesPerPixel) + ")"));
+        return SIZE_MAX;
+    }
+    
+    size_t baseMemory = pixelCount * bytesPerPixel;
     
     // 如果有 mipmap，大约增加 1/3 的内存（mipmap 链的总和）
     if (m_hasMipmap) {
+        // 溢出检查：检查 mipmap 计算是否溢出
+        if (baseMemory > SIZE_MAX / 4 * 3) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange, 
+                                       "Texture::GetMemoryUsage: Mipmap memory calculation overflow"));
+            return SIZE_MAX;
+        }
         baseMemory = baseMemory * 4 / 3;
     }
     
