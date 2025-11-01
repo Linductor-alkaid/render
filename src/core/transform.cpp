@@ -40,67 +40,51 @@ Transform::Transform(const Vector3& position, const Quaternion& rotation, const 
 // ============================================================================
 
 void Transform::SetPosition(const Vector3& position) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_position = position;
     MarkDirtyNoLock();
 }
 
 Vector3 Transform::GetWorldPosition() const {
-    // 先获取父节点指针和本地位置
-    Transform* parent = nullptr;
-    Vector3 localPos;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        parent = m_parent;
-        localPos = m_position;
-    }
+    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    // 递归计算（不持有任何锁）
-    if (parent) {
-        Vector3 parentPos = parent->GetWorldPosition();
-        Quaternion parentRot = parent->GetWorldRotation();
-        Vector3 parentScale = parent->GetWorldScale();
+    if (m_parent) {
+        // 递归调用父对象方法（父对象有自己的递归锁）
+        Vector3 parentPos = m_parent->GetWorldPosition();
+        Quaternion parentRot = m_parent->GetWorldRotation();
+        Vector3 parentScale = m_parent->GetWorldScale();
         
         Vector3 scaledPos(
-            localPos.x() * parentScale.x(),
-            localPos.y() * parentScale.y(),
-            localPos.z() * parentScale.z()
+            m_position.x() * parentScale.x(),
+            m_position.y() * parentScale.y(),
+            m_position.z() * parentScale.z()
         );
         
         return parentPos + parentRot * scaledPos;
-    } else {
-        return localPos;
     }
+    return m_position;
 }
 
 void Transform::Translate(const Vector3& translation) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_position += translation;
     MarkDirtyNoLock();
 }
 
 void Transform::TranslateWorld(const Vector3& translation) {
-    // 先获取父节点指针（需要锁）
-    Transform* parent = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        parent = m_parent;
-    }
+    // 使用递归锁，在持锁状态下安全访问父对象
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    // 计算变换（不持有锁）
     Vector3 localTranslation;
-    if (parent) {
-        localTranslation = parent->InverseTransformDirection(translation);
+    if (m_parent) {
+        localTranslation = m_parent->InverseTransformDirection(translation);
     } else {
         localTranslation = translation;
     }
     
-    // 更新位置（持有锁）
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_position += localTranslation;
-        MarkDirtyNoLock();
-    }
+    m_position += localTranslation;
+    MarkDirtyNoLock();
 }
 
 // ============================================================================
@@ -108,101 +92,79 @@ void Transform::TranslateWorld(const Vector3& translation) {
 // ============================================================================
 
 void Transform::SetRotation(const Quaternion& rotation) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_rotation = rotation.normalized();
     MarkDirtyNoLock();
 }
 
 void Transform::SetRotationEuler(const Vector3& euler) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_rotation = MathUtils::FromEuler(euler.x(), euler.y(), euler.z());
     MarkDirtyNoLock();
 }
 
 void Transform::SetRotationEulerDegrees(const Vector3& euler) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_rotation = MathUtils::FromEulerDegrees(euler.x(), euler.y(), euler.z());
     MarkDirtyNoLock();
 }
 
 Vector3 Transform::GetRotationEuler() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return MathUtils::ToEuler(m_rotation);
 }
 
 Vector3 Transform::GetRotationEulerDegrees() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return MathUtils::ToEulerDegrees(m_rotation);
 }
 
 Quaternion Transform::GetWorldRotation() const {
-    // 先获取父节点指针和本地旋转
-    Transform* parent = nullptr;
-    Quaternion localRot;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        parent = m_parent;
-        localRot = m_rotation;
-    }
+    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    // 递归计算（不持有任何锁）
-    if (parent) {
-        return parent->GetWorldRotation() * localRot;
-    } else {
-        return localRot;
+    if (m_parent) {
+        return m_parent->GetWorldRotation() * m_rotation;
     }
+    return m_rotation;
 }
 
 void Transform::Rotate(const Quaternion& rotation) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_rotation = (m_rotation * rotation).normalized();
     MarkDirtyNoLock();
 }
 
 void Transform::RotateAround(const Vector3& axis, float angle) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     Quaternion rot = MathUtils::AngleAxis(angle, axis);
     m_rotation = (m_rotation * rot).normalized();
     MarkDirtyNoLock();
 }
 
 void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
+    // 使用递归锁，在持锁状态下安全访问父对象
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
     Quaternion rot = MathUtils::AngleAxis(angle, axis);
     
-    // 先获取父节点指针
-    Transform* parent = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        parent = m_parent;
-    }
-    
-    // 计算新的旋转（不持有锁）
-    Quaternion newRotation;
-    if (parent) {
-        Quaternion parentRot = parent->GetWorldRotation();
-        Quaternion localRot;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            localRot = m_rotation;
-        }
-        Quaternion worldRot = parentRot * localRot;
+    if (m_parent) {
+        Quaternion parentRot = m_parent->GetWorldRotation();
+        Quaternion worldRot = parentRot * m_rotation;
         worldRot = (rot * worldRot).normalized();
-        newRotation = (parentRot.inverse() * worldRot).normalized();
+        m_rotation = (parentRot.inverse() * worldRot).normalized();
     } else {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        newRotation = (rot * m_rotation).normalized();
+        m_rotation = (rot * m_rotation).normalized();
     }
     
-    // 更新旋转（持有锁）
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_rotation = newRotation;
-        MarkDirtyNoLock();
-    }
+    MarkDirtyNoLock();
 }
 
 void Transform::LookAt(const Vector3& target, const Vector3& up) {
-    // 先获取世界位置（不持有锁）
+    // 使用递归锁，在持锁状态下安全访问父对象
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // 获取世界位置（递归锁允许在持锁状态下调用）
     Vector3 worldPos = GetWorldPosition();
     Vector3 direction = (target - worldPos).normalized();
     
@@ -212,28 +174,14 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
     
     Quaternion lookRotation = MathUtils::LookRotation(direction, up);
     
-    // 获取父节点指针
-    Transform* parent = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        parent = m_parent;
-    }
-    
-    // 计算新的旋转（不持有锁）
-    Quaternion newRotation;
-    if (parent) {
-        Quaternion parentRot = parent->GetWorldRotation();
-        newRotation = parentRot.inverse() * lookRotation;
+    if (m_parent) {
+        Quaternion parentRot = m_parent->GetWorldRotation();
+        m_rotation = parentRot.inverse() * lookRotation;
     } else {
-        newRotation = lookRotation;
+        m_rotation = lookRotation;
     }
     
-    // 更新旋转（持有锁）
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_rotation = newRotation;
-        MarkDirtyNoLock();
-    }
+    MarkDirtyNoLock();
 }
 
 // ============================================================================
@@ -241,38 +189,30 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
 // ============================================================================
 
 void Transform::SetScale(const Vector3& scale) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_scale = scale;
     MarkDirtyNoLock();
 }
 
 void Transform::SetScale(float scale) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_scale = Vector3(scale, scale, scale);
     MarkDirtyNoLock();
 }
 
 Vector3 Transform::GetWorldScale() const {
-    // 先获取父节点指针和本地缩放
-    Transform* parent = nullptr;
-    Vector3 localScale;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        parent = m_parent;
-        localScale = m_scale;
-    }
+    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    // 递归计算（不持有任何锁）
-    if (parent) {
-        Vector3 parentScale = parent->GetWorldScale();
+    if (m_parent) {
+        Vector3 parentScale = m_parent->GetWorldScale();
         return Vector3(
-            localScale.x() * parentScale.x(),
-            localScale.y() * parentScale.y(),
-            localScale.z() * parentScale.z()
+            m_scale.x() * parentScale.x(),
+            m_scale.y() * parentScale.y(),
+            m_scale.z() * parentScale.z()
         );
-    } else {
-        return localScale;
     }
+    return m_scale;
 }
 
 // ============================================================================
@@ -280,17 +220,17 @@ Vector3 Transform::GetWorldScale() const {
 // ============================================================================
 
 Vector3 Transform::GetForward() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_rotation * Vector3::UnitZ();
 }
 
 Vector3 Transform::GetRight() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_rotation * Vector3::UnitX();
 }
 
 Vector3 Transform::GetUp() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_rotation * Vector3::UnitY();
 }
 
@@ -299,41 +239,26 @@ Vector3 Transform::GetUp() const {
 // ============================================================================
 
 Matrix4 Transform::GetLocalMatrix() const {
-    // 读取数据并实时计算
-    Vector3 pos, scale;
-    Quaternion rot;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        pos = m_position;
-        rot = m_rotation;
-        scale = m_scale;
-    }
-    
-    // 计算并返回（无锁）
-    return MathUtils::TRS(pos, rot, scale);
+    // 使用递归锁保护数据访问
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return MathUtils::TRS(m_position, m_rotation, m_scale);
 }
 
 Matrix4 Transform::GetWorldMatrix() const {
-    // 先获取父节点指针
-    Transform* parent = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        parent = m_parent;
-    }
+    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    // 计算矩阵（不持有任何锁）
     Matrix4 localMat = GetLocalMatrix();
     
-    if (parent) {
-        Matrix4 parentWorldMat = parent->GetWorldMatrix();
+    if (m_parent) {
+        Matrix4 parentWorldMat = m_parent->GetWorldMatrix();
         return parentWorldMat * localMat;
-    } else {
-        return localMat;
     }
+    return localMat;
 }
 
 void Transform::SetFromMatrix(const Matrix4& matrix) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     MathUtils::DecomposeMatrix(matrix, m_position, m_rotation, m_scale);
     MarkDirtyNoLock();
 }
@@ -343,20 +268,14 @@ void Transform::SetFromMatrix(const Matrix4& matrix) {
 // ============================================================================
 
 void Transform::SetParent(Transform* parent) {
-    // 先检查是否相同
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_parent == parent) {
-            return;
-        }
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    if (m_parent == parent) {
+        return;
     }
     
-    // 设置父对象
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_parent = parent;
-        MarkDirtyNoLock();
-    }
+    m_parent = parent;
+    MarkDirtyNoLock();
 }
 
 // ============================================================================

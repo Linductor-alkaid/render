@@ -273,31 +273,22 @@ public:
      * @brief 遍历所有纹理
      * @param callback 回调函数 (name, texture)
      * 
-     * @warning 回调函数的限制：
-     *  - ⚠️ 不要在回调中调用 ResourceManager 的任何方法（会导致死锁）
-     *  - ⚠️ 不要长时间持有纹理对象的内部锁
-     *  - ⚠️ 不要在回调中进行阻塞操作或长时间计算
-     *  - ✅ 如需修改资源，应在回调中记录，退出后再处理
+     * @note 线程安全说明：
+     *  - ✅ 使用快照模式，回调中可以安全地调用ResourceManager的其他方法
+     *  - ✅ 回调看到的是调用时刻的资源快照，不是实时数据
+     *  - ✅ 回调执行期间不持有任何锁，不会阻塞其他线程
      * 
-     * @example 正确用法
+     * @warning 性能注意事项：
+     *  - 此方法会创建资源列表的临时副本（只复制shared_ptr，不复制资源本身）
+     *  - 对于大量资源，会有一定的内存开销
+     * 
+     * @example 正确用法（现在更简单了）
      * @code
-     * std::vector<std::string> toRemove;
+     * // 现在可以直接在回调中修改资源管理器
      * manager.ForEachTexture([&](const std::string& name, Ref<Texture> tex) {
      *     if (ShouldRemove(tex)) {
-     *         toRemove.push_back(name);  // 只记录，不删除
+     *         manager.RemoveTexture(name);  // ✅ 安全！不会死锁
      *     }
-     * });
-     * 
-     * // 在循环外删除
-     * for (const auto& name : toRemove) {
-     *     manager.RemoveTexture(name);
-     * }
-     * @endcode
-     * 
-     * @example 错误用法 ⚠️
-     * @code
-     * manager.ForEachTexture([&](const std::string& name, Ref<Texture> tex) {
-     *     manager.RemoveTexture(name);  // ❌ 死锁！
      * });
      * @endcode
      */
@@ -307,8 +298,8 @@ public:
      * @brief 遍历所有网格
      * @param callback 回调函数 (name, mesh)
      * 
-     * @warning 回调函数限制同 ForEachTexture()，详见其文档。
-     *          不要在回调中调用 ResourceManager 的其他方法。
+     * @note 使用快照模式，回调中可以安全地调用ResourceManager的其他方法。
+     *       详见 ForEachTexture() 的文档说明。
      */
     void ForEachMesh(std::function<void(const std::string&, Ref<Mesh>)> callback);
     
@@ -316,8 +307,8 @@ public:
      * @brief 遍历所有材质
      * @param callback 回调函数 (name, material)
      * 
-     * @warning 回调函数限制同 ForEachTexture()，详见其文档。
-     *          不要在回调中调用 ResourceManager 的其他方法。
+     * @note 使用快照模式，回调中可以安全地调用ResourceManager的其他方法。
+     *       详见 ForEachTexture() 的文档说明。
      */
     void ForEachMaterial(std::function<void(const std::string&, Ref<Material>)> callback);
     
@@ -325,8 +316,8 @@ public:
      * @brief 遍历所有着色器
      * @param callback 回调函数 (name, shader)
      * 
-     * @warning 回调函数限制同 ForEachTexture()，详见其文档。
-     *          不要在回调中调用 ResourceManager 的其他方法。
+     * @note 使用快照模式，回调中可以安全地调用ResourceManager的其他方法。
+     *       详见 ForEachTexture() 的文档说明。
      */
     void ForEachShader(std::function<void(const std::string&, Ref<Shader>)> callback);
     

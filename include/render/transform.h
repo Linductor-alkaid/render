@@ -307,8 +307,9 @@ private:
     mutable Quaternion m_cachedWorldRotation;
     mutable Vector3 m_cachedWorldScale;
     
-    // 线程安全：使用互斥锁保护数据访问
-    mutable std::mutex m_mutex;           // 主锁：保护基本成员变量
+    // 线程安全：使用递归互斥锁保护数据访问
+    // 使用递归锁允许同一线程多次获取锁，避免在递归调用（如GetWorldPosition调用父对象的GetWorldPosition）时死锁
+    mutable std::recursive_mutex m_mutex;           // 主锁：保护基本成员变量
     mutable std::mutex m_cacheMutex;      // 缓存锁：保护缓存变量（已废弃，保留以保持二进制兼容）
     
     void MarkDirty();

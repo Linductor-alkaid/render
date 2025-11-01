@@ -616,34 +616,82 @@ std::vector<std::string> ResourceManager::ListShaders() const {
 // ============================================================================
 
 void ResourceManager::ForEachTexture(std::function<void(const std::string&, Ref<Texture>)> callback) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // 使用快照模式：先复制数据（持锁），然后无锁调用回调
+    // 这样避免了在回调中调用ResourceManager其他方法时的死锁风险
+    std::vector<std::pair<std::string, Ref<Texture>>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        snapshot.reserve(m_textures.size());
+        for (const auto& [name, entry] : m_textures) {
+            snapshot.emplace_back(name, entry.resource);
+        }
+    }  // 锁释放
     
-    for (const auto& [name, entry] : m_textures) {
-        callback(name, entry.resource);
+    // 无锁调用回调，用户可以安全地调用ResourceManager的其他方法
+    for (const auto& [name, resource] : snapshot) {
+        if (callback) {
+            callback(name, resource);
+        }
     }
 }
 
 void ResourceManager::ForEachMesh(std::function<void(const std::string&, Ref<Mesh>)> callback) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // 使用快照模式：先复制数据（持锁），然后无锁调用回调
+    // 这样避免了在回调中调用ResourceManager其他方法时的死锁风险
+    std::vector<std::pair<std::string, Ref<Mesh>>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        snapshot.reserve(m_meshes.size());
+        for (const auto& [name, entry] : m_meshes) {
+            snapshot.emplace_back(name, entry.resource);
+        }
+    }  // 锁释放
     
-    for (const auto& [name, entry] : m_meshes) {
-        callback(name, entry.resource);
+    // 无锁调用回调，用户可以安全地调用ResourceManager的其他方法
+    for (const auto& [name, resource] : snapshot) {
+        if (callback) {
+            callback(name, resource);
+        }
     }
 }
 
 void ResourceManager::ForEachMaterial(std::function<void(const std::string&, Ref<Material>)> callback) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // 使用快照模式：先复制数据（持锁），然后无锁调用回调
+    // 这样避免了在回调中调用ResourceManager其他方法时的死锁风险
+    std::vector<std::pair<std::string, Ref<Material>>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        snapshot.reserve(m_materials.size());
+        for (const auto& [name, entry] : m_materials) {
+            snapshot.emplace_back(name, entry.resource);
+        }
+    }  // 锁释放
     
-    for (const auto& [name, entry] : m_materials) {
-        callback(name, entry.resource);
+    // 无锁调用回调，用户可以安全地调用ResourceManager的其他方法
+    for (const auto& [name, resource] : snapshot) {
+        if (callback) {
+            callback(name, resource);
+        }
     }
 }
 
 void ResourceManager::ForEachShader(std::function<void(const std::string&, Ref<Shader>)> callback) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // 使用快照模式：先复制数据（持锁），然后无锁调用回调
+    // 这样避免了在回调中调用ResourceManager其他方法时的死锁风险
+    std::vector<std::pair<std::string, Ref<Shader>>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        snapshot.reserve(m_shaders.size());
+        for (const auto& [name, entry] : m_shaders) {
+            snapshot.emplace_back(name, entry.resource);
+        }
+    }  // 锁释放
     
-    for (const auto& [name, entry] : m_shaders) {
-        callback(name, entry.resource);
+    // 无锁调用回调，用户可以安全地调用ResourceManager的其他方法
+    for (const auto& [name, resource] : snapshot) {
+        if (callback) {
+            callback(name, resource);
+        }
     }
 }
 

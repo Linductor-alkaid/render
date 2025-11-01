@@ -355,10 +355,21 @@ private:
 
 /**
  * @brief 相机控制器基类
+ * 
+ * @note 线程安全：控制器不是线程安全的，应在同一线程中使用
  */
 class CameraController {
 public:
-    CameraController(Camera* camera) : m_camera(camera) {}
+    /**
+     * @brief 构造函数
+     * @param camera 相机引用（不能为nullptr）
+     * @throw std::invalid_argument 如果camera为nullptr
+     */
+    CameraController(Camera* camera) : m_camera(camera) {
+        if (!camera) {
+            throw std::invalid_argument("CameraController: camera cannot be nullptr");
+        }
+    }
     virtual ~CameraController() = default;
     
     /**
