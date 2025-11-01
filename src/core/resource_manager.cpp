@@ -2,6 +2,7 @@
 #include "render/logger.h"
 #include "render/error.h"
 #include <algorithm>
+#include <fstream>
 
 namespace Render {
 
@@ -35,6 +36,10 @@ bool ResourceManager::RegisterTexture(const std::string& name, Ref<Texture> text
     }
     
     m_textures[name] = ResourceEntry<Texture>(texture, m_currentFrame);
+    
+    // 在依赖跟踪器中注册资源
+    m_dependencyTracker.RegisterResource(name, ResourceType::Texture);
+    
     Logger::GetInstance().Debug("ResourceManager: 注册纹理: " + name);
     return true;
 }
@@ -57,6 +62,10 @@ bool ResourceManager::RemoveTexture(const std::string& name) {
     auto it = m_textures.find(name);
     if (it != m_textures.end()) {
         m_textures.erase(it);
+        
+        // 从依赖跟踪器中注销资源
+        m_dependencyTracker.UnregisterResource(name);
+        
         Logger::GetInstance().Debug("ResourceManager: 移除纹理: " + name);
         return true;
     }
@@ -89,6 +98,10 @@ bool ResourceManager::RegisterMesh(const std::string& name, Ref<Mesh> mesh) {
     }
     
     m_meshes[name] = ResourceEntry<Mesh>(mesh, m_currentFrame);
+    
+    // 在依赖跟踪器中注册资源
+    m_dependencyTracker.RegisterResource(name, ResourceType::Mesh);
+    
     Logger::GetInstance().Debug("ResourceManager: 注册网格: " + name);
     return true;
 }
@@ -111,6 +124,10 @@ bool ResourceManager::RemoveMesh(const std::string& name) {
     auto it = m_meshes.find(name);
     if (it != m_meshes.end()) {
         m_meshes.erase(it);
+        
+        // 从依赖跟踪器中注销资源
+        m_dependencyTracker.UnregisterResource(name);
+        
         Logger::GetInstance().Debug("ResourceManager: 移除网格: " + name);
         return true;
     }
@@ -141,6 +158,10 @@ bool ResourceManager::RegisterMaterial(const std::string& name, Ref<Material> ma
     }
     
     m_materials[name] = ResourceEntry<Material>(material, m_currentFrame);
+    
+    // 在依赖跟踪器中注册资源
+    m_dependencyTracker.RegisterResource(name, ResourceType::Material);
+    
     Logger::GetInstance().Debug("ResourceManager: 注册材质: " + name);
     return true;
 }
@@ -163,6 +184,10 @@ bool ResourceManager::RemoveMaterial(const std::string& name) {
     auto it = m_materials.find(name);
     if (it != m_materials.end()) {
         m_materials.erase(it);
+        
+        // 从依赖跟踪器中注销资源
+        m_dependencyTracker.UnregisterResource(name);
+        
         Logger::GetInstance().Debug("ResourceManager: 移除材质: " + name);
         return true;
     }
@@ -193,6 +218,10 @@ bool ResourceManager::RegisterShader(const std::string& name, Ref<Shader> shader
     }
     
     m_shaders[name] = ResourceEntry<Shader>(shader, m_currentFrame);
+    
+    // 在依赖跟踪器中注册资源
+    m_dependencyTracker.RegisterResource(name, ResourceType::Shader);
+    
     Logger::GetInstance().Debug("ResourceManager: 注册着色器: " + name);
     return true;
 }
@@ -215,6 +244,10 @@ bool ResourceManager::RemoveShader(const std::string& name) {
     auto it = m_shaders.find(name);
     if (it != m_shaders.end()) {
         m_shaders.erase(it);
+        
+        // 从依赖跟踪器中注销资源
+        m_dependencyTracker.UnregisterResource(name);
+        
         Logger::GetInstance().Debug("ResourceManager: 移除着色器: " + name);
         return true;
     }
@@ -1004,6 +1037,81 @@ ResourceManager::HandleStats ResourceManager::GetHandleStats() const {
     stats.shaderFreeSlots = m_shaderSlots.GetFreeSlots();
     
     return stats;
+}
+
+// ============================================================================
+// 依赖关系跟踪和循环检测
+// ============================================================================
+
+void ResourceManager::UpdateResourceDependencies(const std::string& resourceName,
+                                                const std::vector<std::string>& dependencies) {
+    // 不需要锁m_mutex，因为DependencyTracker有自己的锁
+    m_dependencyTracker.SetDependencies(resourceName, dependencies);
+    
+    Logger::GetInstance().Debug("ResourceManager: 更新资源依赖: " + resourceName + 
+                               " (依赖数: " + std::to_string(dependencies.size()) + ")");
+}
+
+std::vector<CircularReference> ResourceManager::DetectCircularReferences() {
+    auto cycles = m_dependencyTracker.DetectAllCycles();
+    
+    if (!cycles.empty()) {
+        Logger::GetInstance().Warning("ResourceManager: 检测到 " + 
+                                     std::to_string(cycles.size()) + " 个循环引用！");
+        for (const auto& cycle : cycles) {
+            Logger::GetInstance().Warning("  - " + cycle.ToString());
+        }
+    } else {
+        Logger::GetInstance().Info("ResourceManager: 未检测到循环引用");
+    }
+    
+    return cycles;
+}
+
+DependencyAnalysisResult ResourceManager::AnalyzeDependencies() {
+    auto result = m_dependencyTracker.AnalyzeDependencies();
+    
+    Logger::GetInstance().Info("========================================");
+    Logger::GetInstance().Info("资源依赖分析结果");
+    Logger::GetInstance().Info("========================================");
+    Logger::GetInstance().Info("总资源数: " + std::to_string(result.totalResources));
+    Logger::GetInstance().Info("孤立资源数: " + std::to_string(result.isolatedResources));
+    Logger::GetInstance().Info("最大依赖深度: " + std::to_string(result.maxDepth));
+    Logger::GetInstance().Info("循环引用数: " + std::to_string(result.circularReferences.size()));
+    
+    if (result.HasCircularReferences()) {
+        Logger::GetInstance().Warning("⚠️ 警告：检测到循环引用！");
+        for (const auto& cycle : result.circularReferences) {
+            Logger::GetInstance().Warning("  " + cycle.ToString());
+        }
+    }
+    
+    Logger::GetInstance().Info("========================================");
+    
+    return result;
+}
+
+void ResourceManager::PrintDependencyStatistics() const {
+    std::string stats = m_dependencyTracker.GetStatistics();
+    Logger::GetInstance().Info(stats);
+}
+
+bool ResourceManager::ExportDependencyGraph(const std::string& outputPath) {
+    std::string dotGraph = m_dependencyTracker.GenerateDOTGraph();
+    
+    std::ofstream outFile(outputPath);
+    if (!outFile.is_open()) {
+        Logger::GetInstance().Error("ResourceManager: 无法打开文件: " + outputPath);
+        return false;
+    }
+    
+    outFile << dotGraph;
+    outFile.close();
+    
+    Logger::GetInstance().Info("ResourceManager: 依赖关系图已导出到: " + outputPath);
+    Logger::GetInstance().Info("  使用 Graphviz 查看: dot -Tpng " + outputPath + " -o dependency_graph.png");
+    
+    return true;
 }
 
 } // namespace Render

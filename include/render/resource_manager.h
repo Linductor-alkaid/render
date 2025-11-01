@@ -7,6 +7,7 @@
 #include "shader.h"
 #include "resource_handle.h"
 #include "resource_slot.h"
+#include "resource_dependency.h"
 #include <unordered_map>
 #include <mutex>
 #include <string>
@@ -14,16 +15,6 @@
 #include <functional>
 
 namespace Render {
-
-/**
- * @brief 资源类型枚举
- */
-enum class ResourceType {
-    Texture,
-    Mesh,
-    Material,
-    Shader
-};
 
 /**
  * @brief 资源条目
@@ -485,6 +476,51 @@ public:
     
     HandleStats GetHandleStats() const;
     
+    // ========================================================================
+    // 依赖关系跟踪和循环检测（新增）
+    // ========================================================================
+    
+    /**
+     * @brief 获取依赖跟踪器
+     * @return 依赖跟踪器引用
+     */
+    ResourceDependencyTracker& GetDependencyTracker() { return m_dependencyTracker; }
+    const ResourceDependencyTracker& GetDependencyTracker() const { return m_dependencyTracker; }
+    
+    /**
+     * @brief 更新资源的依赖关系
+     * @param resourceName 资源名称
+     * @param dependencies 依赖列表
+     * 
+     * 此方法应在资源加载或修改时调用，以保持依赖关系最新
+     */
+    void UpdateResourceDependencies(const std::string& resourceName,
+                                    const std::vector<std::string>& dependencies);
+    
+    /**
+     * @brief 检测是否存在循环引用
+     * @return 所有发现的循环引用
+     */
+    std::vector<CircularReference> DetectCircularReferences();
+    
+    /**
+     * @brief 执行完整的依赖分析
+     * @return 分析结果
+     */
+    DependencyAnalysisResult AnalyzeDependencies();
+    
+    /**
+     * @brief 打印依赖关系统计信息
+     */
+    void PrintDependencyStatistics() const;
+    
+    /**
+     * @brief 生成依赖关系DOT图（用于Graphviz可视化）
+     * @param outputPath 输出文件路径
+     * @return 是否成功
+     */
+    bool ExportDependencyGraph(const std::string& outputPath);
+    
 private:
     ResourceManager() = default;
     ~ResourceManager() = default;
@@ -509,6 +545,9 @@ private:
     
     // 帧计数器
     uint32_t m_currentFrame = 0;
+    
+    // 依赖关系跟踪器
+    ResourceDependencyTracker m_dependencyTracker;
     
     // 线程安全
     mutable std::mutex m_mutex;

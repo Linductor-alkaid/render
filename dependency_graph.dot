@@ -1,0 +1,41 @@
+digraph ResourceDependencies {
+  rankdir=LR;
+  node [shape=box, style=rounded];
+
+  "basic_shader" [fillcolor=lightpink, style=filled];
+  "materialA" [fillcolor=lightyellow, style=filled];
+  "diffuse_tex" [fillcolor=lightblue, style=filled];
+  "cube_mesh" [fillcolor=lightgreen, style=filled];
+  "mat1" [fillcolor=lightyellow, style=filled];
+  "tex2" [fillcolor=lightblue, style=filled];
+  "normal_tex" [fillcolor=lightblue, style=filled];
+  "wood_material" [fillcolor=lightyellow, style=filled];
+  "materialB" [fillcolor=lightyellow, style=filled];
+  "tex1" [fillcolor=lightblue, style=filled];
+  "shader1" [fillcolor=lightpink, style=filled];
+  "material" [fillcolor=lightyellow, style=filled];
+  "shader" [fillcolor=lightpink, style=filled];
+  "base_shader" [fillcolor=lightpink, style=filled];
+  "base_tex" [fillcolor=lightblue, style=filled];
+  "metal_material" [fillcolor=lightyellow, style=filled];
+  "wood_diffuse" [fillcolor=lightblue, style=filled];
+  "wood_normal" [fillcolor=lightblue, style=filled];
+  "metal_diffuse" [fillcolor=lightblue, style=filled];
+  "pbr_shader" [fillcolor=lightpink, style=filled];
+
+  "materialA" -> "materialB";
+  "mat1" -> "tex1";
+  "tex2" -> "base_tex";
+  "wood_material" -> "pbr_shader";
+  "wood_material" -> "wood_diffuse";
+  "wood_material" -> "wood_normal";
+  "materialB" -> "materialA";
+  "tex1" -> "base_tex";
+  "shader1" -> "mat1";
+  "material" -> "shader";
+  "material" -> "tex1";
+  "material" -> "tex2";
+  "shader" -> "base_shader";
+  "metal_material" -> "pbr_shader";
+  "metal_material" -> "metal_diffuse";
+}

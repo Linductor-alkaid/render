@@ -199,6 +199,7 @@ set(RENDER_SOURCES
     src/utils/file_utils.cpp
     src/utils/error.cpp
     src/utils/resource_handle.cpp
+    src/utils/resource_dependency.cpp
     
     # GLAD
     ${GLAD_SRC}
@@ -232,6 +233,7 @@ set(RENDER_HEADERS
     include/render/logger.h
     include/render/file_utils.h
     include/render/error.h
+    include/render/resource_dependency.h
 )
 
 # ============================================================================

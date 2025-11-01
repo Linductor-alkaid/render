@@ -29,6 +29,7 @@ set(EXAMPLES
     25_test_window_resize_callback
     26_test_eigen_alignment
     27_test_resource_handle
+    28_circular_reference_detection_test
 )
 
 # 批量创建示例程序
