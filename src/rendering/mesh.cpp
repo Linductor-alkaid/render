@@ -108,13 +108,34 @@ void Mesh::SetData(const std::vector<Vertex>& vertices, const std::vector<uint32
 void Mesh::UpdateVertices(const std::vector<Vertex>& vertices, size_t offset) {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
+    // 检查网格是否已上传
     if (!m_Uploaded) {
-        Logger::GetInstance().Error("Mesh::UpdateVertices - Mesh not uploaded yet");
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Mesh::UpdateVertices: Mesh not uploaded yet"));
         return;
     }
     
+    // 检查输入数据是否为空
+    if (vertices.empty()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "Mesh::UpdateVertices: Empty vertex data provided"));
+        return;
+    }
+    
+    // 检查 offset 是否越界
+    if (offset >= m_Vertices.size()) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::OutOfRange, 
+                                 "Mesh::UpdateVertices: Offset " + std::to_string(offset) + 
+                                 " exceeds vertex count " + std::to_string(m_Vertices.size())));
+        return;
+    }
+    
+    // 检查 offset + size 是否越界
     if (offset + vertices.size() > m_Vertices.size()) {
-        Logger::GetInstance().Error("Mesh::UpdateVertices - Offset + size exceeds vertex count");
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::OutOfRange, 
+                                 "Mesh::UpdateVertices: Offset " + std::to_string(offset) + 
+                                 " + size " + std::to_string(vertices.size()) + 
+                                 " exceeds vertex count " + std::to_string(m_Vertices.size())));
         return;
     }
     
@@ -286,17 +307,23 @@ void Mesh::Clear() {
 AABB Mesh::CalculateBounds() const {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
+    // 返回空的包围盒并记录警告
     if (m_Vertices.empty()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Mesh::CalculateBounds: Mesh has no vertices"));
         return AABB();
     }
     
+    // 在同一个临界区内完成所有操作
     AABB bounds;
     bounds.min = m_Vertices[0].position;
     bounds.max = m_Vertices[0].position;
     
-    for (const auto& vertex : m_Vertices) {
-        bounds.min = bounds.min.cwiseMin(vertex.position);
-        bounds.max = bounds.max.cwiseMax(vertex.position);
+    // 从索引 1 开始遍历，避免重复处理第一个顶点
+    for (size_t i = 1; i < m_Vertices.size(); ++i) {
+        const auto& pos = m_Vertices[i].position;
+        bounds.min = bounds.min.cwiseMin(pos);
+        bounds.max = bounds.max.cwiseMax(pos);
     }
     
     return bounds;
@@ -306,7 +333,8 @@ void Mesh::RecalculateNormals() {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
     if (m_Indices.size() < 3) {
-        Logger::GetInstance().Warning("Mesh::RecalculateNormals - Not enough indices for triangles");
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                   "Mesh::RecalculateNormals: Not enough indices for triangles"));
         return;
     }
     
@@ -315,13 +343,26 @@ void Mesh::RecalculateNormals() {
         vertex.normal = Vector3::Zero();
     }
     
+    // 统计无效三角形数量
+    size_t invalidTriangles = 0;
+    
     // 遍历每个三角形，计算面法线并累加到顶点
     for (size_t i = 0; i < m_Indices.size(); i += 3) {
         uint32_t i0 = m_Indices[i];
         uint32_t i1 = m_Indices[i + 1];
         uint32_t i2 = m_Indices[i + 2];
         
+        // 添加越界检查和警告
         if (i0 >= m_Vertices.size() || i1 >= m_Vertices.size() || i2 >= m_Vertices.size()) {
+            if (invalidTriangles == 0) {
+                // 只在首次发现无效三角形时记录详细信息
+                HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange, 
+                                           "Mesh::RecalculateNormals: Invalid triangle indices at offset " + 
+                                           std::to_string(i) + " [" + std::to_string(i0) + ", " + 
+                                           std::to_string(i1) + ", " + std::to_string(i2) + "], " +
+                                           "vertex count: " + std::to_string(m_Vertices.size())));
+            }
+            invalidTriangles++;
             continue;
         }
         
@@ -340,6 +381,12 @@ void Mesh::RecalculateNormals() {
         m_Vertices[i0].normal += normal;
         m_Vertices[i1].normal += normal;
         m_Vertices[i2].normal += normal;
+    }
+    
+    // 如果有多个无效三角形，报告总数
+    if (invalidTriangles > 1) {
+        Logger::GetInstance().Warning("Mesh::RecalculateNormals: Skipped " + 
+                                      std::to_string(invalidTriangles) + " invalid triangles");
     }
     
     // 归一化所有法线

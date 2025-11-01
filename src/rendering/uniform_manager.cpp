@@ -87,6 +87,19 @@ void UniformManager::SetColor(const std::string& name, const Color& value) {
 }
 
 void UniformManager::SetIntArray(const std::string& name, const int* values, uint32_t count) {
+    // 添加参数验证
+    if (!values) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetIntArray: values pointer is null"));
+        return;
+    }
+    
+    if (count == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetIntArray: count is zero"));
+        return;
+    }
+    
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
         GL_THREAD_CHECK();
@@ -95,6 +108,19 @@ void UniformManager::SetIntArray(const std::string& name, const int* values, uin
 }
 
 void UniformManager::SetFloatArray(const std::string& name, const float* values, uint32_t count) {
+    // 添加参数验证
+    if (!values) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetFloatArray: values pointer is null"));
+        return;
+    }
+    
+    if (count == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetFloatArray: count is zero"));
+        return;
+    }
+    
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
         GL_THREAD_CHECK();
@@ -103,6 +129,19 @@ void UniformManager::SetFloatArray(const std::string& name, const float* values,
 }
 
 void UniformManager::SetVector3Array(const std::string& name, const Vector3* values, uint32_t count) {
+    // 添加参数验证
+    if (!values) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetVector3Array: values pointer is null"));
+        return;
+    }
+    
+    if (count == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetVector3Array: count is zero"));
+        return;
+    }
+    
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
         GL_THREAD_CHECK();
@@ -111,6 +150,19 @@ void UniformManager::SetVector3Array(const std::string& name, const Vector3* val
 }
 
 void UniformManager::SetMatrix4Array(const std::string& name, const Matrix4* values, uint32_t count) {
+    // 添加参数验证
+    if (!values) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetMatrix4Array: values pointer is null"));
+        return;
+    }
+    
+    if (count == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument, 
+                                   "UniformManager::SetMatrix4Array: count is zero"));
+        return;
+    }
+    
     int location = GetOrFindUniformLocation(name);
     if (location != -1) {
         GL_THREAD_CHECK();
@@ -149,17 +201,28 @@ std::vector<std::string> UniformManager::GetAllUniformNames() const {
     GLint numUniforms = 0;
     glGetProgramiv(m_programID, GL_ACTIVE_UNIFORMS, &numUniforms);
     
+    // 查询最大 uniform 名称长度，避免栈溢出
+    GLint maxLength = 0;
+    glGetProgramiv(m_programID, GL_ACTIVE_UNIFORM_MAX_LENGTH, &maxLength);
+    
+    // 如果查询失败，使用一个合理的默认值
+    if (maxLength <= 0) {
+        maxLength = 256;
+    }
+    
     std::vector<std::string> uniformNames;
     uniformNames.reserve(numUniforms);
     
+    // 使用动态分配的缓冲区
+    std::vector<GLchar> nameBuffer(maxLength);
+    
     for (GLint i = 0; i < numUniforms; ++i) {
-        GLchar name[256];
         GLsizei length;
         GLint size;
         GLenum type;
         
-        glGetActiveUniform(m_programID, i, sizeof(name), &length, &size, &type, name);
-        uniformNames.push_back(std::string(name, length));
+        glGetActiveUniform(m_programID, i, maxLength, &length, &size, &type, nameBuffer.data());
+        uniformNames.push_back(std::string(nameBuffer.data(), length));
     }
     
     return uniformNames;
@@ -171,15 +234,26 @@ void UniformManager::PrintUniformInfo() const {
     GLint numUniforms = 0;
     glGetProgramiv(m_programID, GL_ACTIVE_UNIFORMS, &numUniforms);
     
+    // 查询最大 uniform 名称长度，避免栈溢出
+    GLint maxLength = 0;
+    glGetProgramiv(m_programID, GL_ACTIVE_UNIFORM_MAX_LENGTH, &maxLength);
+    
+    // 如果查询失败，使用一个合理的默认值
+    if (maxLength <= 0) {
+        maxLength = 256;
+    }
+    
     LOG_INFO("Shader Uniforms (" + std::to_string(numUniforms) + " total):");
     
+    // 使用动态分配的缓冲区
+    std::vector<GLchar> nameBuffer(maxLength);
+    
     for (GLint i = 0; i < numUniforms; ++i) {
-        GLchar name[256];
         GLsizei length;
         GLint size;
         GLenum type;
         
-        glGetActiveUniform(m_programID, i, sizeof(name), &length, &size, &type, name);
+        glGetActiveUniform(m_programID, i, maxLength, &length, &size, &type, nameBuffer.data());
         
         std::string typeName;
         switch (type) {
@@ -196,9 +270,9 @@ void UniformManager::PrintUniformInfo() const {
             default:              typeName = "unknown"; break;
         }
         
-        int location = glGetUniformLocation(m_programID, name);
+        int location = glGetUniformLocation(m_programID, nameBuffer.data());
         LOG_INFO("  [" + std::to_string(location) + "] " + 
-                std::string(name) + " : " + typeName + 
+                std::string(nameBuffer.data(), length) + " : " + typeName + 
                 (size > 1 ? "[" + std::to_string(size) + "]" : ""));
     }
 }
