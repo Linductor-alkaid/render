@@ -484,6 +484,13 @@ Ray ScreenToWorldRay(float screenX, float screenY,
 
 **用途**: 鼠标拾取、点击检测等。
 
+**安全性增强（2025-11-02）**:
+- ✅ 自动检查投影矩阵和视图矩阵的可逆性（行列式）
+- ✅ 检查齐次坐标转换的有效性
+- ✅ 检查射线方向的有效性
+- ✅ 失败时返回安全的默认射线（相机位置 + 前方向）
+- ✅ 不会因为奇异矩阵而崩溃
+
 **示例**:
 ```cpp
 // 鼠标点击拾取
@@ -546,6 +553,9 @@ if (camera.WorldToScreen(objectPos, 1280.0f, 720.0f, screenX, screenY)) {
 ```cpp
 class CameraController {
 public:
+    CameraController(Camera& camera);  // 使用引用，不是指针
+    virtual ~CameraController() = default;
+    
     virtual void Update(float deltaTime) = 0;
     virtual void OnMouseMove(float deltaX, float deltaY) = 0;
     virtual void OnMouseScroll(float delta) = 0;
@@ -554,8 +564,19 @@ public:
     float GetMoveSpeed() const;
     void SetRotateSpeed(float speed);
     float GetRotateSpeed() const;
+    
+    Camera& GetCamera();
+    const Camera& GetCamera() const;
 };
 ```
+
+**重要变更（2025-11-02）**:
+- ✅ 构造函数改用 `Camera&`（引用）而非 `Camera*`（指针）
+- ✅ 消除了空指针风险
+- ✅ 语义更清晰：控制器不拥有 Camera 的所有权
+- ⚠️ 调用者必须确保 Camera 对象的生命周期长于控制器
+
+**线程安全**: ⚠️ 控制器本身不是线程安全的，应在同一线程中使用（但 Camera 本身是线程安全的）
 
 ---
 
@@ -566,7 +587,7 @@ public:
 ```cpp
 class FirstPersonCameraController : public CameraController {
 public:
-    FirstPersonCameraController(Camera* camera);
+    FirstPersonCameraController(Camera& camera);  // 使用引用
     
     // 移动控制
     void SetMoveForward(bool active);
@@ -591,7 +612,7 @@ public:
 **示例**:
 ```cpp
 Camera camera;
-FirstPersonCameraController controller(&camera);
+FirstPersonCameraController controller(camera);  // 传引用，不是指针
 controller.SetMoveSpeed(10.0f);
 controller.SetMouseSensitivity(0.15f);
 
@@ -607,6 +628,10 @@ while (running) {
 }
 ```
 
+**注意**:
+- ✅ 正确：`FirstPersonCameraController controller(camera);`
+- ❌ 错误：`FirstPersonCameraController controller(&camera);` （虽然会自动转换，但不推荐）
+
 ---
 
 ### OrbitCameraController
@@ -616,7 +641,7 @@ while (running) {
 ```cpp
 class OrbitCameraController : public CameraController {
 public:
-    OrbitCameraController(Camera* camera, const Vector3& target = Vector3::Zero());
+    OrbitCameraController(Camera& camera, const Vector3& target = Vector3::Zero());
     
     void SetTarget(const Vector3& target);
     Vector3 GetTarget() const;
@@ -637,7 +662,7 @@ public:
 **示例**:
 ```cpp
 Camera camera;
-OrbitCameraController controller(&camera, Vector3::Zero());
+OrbitCameraController controller(camera, Vector3::Zero());  // 传引用
 controller.SetDistance(15.0f);
 controller.SetDistanceRange(5.0f, 50.0f);
 controller.SetMouseSensitivity(0.3f);
@@ -660,7 +685,7 @@ controller.OnMouseScroll(wheelDelta);
 ```cpp
 class ThirdPersonCameraController : public CameraController {
 public:
-    ThirdPersonCameraController(Camera* camera);
+    ThirdPersonCameraController(Camera& camera);  // 使用引用
     
     void SetTarget(const Vector3& target);
     Vector3 GetTarget() const;
@@ -683,7 +708,7 @@ public:
 **示例**:
 ```cpp
 Camera camera;
-ThirdPersonCameraController controller(&camera);
+ThirdPersonCameraController controller(camera);  // 传引用
 controller.SetDistance(10.0f);
 controller.SetOffset(Vector3(0.0f, 2.0f, 0.0f));
 controller.SetSmoothness(0.1f);
@@ -746,7 +771,7 @@ if (keyPressed[SDLK_P]) {
 
 ```cpp
 Camera camera;
-FirstPersonCameraController controller(&camera);
+FirstPersonCameraController controller(camera);  // 使用引用
 controller.SetMoveSpeed(10.0f);
 
 while (running) {
@@ -937,6 +962,57 @@ Vector3 currentPos = camera.GetPosition();
 Vector3 targetPos = player.GetPosition() + offset;
 Vector3 newPos = MathUtils::Lerp(currentPos, targetPos, smoothFactor * deltaTime);
 camera.SetPosition(newPos);
+```
+
+### 5. 相机控制器的生命周期管理
+
+```cpp
+// ✅ 正确：Camera 对象的生命周期长于控制器
+{
+    Camera camera;
+    FirstPersonCameraController controller(camera);
+    // 使用 controller...
+}  // camera 和 controller 同时销毁，安全
+
+// ✅ 正确：使用智能指针
+auto camera = std::make_shared<Camera>();
+auto controller = std::make_unique<FirstPersonCameraController>(*camera);
+
+// ❌ 错误：Camera 对象先销毁
+FirstPersonCameraController* CreateController() {
+    Camera camera;  // 栈上对象
+    return new FirstPersonCameraController(camera);  // 悬空引用！
+}
+
+// ✅ 正确：使用堆分配或确保生命周期
+Camera* CreateCameraAndController(FirstPersonCameraController** outController) {
+    Camera* camera = new Camera();
+    *outController = new FirstPersonCameraController(*camera);
+    return camera;
+}
+```
+
+### 6. 多相机模式切换
+
+```cpp
+Camera camera;
+std::unique_ptr<CameraController> currentController;
+
+// 切换到第一人称
+void SwitchToFirstPerson() {
+    currentController = std::make_unique<FirstPersonCameraController>(camera);
+    currentController->SetMoveSpeed(10.0f);
+}
+
+// 切换到轨道
+void SwitchToOrbit() {
+    currentController = std::make_unique<OrbitCameraController>(camera);
+}
+
+// 每帧更新
+if (currentController) {
+    currentController->Update(deltaTime);
+}
 ```
 
 ---

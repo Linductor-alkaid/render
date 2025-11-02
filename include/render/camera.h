@@ -357,19 +357,15 @@ private:
  * @brief 相机控制器基类
  * 
  * @note 线程安全：控制器不是线程安全的，应在同一线程中使用
+ * @note 生命周期：控制器不拥有相机对象，调用者必须确保相机对象的生命周期
  */
 class CameraController {
 public:
     /**
      * @brief 构造函数
-     * @param camera 相机引用（不能为nullptr）
-     * @throw std::invalid_argument 如果camera为nullptr
+     * @param camera 相机引用
      */
-    CameraController(Camera* camera) : m_camera(camera) {
-        if (!camera) {
-            throw std::invalid_argument("CameraController: camera cannot be nullptr");
-        }
-    }
+    CameraController(Camera& camera) : m_camera(camera) {}
     virtual ~CameraController() = default;
     
     /**
@@ -403,11 +399,11 @@ public:
     void SetRotateSpeed(float speed) { m_rotateSpeed = speed; }
     float GetRotateSpeed() const { return m_rotateSpeed; }
     
-    Camera* GetCamera() { return m_camera; }
-    const Camera* GetCamera() const { return m_camera; }
+    Camera& GetCamera() { return m_camera; }
+    const Camera& GetCamera() const { return m_camera; }
     
 protected:
-    Camera* m_camera;
+    Camera& m_camera;  // 相机引用，不拥有所有权
     float m_moveSpeed = 5.0f;      // 移动速度（单位/秒）
     float m_rotateSpeed = 90.0f;   // 旋转速度（度/秒）
 };
@@ -419,7 +415,7 @@ protected:
  */
 class FirstPersonCameraController : public CameraController {
 public:
-    FirstPersonCameraController(Camera* camera);
+    FirstPersonCameraController(Camera& camera);
     
     void Update(float deltaTime) override;
     void OnMouseMove(float deltaX, float deltaY) override;
@@ -463,7 +459,7 @@ class OrbitCameraController : public CameraController {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     
 public:
-    OrbitCameraController(Camera* camera, const Vector3& target = Vector3::Zero());
+    OrbitCameraController(Camera& camera, const Vector3& target = Vector3::Zero());
     
     void Update(float deltaTime) override;
     void OnMouseMove(float deltaX, float deltaY) override;
@@ -516,7 +512,7 @@ class ThirdPersonCameraController : public CameraController {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     
 public:
-    ThirdPersonCameraController(Camera* camera);
+    ThirdPersonCameraController(Camera& camera);
     
     void Update(float deltaTime) override;
     void OnMouseMove(float deltaX, float deltaY) override;

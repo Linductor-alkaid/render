@@ -13,6 +13,93 @@ namespace Render {
  * 
  * Transform 类用于管理3D对象的位置、旋转和缩放信息。
  * 支持本地变换和世界变换，以及父子关系的变换层级。
+ * 
+ * @section thread_safety 线程安全
+ * - Transform 类是线程安全的，所有 public 方法都有适当的同步保护
+ * - 可以在多线程环境下安全使用（读、写、混合操作）
+ * - 内部使用递归互斥锁，避免递归调用时的死锁
+ * - 父指针使用原子类型，保证多线程读写的原子性
+ * - 批量操作（TransformPoints/TransformDirections）要求：
+ *   调用者必须确保输出向量不被多个线程并发访问
+ * 
+ * @section parent_child 父子关系
+ * - 父对象指针是观察指针（non-owning），不负责生命周期管理
+ * - **重要**：调用者必须确保父对象的生命周期长于或等于子对象
+ * - 自动检测并拒绝自引用（将自己设为父对象）
+ * - 自动检测并拒绝循环引用（A->B->C->A）
+ * - 父子层级深度限制为 1000 层
+ * 
+ * @section numeric_safety 数值安全
+ * - 所有旋转操作会自动检查和归一化四元数
+ * - 零向量和无效输入会被检测并产生警告
+ * - 使用 MathUtils::EPSILON 进行浮点数比较
+ * 
+ * @section best_practices 最佳实践
+ * 1. **生命周期管理**：
+ *    - 父对象应该比子对象先创建、后销毁
+ *    - 避免在动态数组（std::vector）中存储 Transform 后设置父子关系
+ *      （数组扩容会导致对象地址改变）
+ *    - 推荐使用 std::list 或智能指针容器管理 Transform 对象
+ * 
+ * 2. **性能优化**：
+ *    - GetWorld* 方法会递归计算，频繁调用时考虑缓存结果
+ *    - 批量操作（TransformPoints）对大量数据更高效
+ *    - 批量操作在数据量 > 5000 时自动使用 OpenMP 并行加速
+ * 
+ * 3. **线程安全**：
+ *    - 虽然类本身是线程安全的，但避免在持有锁时执行长时间操作
+ *    - 批量操作的输出向量不应在多线程间共享
+ * 
+ * @example 正确用法
+ * @code
+ * // ✅ 正确：父对象生命周期长于子对象
+ * {
+ *     Transform parent;
+ *     Transform child;
+ *     child.SetParent(&parent);
+ *     Vector3 worldPos = child.GetWorldPosition();
+ *     // parent 和 child 同时离开作用域
+ * }
+ * 
+ * // ✅ 正确：使用智能指针管理
+ * auto parent = std::make_shared<Transform>();
+ * auto child = std::make_shared<Transform>();
+ * child->SetParent(parent.get());
+ * 
+ * // ✅ 正确：使用 std::list
+ * std::list<Transform> transforms;
+ * transforms.emplace_back();
+ * transforms.emplace_back();
+ * auto it = transforms.begin();
+ * Transform* parent = &(*it);
+ * ++it;
+ * it->SetParent(parent);  // 安全，地址不会改变
+ * @endcode
+ * 
+ * @example 错误用法
+ * @code
+ * // ❌ 错误：循环引用会被检测并拒绝
+ * Transform a, b, c;
+ * a.SetParent(&b);
+ * b.SetParent(&c);
+ * c.SetParent(&a);  // 错误！产生警告并拒绝操作
+ * 
+ * // ❌ 错误：父对象先销毁
+ * Transform child;
+ * {
+ *     Transform parent;
+ *     child.SetParent(&parent);
+ * }  // parent 销毁，child.m_parent 成为悬空指针
+ * child.GetWorldPosition();  // 未定义行为，可能崩溃！
+ * 
+ * // ❌ 错误：使用 std::vector 可能导致地址改变
+ * std::vector<Transform> transforms;
+ * transforms.emplace_back();  // transforms[0]
+ * Transform child;
+ * child.SetParent(&transforms[0]);
+ * transforms.emplace_back();  // 可能触发重新分配，transforms[0] 地址改变！
+ * child.GetWorldPosition();   // 未定义行为！
+ * @endcode
  */
 class Transform {
     // 确保正确的内存对齐以使用 Eigen 的 SIMD 优化
@@ -33,6 +120,12 @@ public:
      */
     Transform(const Vector3& position, const Quaternion& rotation = Quaternion::Identity(), 
               const Vector3& scale = Vector3::Ones());
+    
+    // 禁用拷贝和移动（因为包含 std::atomic 和 std::recursive_mutex，它们都不可拷贝不可移动）
+    Transform(const Transform&) = delete;
+    Transform& operator=(const Transform&) = delete;
+    Transform(Transform&&) = delete;
+    Transform& operator=(Transform&&) = delete;
     
     // ========================================================================
     // 位置操作
@@ -76,6 +169,15 @@ public:
      * @brief 批量变换点从本地空间到世界空间
      * @param localPoints 本地空间的点数组
      * @param worldPoints 输出的世界空间点数组
+     * 
+     * @note 性能优化：
+     * - 当点数量 > 5000 时，自动使用 OpenMP 并行加速（如果可用）
+     * - 批量操作比单个调用 TransformPoint 效率高得多
+     * 
+     * @warning 线程安全：
+     * - worldPoints 会被修改（resize 和写入）
+     * - 调用者必须确保 worldPoints 不被多个线程并发访问
+     * - 如果多线程调用此方法，每个线程应使用独立的输出向量
      */
     void TransformPoints(const std::vector<Vector3>& localPoints, 
                         std::vector<Vector3>& worldPoints) const;
@@ -84,6 +186,15 @@ public:
      * @brief 批量变换方向从本地空间到世界空间
      * @param localDirections 本地空间的方向数组
      * @param worldDirections 输出的世界空间方向数组
+     * 
+     * @note 性能优化：
+     * - 当方向数量 > 5000 时，自动使用 OpenMP 并行加速（如果可用）
+     * - 批量操作比单个调用 TransformDirection 效率高得多
+     * 
+     * @warning 线程安全：
+     * - worldDirections 会被修改（resize 和写入）
+     * - 调用者必须确保 worldDirections 不被多个线程并发访问
+     * - 如果多线程调用此方法，每个线程应使用独立的输出向量
      */
     void TransformDirections(const std::vector<Vector3>& localDirections,
                             std::vector<Vector3>& worldDirections) const;
@@ -240,6 +351,28 @@ public:
     /**
      * @brief 设置父变换
      * @param parent 父变换指针（nullptr 表示无父对象）
+     * 
+     * @note 安全检查：
+     * - 自动检测并拒绝自引用（parent == this）
+     * - 自动检测并拒绝循环引用（例如 A->B->C->A）
+     * - 检测父对象层级深度，拒绝超过 1000 层的层级
+     * - 检测失败时会产生警告日志，操作被拒绝
+     * 
+     * @warning 生命周期管理：
+     * - parent 是观察指针（non-owning），不负责生命周期管理
+     * - 调用者必须确保 parent 对象的生命周期长于或等于当前对象
+     * - 父对象销毁前应将子对象的父指针设为 nullptr
+     * 
+     * @example
+     * @code
+     * Transform parent, child;
+     * child.SetParent(&parent);  // 正确
+     * child.SetParent(&child);   // 错误：自引用，会被拒绝
+     * 
+     * // 正确的清理顺序
+     * child.SetParent(nullptr);  // 先解除父子关系
+     * // 然后可以安全销毁 parent
+     * @endcode
      */
     void SetParent(Transform* parent);
     
@@ -247,13 +380,17 @@ public:
      * @brief 获取父变换
      * @return 父变换指针（可能为 nullptr）
      */
-    Transform* GetParent() const { return m_parent; }
+    Transform* GetParent() const { 
+        return m_parent.load(std::memory_order_acquire); 
+    }
     
     /**
      * @brief 是否有父变换
      * @return 如果有父变换返回 true
      */
-    bool HasParent() const { return m_parent != nullptr; }
+    bool HasParent() const { 
+        return m_parent.load(std::memory_order_acquire) != nullptr; 
+    }
     
     // ========================================================================
     // 坐标变换
@@ -292,29 +429,24 @@ private:
     Quaternion m_rotation;   // 本地旋转
     Vector3 m_scale;         // 本地缩放
     
-    Transform* m_parent;     // 父变换（可选）
+    // 父变换指针（原子类型，保证多线程读写安全）
+    // 注意：这是观察指针（non-owning），不负责生命周期管理
+    // 调用者必须确保父对象的生命周期长于子对象
+    std::atomic<Transform*> m_parent;
     
     // 缓存系统：使用 dirty flag 避免重复计算
     mutable std::atomic<bool> m_dirtyLocal;  // 本地矩阵是否需要更新
     mutable std::atomic<bool> m_dirtyWorld;  // 世界矩阵是否需要更新
-    mutable std::atomic<bool> m_dirtyWorldTransform;  // 世界变换组件是否需要更新
     
     mutable Matrix4 m_localMatrix;   // 缓存的本地矩阵
     mutable Matrix4 m_worldMatrix;   // 缓存的世界矩阵
     
-    // 世界变换组件缓存（避免递归计算）
-    mutable Vector3 m_cachedWorldPosition;
-    mutable Quaternion m_cachedWorldRotation;
-    mutable Vector3 m_cachedWorldScale;
-    
     // 线程安全：使用递归互斥锁保护数据访问
     // 使用递归锁允许同一线程多次获取锁，避免在递归调用（如GetWorldPosition调用父对象的GetWorldPosition）时死锁
-    mutable std::recursive_mutex m_mutex;           // 主锁：保护基本成员变量
-    mutable std::mutex m_cacheMutex;      // 缓存锁：保护缓存变量（已废弃，保留以保持二进制兼容）
+    mutable std::recursive_mutex m_mutex;  // 主锁：保护基本成员变量
     
     void MarkDirty();
     void MarkDirtyNoLock();  // 无锁版本，供内部已加锁的方法调用
-    void UpdateWorldTransformCache() const;
 };
 
 } // namespace Render

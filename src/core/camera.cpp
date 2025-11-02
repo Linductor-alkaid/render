@@ -424,6 +424,27 @@ Ray Camera::ScreenToWorldRay(float screenX, float screenY,
     Matrix4 projection = GetProjectionMatrix();
     Matrix4 view = GetViewMatrix();
     
+    // 检查投影矩阵的可逆性
+    float projDet = projection.determinant();
+    if (std::abs(projDet) < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidState,
+            "Camera::ScreenToWorldRay: 投影矩阵不可逆（行列式接近零）"));
+        // 返回默认向前射线
+        Vector3 cameraPos = GetPosition();
+        Vector3 cameraForward = GetForward();
+        return Ray(cameraPos, cameraForward);
+    }
+    
+    // 检查视图矩阵的可逆性
+    float viewDet = view.determinant();
+    if (std::abs(viewDet) < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidState,
+            "Camera::ScreenToWorldRay: 视图矩阵不可逆（行列式接近零）"));
+        Vector3 cameraPos = GetPosition();
+        Vector3 cameraForward = GetForward();
+        return Ray(cameraPos, cameraForward);
+    }
+    
     // 计算逆矩阵
     Matrix4 invProj = projection.inverse();
     Matrix4 invView = view.inverse();
@@ -435,6 +456,16 @@ Ray Camera::ScreenToWorldRay(float screenX, float screenY,
     // 裁剪空间 -> 视图空间
     Vector4 viewNear = invProj * clipNear;
     Vector4 viewFar = invProj * clipFar;
+    
+    // 检查齐次坐标的有效性
+    if (std::abs(viewNear.w()) < MathUtils::EPSILON || std::abs(viewFar.w()) < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
+            "Camera::ScreenToWorldRay: 齐次坐标转换异常"));
+        Vector3 cameraPos = GetPosition();
+        Vector3 cameraForward = GetForward();
+        return Ray(cameraPos, cameraForward);
+    }
+    
     viewNear /= viewNear.w();
     viewFar /= viewFar.w();
     
@@ -444,8 +475,16 @@ Ray Camera::ScreenToWorldRay(float screenX, float screenY,
     
     Vector3 origin(worldNear.x(), worldNear.y(), worldNear.z());
     Vector3 target(worldFar.x(), worldFar.y(), worldFar.z());
-    Vector3 direction = (target - origin).normalized();
+    Vector3 direction = (target - origin);
     
+    // 检查方向向量的有效性
+    if (direction.squaredNorm() < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
+            "Camera::ScreenToWorldRay: 射线方向无效，使用相机前方向"));
+        return Ray(origin, GetForward());
+    }
+    
+    direction.normalize();
     return Ray(origin, direction);
 }
 
@@ -514,7 +553,16 @@ void Camera::UpdateViewMatrix() const {
     
     // 相机的视图矩阵是其世界变换矩阵的逆矩阵
     Matrix4 worldMatrix = m_transform.GetWorldMatrix();
-    m_viewMatrix = worldMatrix.inverse();
+    
+    // 检查世界矩阵的可逆性
+    float det = worldMatrix.determinant();
+    if (std::abs(det) < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidState,
+            "Camera::UpdateViewMatrix: 世界变换矩阵不可逆（行列式接近零），使用单位矩阵"));
+        m_viewMatrix = Matrix4::Identity();
+    } else {
+        m_viewMatrix = worldMatrix.inverse();
+    }
     
     // 使用原子操作更新脏标志
     m_viewDirty.store(false, std::memory_order_release);
@@ -536,25 +584,24 @@ void Camera::UpdateViewProjectionMatrix() const {
 // FirstPersonCameraController 实现
 // ============================================================================
 
-FirstPersonCameraController::FirstPersonCameraController(Camera* camera)
+FirstPersonCameraController::FirstPersonCameraController(Camera& camera)
     : CameraController(camera)
 {
     // 从相机当前旋转初始化偏航和俯仰角
-    Vector3 forward = camera->GetForward();
+    Vector3 forward = camera.GetForward();
     m_yaw = std::atan2(forward.x(), forward.z()) * MathUtils::RAD2DEG;
     m_pitch = std::asin(-forward.y()) * MathUtils::RAD2DEG;
 }
 
 void FirstPersonCameraController::Update(float deltaTime) {
-    if (!m_camera) return;
     
     // 计算移动方向
     Vector3 movement = Vector3::Zero();
     
-    if (m_moveForward) movement += m_camera->GetForward();
-    if (m_moveBackward) movement -= m_camera->GetForward();
-    if (m_moveRight) movement += m_camera->GetRight();
-    if (m_moveLeft) movement -= m_camera->GetRight();
+    if (m_moveForward) movement += m_camera.GetForward();
+    if (m_moveBackward) movement -= m_camera.GetForward();
+    if (m_moveRight) movement += m_camera.GetRight();
+    if (m_moveLeft) movement -= m_camera.GetRight();
     if (m_moveUp) movement += Vector3::UnitY();
     if (m_moveDown) movement -= Vector3::UnitY();
     
@@ -562,12 +609,11 @@ void FirstPersonCameraController::Update(float deltaTime) {
     if (movement.squaredNorm() > MathUtils::EPSILON) {
         movement.normalize();
         movement *= m_moveSpeed * deltaTime;
-        m_camera->TranslateWorld(movement);
+        m_camera.TranslateWorld(movement);
     }
 }
 
 void FirstPersonCameraController::OnMouseMove(float deltaX, float deltaY) {
-    if (!m_camera) return;
     
     // 更新旋转角度（调换左右方向）
     m_yaw -= deltaX * m_mouseSensitivity;  // 将+改为-，调换左右旋转方向
@@ -578,7 +624,7 @@ void FirstPersonCameraController::OnMouseMove(float deltaX, float deltaY) {
     
     // 将欧拉角转换为四元数
     Quaternion rotation = MathUtils::FromEulerDegrees(m_pitch, m_yaw, 0.0f);
-    m_camera->SetRotation(rotation);
+    m_camera.SetRotation(rotation);
 }
 
 void FirstPersonCameraController::OnMouseScroll(float delta) {
@@ -591,20 +637,18 @@ void FirstPersonCameraController::OnMouseScroll(float delta) {
 // OrbitCameraController 实现
 // ============================================================================
 
-OrbitCameraController::OrbitCameraController(Camera* camera, const Vector3& target)
+OrbitCameraController::OrbitCameraController(Camera& camera, const Vector3& target)
     : CameraController(camera)
     , m_target(target)
 {
     // 从当前相机位置计算初始距离和角度
-    if (camera) {
-        Vector3 cameraPos = camera->GetPosition();
-        Vector3 offset = cameraPos - m_target;
-        m_distance = offset.norm();
-        
-        if (m_distance > MathUtils::EPSILON) {
-            m_yaw = std::atan2(offset.x(), offset.z()) * MathUtils::RAD2DEG;
-            m_pitch = std::asin(offset.y() / m_distance) * MathUtils::RAD2DEG;
-        }
+    Vector3 cameraPos = camera.GetPosition();
+    Vector3 offset = cameraPos - m_target;
+    m_distance = offset.norm();
+    
+    if (m_distance > MathUtils::EPSILON) {
+        m_yaw = std::atan2(offset.x(), offset.z()) * MathUtils::RAD2DEG;
+        m_pitch = std::asin(offset.y() / m_distance) * MathUtils::RAD2DEG;
     }
 }
 
@@ -613,8 +657,6 @@ void OrbitCameraController::Update(float deltaTime) {
 }
 
 void OrbitCameraController::OnMouseMove(float deltaX, float deltaY) {
-    if (!m_camera) return;
-    
     // 更新旋转角度（调换左右方向）
     m_yaw -= deltaX * m_mouseSensitivity;  // 将+改为-，调换左右旋转方向
     m_pitch -= deltaY * m_mouseSensitivity;
@@ -627,7 +669,6 @@ void OrbitCameraController::OnMouseMove(float deltaX, float deltaY) {
 }
 
 void OrbitCameraController::OnMouseScroll(float delta) {
-    if (!m_camera) return;
     
     // 缩放距离
     m_distance -= delta * m_zoomSensitivity;
@@ -648,8 +689,6 @@ void OrbitCameraController::SetDistance(float distance) {
 }
 
 void OrbitCameraController::UpdateCameraPosition() {
-    if (!m_camera) return;
-    
     // 计算相机位置
     float yawRad = m_yaw * MathUtils::DEG2RAD;
     float pitchRad = m_pitch * MathUtils::DEG2RAD;
@@ -660,24 +699,21 @@ void OrbitCameraController::UpdateCameraPosition() {
         m_distance * std::cos(pitchRad) * std::cos(yawRad)
     );
     
-    m_camera->SetPosition(m_target + offset);
-    m_camera->LookAt(m_target);
+    m_camera.SetPosition(m_target + offset);
+    m_camera.LookAt(m_target);
 }
 
 // ============================================================================
 // ThirdPersonCameraController 实现
 // ============================================================================
 
-ThirdPersonCameraController::ThirdPersonCameraController(Camera* camera)
+ThirdPersonCameraController::ThirdPersonCameraController(Camera& camera)
     : CameraController(camera)
 {
-    if (camera) {
-        m_currentPosition = camera->GetPosition();
-    }
+    m_currentPosition = camera.GetPosition();
 }
 
 void ThirdPersonCameraController::Update(float deltaTime) {
-    if (!m_camera) return;
     
     UpdateCameraPosition(deltaTime);
 }
@@ -706,8 +742,6 @@ void ThirdPersonCameraController::SetDistance(float distance) {
 }
 
 void ThirdPersonCameraController::UpdateCameraPosition(float deltaTime) {
-    if (!m_camera) return;
-    
     // 计算目标位置（带偏移）
     Vector3 targetPos = m_target + m_offset;
     
@@ -728,8 +762,8 @@ void ThirdPersonCameraController::UpdateCameraPosition(float deltaTime) {
     m_currentPosition = MathUtils::Lerp(m_currentPosition, desiredPosition, smoothFactor);
     
     // 更新相机
-    m_camera->SetPosition(m_currentPosition);
-    m_camera->LookAt(targetPos);
+    m_camera.SetPosition(m_currentPosition);
+    m_camera.LookAt(targetPos);
 }
 
 } // namespace Render

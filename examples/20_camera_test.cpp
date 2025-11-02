@@ -76,19 +76,19 @@ int main(int argc, char* argv[]) {
     camera.SetPosition(Vector3(0.0f, 10.0f, 20.0f));  // 更高更远的初始位置，方便观察模型
     camera.LookAt(Vector3(0.0f, 8.0f, 0.0f));  // 朝向模型的头部位置
     
-    // 创建相机控制器
+    // 创建相机控制器（使用引用，而不是指针）
     CameraMode currentMode = CameraMode::FirstPerson;
     std::unique_ptr<CameraController> controller;
     
-    auto firstPersonController = std::make_unique<FirstPersonCameraController>(&camera);
+    auto firstPersonController = std::make_unique<FirstPersonCameraController>(camera);
     firstPersonController->SetMoveSpeed(10.0f);
     firstPersonController->SetMouseSensitivity(0.15f);  // 鼠标灵敏度保持不变，但方向会在控制器内部调换
     
-    auto orbitController = std::make_unique<OrbitCameraController>(&camera, Vector3::Zero());
+    auto orbitController = std::make_unique<OrbitCameraController>(camera, Vector3::Zero());
     orbitController->SetDistance(15.0f);
     orbitController->SetMouseSensitivity(0.3f);
     
-    auto thirdPersonController = std::make_unique<ThirdPersonCameraController>(&camera);
+    auto thirdPersonController = std::make_unique<ThirdPersonCameraController>(camera);
     thirdPersonController->SetTarget(Vector3::Zero());
     thirdPersonController->SetDistance(10.0f);
     thirdPersonController->SetSmoothness(0.05f);
@@ -231,7 +231,7 @@ int main(int argc, char* argv[]) {
                     case SDLK_1:
                         Logger::GetInstance().Info("切换到第一人称相机模式");
                         currentMode = CameraMode::FirstPerson;
-                        firstPersonController = std::make_unique<FirstPersonCameraController>(&camera);
+                        firstPersonController = std::make_unique<FirstPersonCameraController>(camera);
                         firstPersonController->SetMoveSpeed(10.0f);
                         firstPersonController->SetMouseSensitivity(0.15f);
                         controller = std::move(firstPersonController);
@@ -240,7 +240,7 @@ int main(int argc, char* argv[]) {
                     case SDLK_2:
                         Logger::GetInstance().Info("切换到轨道相机模式");
                         currentMode = CameraMode::Orbit;
-                        orbitController = std::make_unique<OrbitCameraController>(&camera, Vector3::Zero());
+                        orbitController = std::make_unique<OrbitCameraController>(camera, Vector3::Zero());
                         orbitController->SetDistance(15.0f);
                         orbitController->SetMouseSensitivity(0.3f);
                         controller = std::move(orbitController);
@@ -249,7 +249,7 @@ int main(int argc, char* argv[]) {
                     case SDLK_3:
                         Logger::GetInstance().Info("切换到第三人称相机模式");
                         currentMode = CameraMode::ThirdPerson;
-                        thirdPersonController = std::make_unique<ThirdPersonCameraController>(&camera);
+                        thirdPersonController = std::make_unique<ThirdPersonCameraController>(camera);
                         thirdPersonController->SetTarget(Vector3::Zero());
                         thirdPersonController->SetDistance(10.0f);
                         thirdPersonController->SetSmoothness(0.05f);

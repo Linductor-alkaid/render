@@ -11,13 +11,9 @@ Transform::Transform()
     : m_position(Vector3::Zero())
     , m_rotation(Quaternion::Identity())
     , m_scale(Vector3::Ones())
-    , m_parent(nullptr)
+    , m_parent(nullptr)  // 原子类型可以用 nullptr 初始化
     , m_dirtyLocal(true)
     , m_dirtyWorld(true)
-    , m_dirtyWorldTransform(true)
-    , m_cachedWorldPosition(Vector3::Zero())
-    , m_cachedWorldRotation(Quaternion::Identity())
-    , m_cachedWorldScale(Vector3::Ones())
 {
 }
 
@@ -25,13 +21,9 @@ Transform::Transform(const Vector3& position, const Quaternion& rotation, const 
     : m_position(position)
     , m_rotation(rotation)
     , m_scale(scale)
-    , m_parent(nullptr)
+    , m_parent(nullptr)  // 原子类型可以用 nullptr 初始化
     , m_dirtyLocal(true)
     , m_dirtyWorld(true)
-    , m_dirtyWorldTransform(true)
-    , m_cachedWorldPosition(position)
-    , m_cachedWorldRotation(rotation)
-    , m_cachedWorldScale(scale)
 {
 }
 
@@ -49,11 +41,13 @@ Vector3 Transform::GetWorldPosition() const {
     // 使用递归锁，允许在持锁状态下递归调用父对象的方法
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    if (m_parent) {
+    // 使用原子操作读取父指针
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
         // 递归调用父对象方法（父对象有自己的递归锁）
-        Vector3 parentPos = m_parent->GetWorldPosition();
-        Quaternion parentRot = m_parent->GetWorldRotation();
-        Vector3 parentScale = m_parent->GetWorldScale();
+        Vector3 parentPos = parent->GetWorldPosition();
+        Quaternion parentRot = parent->GetWorldRotation();
+        Vector3 parentScale = parent->GetWorldScale();
         
         Vector3 scaledPos(
             m_position.x() * parentScale.x(),
@@ -77,8 +71,9 @@ void Transform::TranslateWorld(const Vector3& translation) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     Vector3 localTranslation;
-    if (m_parent) {
-        localTranslation = m_parent->InverseTransformDirection(translation);
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        localTranslation = parent->InverseTransformDirection(translation);
     } else {
         localTranslation = translation;
     }
@@ -93,7 +88,24 @@ void Transform::TranslateWorld(const Vector3& translation) {
 
 void Transform::SetRotation(const Quaternion& rotation) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    m_rotation = rotation.normalized();
+    
+    // 检查四元数的模长，避免零四元数导致除零错误
+    float norm = rotation.norm();
+    if (norm < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::SetRotation: 四元数接近零向量，使用单位四元数替代"));
+        m_rotation = Quaternion::Identity();
+    } else {
+        // 手动归一化：访问系数并除以模长
+        float invNorm = 1.0f / norm;
+        m_rotation = Quaternion(
+            rotation.w() * invNorm,
+            rotation.x() * invNorm,
+            rotation.y() * invNorm,
+            rotation.z() * invNorm
+        );
+    }
+    
     MarkDirtyNoLock();
 }
 
@@ -123,22 +135,66 @@ Quaternion Transform::GetWorldRotation() const {
     // 使用递归锁，允许在持锁状态下递归调用父对象的方法
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    if (m_parent) {
-        return m_parent->GetWorldRotation() * m_rotation;
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        return parent->GetWorldRotation() * m_rotation;
     }
     return m_rotation;
 }
 
 void Transform::Rotate(const Quaternion& rotation) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    m_rotation = (m_rotation * rotation).normalized();
+    
+    // 应用旋转增量
+    Quaternion newRotation = m_rotation * rotation;
+    
+    // 检查结果四元数的模长
+    float norm = newRotation.norm();
+    if (norm < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::Rotate: 旋转结果异常，保持原旋转"));
+        return;
+    }
+    
+    // 手动归一化
+    float invNorm = 1.0f / norm;
+    m_rotation = Quaternion(
+        newRotation.w() * invNorm,
+        newRotation.x() * invNorm,
+        newRotation.y() * invNorm,
+        newRotation.z() * invNorm
+    );
     MarkDirtyNoLock();
 }
 
 void Transform::RotateAround(const Vector3& axis, float angle) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    Quaternion rot = MathUtils::AngleAxis(angle, axis);
-    m_rotation = (m_rotation * rot).normalized();
+    
+    // 检查旋转轴是否有效
+    if (axis.squaredNorm() < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::RotateAround: 旋转轴接近零向量，操作被忽略"));
+        return;
+    }
+    
+    Quaternion rot = MathUtils::AngleAxis(angle, axis.normalized());
+    Quaternion newRotation = m_rotation * rot;
+    
+    float norm = newRotation.norm();
+    if (norm < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::RotateAround: 旋转结果异常，保持原旋转"));
+        return;
+    }
+    
+    // 手动归一化
+    float invNorm = 1.0f / norm;
+    m_rotation = Quaternion(
+        newRotation.w() * invNorm,
+        newRotation.x() * invNorm,
+        newRotation.y() * invNorm,
+        newRotation.z() * invNorm
+    );
     MarkDirtyNoLock();
 }
 
@@ -146,15 +202,68 @@ void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
     // 使用递归锁，在持锁状态下安全访问父对象
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    Quaternion rot = MathUtils::AngleAxis(angle, axis);
+    // 检查旋转轴是否有效
+    if (axis.squaredNorm() < MathUtils::EPSILON) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::RotateAroundWorld: 旋转轴接近零向量，操作被忽略"));
+        return;
+    }
     
-    if (m_parent) {
-        Quaternion parentRot = m_parent->GetWorldRotation();
+    Quaternion rot = MathUtils::AngleAxis(angle, axis.normalized());
+    
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        Quaternion parentRot = parent->GetWorldRotation();
         Quaternion worldRot = parentRot * m_rotation;
-        worldRot = (rot * worldRot).normalized();
-        m_rotation = (parentRot.inverse() * worldRot).normalized();
+        worldRot = rot * worldRot;
+        
+        float worldNorm = worldRot.norm();
+        if (worldNorm < MathUtils::EPSILON) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                "Transform::RotateAroundWorld: 世界旋转结果异常，保持原旋转"));
+            return;
+        }
+        // 手动归一化世界旋转
+        float invWorldNorm = 1.0f / worldNorm;
+        worldRot = Quaternion(
+            worldRot.w() * invWorldNorm,
+            worldRot.x() * invWorldNorm,
+            worldRot.y() * invWorldNorm,
+            worldRot.z() * invWorldNorm
+        );
+        
+        Quaternion localRot = parentRot.inverse() * worldRot;
+        float localNorm = localRot.norm();
+        if (localNorm < MathUtils::EPSILON) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                "Transform::RotateAroundWorld: 本地旋转结果异常，保持原旋转"));
+            return;
+        }
+        
+        // 手动归一化本地旋转
+        float invLocalNorm = 1.0f / localNorm;
+        m_rotation = Quaternion(
+            localRot.w() * invLocalNorm,
+            localRot.x() * invLocalNorm,
+            localRot.y() * invLocalNorm,
+            localRot.z() * invLocalNorm
+        );
     } else {
-        m_rotation = (rot * m_rotation).normalized();
+        Quaternion newRotation = rot * m_rotation;
+        float norm = newRotation.norm();
+        if (norm < MathUtils::EPSILON) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                "Transform::RotateAroundWorld: 旋转结果异常，保持原旋转"));
+            return;
+        }
+        // 手动归一化
+        float invNorm = 1.0f / norm;
+        m_rotation = Quaternion(
+            newRotation.w() * invNorm,
+            newRotation.x() * invNorm,
+            newRotation.y() * invNorm,
+            newRotation.z() * invNorm
+        );
     }
     
     MarkDirtyNoLock();
@@ -174,8 +283,9 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
     
     Quaternion lookRotation = MathUtils::LookRotation(direction, up);
     
-    if (m_parent) {
-        Quaternion parentRot = m_parent->GetWorldRotation();
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        Quaternion parentRot = parent->GetWorldRotation();
         m_rotation = parentRot.inverse() * lookRotation;
     } else {
         m_rotation = lookRotation;
@@ -204,8 +314,9 @@ Vector3 Transform::GetWorldScale() const {
     // 使用递归锁，允许在持锁状态下递归调用父对象的方法
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    if (m_parent) {
-        Vector3 parentScale = m_parent->GetWorldScale();
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        Vector3 parentScale = parent->GetWorldScale();
         return Vector3(
             m_scale.x() * parentScale.x(),
             m_scale.y() * parentScale.y(),
@@ -250,8 +361,9 @@ Matrix4 Transform::GetWorldMatrix() const {
     
     Matrix4 localMat = GetLocalMatrix();
     
-    if (m_parent) {
-        Matrix4 parentWorldMat = m_parent->GetWorldMatrix();
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        Matrix4 parentWorldMat = parent->GetWorldMatrix();
         return parentWorldMat * localMat;
     }
     return localMat;
@@ -270,11 +382,44 @@ void Transform::SetFromMatrix(const Matrix4& matrix) {
 void Transform::SetParent(Transform* parent) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    if (m_parent == parent) {
+    Transform* currentParent = m_parent.load(std::memory_order_acquire);
+    if (currentParent == parent) {
         return;
     }
     
-    m_parent = parent;
+    // 检查自引用
+    if (parent == this) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::SetParent: 不能将自己设置为父对象"));
+        return;
+    }
+    
+    // 检查循环引用（遍历祖先链）
+    if (parent != nullptr) {
+        Transform* ancestor = parent;
+        int depth = 0;
+        const int MAX_DEPTH = 1000;  // 防止无限循环，同时限制层级深度
+        
+        while (ancestor != nullptr && depth < MAX_DEPTH) {
+            if (ancestor == this) {
+                HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                    "Transform::SetParent: 检测到循环引用，操作被拒绝"));
+                return;
+            }
+            // 原子读取祖先的父指针
+            ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+            depth++;
+        }
+        
+        if (depth >= MAX_DEPTH) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange,
+                "Transform::SetParent: 父对象层级过深（超过1000层），操作被拒绝"));
+            return;
+        }
+    }
+    
+    // 使用原子操作存储父指针
+    m_parent.store(parent, std::memory_order_release);
     MarkDirtyNoLock();
 }
 
@@ -319,18 +464,12 @@ void Transform::MarkDirty() {
     // 使用原子操作标记为脏（无需加锁）
     m_dirtyLocal.store(true, std::memory_order_release);
     m_dirtyWorld.store(true, std::memory_order_release);
-    m_dirtyWorldTransform.store(true, std::memory_order_release);
 }
 
 void Transform::MarkDirtyNoLock() {
     // 内部版本：假设调用者已经持有锁
     m_dirtyLocal.store(true, std::memory_order_release);
     m_dirtyWorld.store(true, std::memory_order_release);
-    m_dirtyWorldTransform.store(true, std::memory_order_release);
-}
-
-void Transform::UpdateWorldTransformCache() const {
-    // 此方法已废弃，保留空实现以保持二进制兼容
 }
 
 // ============================================================================
