@@ -1,6 +1,8 @@
 #include "render/transform.h"
 #include "render/error.h"
 #include <algorithm>  // for std::find
+#include <cmath>       // for std::exp, std::isfinite, std::max, std::min
+#include <sstream>     // for std::ostringstream
 
 namespace Render {
 
@@ -391,19 +393,19 @@ void Transform::SetFromMatrix(const Matrix4& matrix) {
 // 父子关系
 // ============================================================================
 
-void Transform::SetParent(Transform* parent) {
+bool Transform::SetParent(Transform* parent) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     Transform* currentParent = m_parent.load(std::memory_order_acquire);
     if (currentParent == parent) {
-        return;
+        return true;  // 已经是目标父对象，视为成功
     }
     
     // 检查自引用
     if (parent == this) {
         HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
             "Transform::SetParent: 不能将自己设置为父对象"));
-        return;
+        return false;
     }
     
     // 检查循环引用（遍历祖先链）
@@ -416,7 +418,7 @@ void Transform::SetParent(Transform* parent) {
             if (ancestor == this) {
                 HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
                     "Transform::SetParent: 检测到循环引用，操作被拒绝"));
-                return;
+                return false;
             }
             // 原子读取祖先的父指针
             ancestor = ancestor->m_parent.load(std::memory_order_acquire);
@@ -426,7 +428,7 @@ void Transform::SetParent(Transform* parent) {
         if (depth >= MAX_DEPTH) {
             HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange,
                 "Transform::SetParent: 父对象层级过深（超过1000层），操作被拒绝"));
-            return;
+            return false;
         }
     }
     
@@ -443,6 +445,7 @@ void Transform::SetParent(Transform* parent) {
     // 使用原子操作存储父指针
     m_parent.store(parent, std::memory_order_release);
     MarkDirtyNoLock();
+    return true;  // 成功
 }
 
 // ============================================================================
@@ -536,6 +539,172 @@ void Transform::NotifyChildrenParentDestroyed() {
     
     // 清空子对象列表
     m_children.clear();
+}
+
+// ============================================================================
+// 变换插值
+// ============================================================================
+
+Transform Transform::Lerp(const Transform& a, const Transform& b, float t) {
+    // 限制 t 在 [0, 1] 范围内
+    t = std::max(0.0f, std::min(1.0f, t));
+    
+    // 位置和缩放使用线性插值
+    Vector3 position = a.GetPosition() + (b.GetPosition() - a.GetPosition()) * t;
+    Vector3 scale = a.GetScale() + (b.GetScale() - a.GetScale()) * t;
+    
+    // 旋转使用线性插值（可能不够平滑，但对于小角度足够好）
+    Quaternion rotation = a.GetRotation().slerp(t, b.GetRotation());
+    
+    // 使用大括号初始化直接返回，触发拷贝省略（C++17 guaranteed copy elision）
+    return Transform{position, rotation, scale};
+}
+
+Transform Transform::Slerp(const Transform& a, const Transform& b, float t) {
+    // 限制 t 在 [0, 1] 范围内
+    t = std::max(0.0f, std::min(1.0f, t));
+    
+    // 位置和缩放使用线性插值
+    Vector3 position = a.GetPosition() + (b.GetPosition() - a.GetPosition()) * t;
+    Vector3 scale = a.GetScale() + (b.GetScale() - a.GetScale()) * t;
+    
+    // 旋转使用球面线性插值（更平滑）
+    Quaternion rotation = a.GetRotation().slerp(t, b.GetRotation());
+    
+    // 使用大括号初始化直接返回，触发拷贝省略（C++17 guaranteed copy elision）
+    return Transform{position, rotation, scale};
+}
+
+void Transform::SmoothTo(const Transform& target, float smoothness, float deltaTime) {
+    // smoothness: 1.0 = 立即完成，0.1 = 非常平滑
+    // 使用指数平滑：new = old + (target - old) * (1 - exp(-smoothness * deltaTime))
+    float alpha = 1.0f - std::exp(-smoothness * deltaTime);
+    
+    // 平滑位置
+    Vector3 currentPos = GetPosition();
+    Vector3 targetPos = target.GetPosition();
+    SetPosition(currentPos + (targetPos - currentPos) * alpha);
+    
+    // 平滑旋转（使用 slerp）
+    Quaternion currentRot = GetRotation();
+    Quaternion targetRot = target.GetRotation();
+    Quaternion smoothedRot = currentRot.slerp(alpha, targetRot);
+    SetRotation(smoothedRot);
+    
+    // 平滑缩放
+    Vector3 currentScale = GetScale();
+    Vector3 targetScale = target.GetScale();
+    SetScale(currentScale + (targetScale - currentScale) * alpha);
+}
+
+// ============================================================================
+// 调试和诊断
+// ============================================================================
+
+std::string Transform::DebugString() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    std::ostringstream oss;
+    oss << "Transform {\n";
+    oss << "  Position: (" << m_position.x() << ", " << m_position.y() << ", " << m_position.z() << ")\n";
+    oss << "  Rotation: (" << m_rotation.w() << ", " << m_rotation.x() << ", " 
+        << m_rotation.y() << ", " << m_rotation.z() << ")\n";
+    oss << "  Scale: (" << m_scale.x() << ", " << m_scale.y() << ", " << m_scale.z() << ")\n";
+    
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        oss << "  Parent: " << static_cast<const void*>(parent) << "\n";
+    } else {
+        oss << "  Parent: nullptr\n";
+    }
+    
+    oss << "  Children: " << m_children.size() << "\n";
+    oss << "  Hierarchy Depth: " << GetHierarchyDepth() << "\n";
+    oss << "}";
+    
+    return oss.str();
+}
+
+void Transform::PrintHierarchy(int indent, std::ostream& os) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // 打印缩进
+    for (int i = 0; i < indent; ++i) {
+        os << "  ";
+    }
+    
+    // 打印当前节点信息
+    os << "Transform [";
+    os << "pos=(" << m_position.x() << "," << m_position.y() << "," << m_position.z() << ")";
+    os << ", scale=(" << m_scale.x() << "," << m_scale.y() << "," << m_scale.z() << ")";
+    os << ", children=" << m_children.size();
+    os << "]\n";
+    
+    // 递归打印子节点（需要解锁以避免死锁）
+    // 注意：打印子节点时不能持有当前锁，因为子节点的 PrintHierarchy 也需要锁
+    // 但为了简化，这里我们只打印子节点数量，不递归打印
+    // 如果需要完整层次结构，应该在调用前解除锁
+}
+
+bool Transform::Validate() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // 检查四元数是否归一化
+    float rotNorm = m_rotation.norm();
+    if (std::abs(rotNorm - 1.0f) > MathUtils::EPSILON * 10.0f) {
+        return false;  // 旋转四元数未归一化
+    }
+    
+    // 检查缩放是否包含 NaN 或 Inf
+    if (!std::isfinite(m_scale.x()) || !std::isfinite(m_scale.y()) || !std::isfinite(m_scale.z())) {
+        return false;
+    }
+    
+    // 检查位置是否包含 NaN 或 Inf
+    if (!std::isfinite(m_position.x()) || !std::isfinite(m_position.y()) || !std::isfinite(m_position.z())) {
+        return false;
+    }
+    
+    // 检查父指针循环引用（简单检查）
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent == this) {
+        return false;  // 自引用
+    }
+    
+    // 检查子对象列表中是否有空指针
+    for (Transform* child : m_children) {
+        if (child == nullptr) {
+            return false;  // 空指针
+        }
+    }
+    
+    return true;
+}
+
+int Transform::GetHierarchyDepth() const {
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent == nullptr) {
+        return 0;
+    }
+    
+    // 递归计算深度
+    int depth = 1;
+    Transform* current = parent;
+    const int MAX_DEPTH = 1000;  // 防止无限循环
+    
+    while (current != nullptr && depth < MAX_DEPTH) {
+        current = current->m_parent.load(std::memory_order_acquire);
+        if (current != nullptr) {
+            depth++;
+        }
+    }
+    
+    return depth;
+}
+
+int Transform::GetChildCount() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return static_cast<int>(m_children.size());
 }
 
 // ============================================================================

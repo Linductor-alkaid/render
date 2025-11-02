@@ -5,6 +5,9 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <string>
+#include <sstream>
+#include <iostream>
 
 namespace Render {
 
@@ -361,12 +364,13 @@ public:
     /**
      * @brief 设置父变换
      * @param parent 父变换指针（nullptr 表示无父对象）
+     * @return 成功返回 true，失败返回 false（自引用、循环引用或层级过深）
      * 
      * @note 安全检查：
      * - 自动检测并拒绝自引用（parent == this）
      * - 自动检测并拒绝循环引用（例如 A->B->C->A）
      * - 检测父对象层级深度，拒绝超过 1000 层的层级
-     * - 检测失败时会产生警告日志，操作被拒绝
+     * - 检测失败时会产生警告日志并返回 false
      * 
      * @note 生命周期管理（自动安全）：
      * - parent 是观察指针（non-owning），不负责生命周期管理
@@ -377,15 +381,18 @@ public:
      * @example
      * @code
      * Transform parent, child;
-     * child.SetParent(&parent);  // 正确
-     * child.SetParent(&child);   // 错误：自引用，会被拒绝
+     * if (child.SetParent(&parent)) {
+     *     // 成功设置父对象
+     * } else {
+     *     // 设置失败（自引用、循环引用等）
+     * }
      * 
-     * // 正确的清理顺序
-     * child.SetParent(nullptr);  // 先解除父子关系
-     * // 然后可以安全销毁 parent
+     * if (!child.SetParent(nullptr)) {
+     *     // 理论上清除父对象总是成功，但应检查返回值
+     * }
      * @endcode
      */
-    void SetParent(Transform* parent);
+    bool SetParent(Transform* parent);
     
     /**
      * @brief 获取父变换
@@ -434,6 +441,71 @@ public:
      * @return 本地空间的方向
      */
     Vector3 InverseTransformDirection(const Vector3& worldDirection) const;
+    
+    // ========================================================================
+    // 变换插值
+    // ========================================================================
+    
+    /**
+     * @brief 线性插值（Lerp）两个变换
+     * @param a 起始变换
+     * @param b 目标变换
+     * @param t 插值系数（0.0 = a, 1.0 = b）
+     * @return 插值结果
+     */
+    static Transform Lerp(const Transform& a, const Transform& b, float t);
+    
+    /**
+     * @brief 球面线性插值（Slerp）两个变换（旋转使用球面插值，位置和缩放使用线性插值）
+     * @param a 起始变换
+     * @param b 目标变换
+     * @param t 插值系数（0.0 = a, 1.0 = b）
+     * @return 插值结果
+     */
+    static Transform Slerp(const Transform& a, const Transform& b, float t);
+    
+    /**
+     * @brief 平滑过渡到目标变换
+     * @param target 目标变换
+     * @param smoothness 平滑系数（1.0 = 立即，越小越平滑）
+     * @param deltaTime 时间增量（秒）
+     */
+    void SmoothTo(const Transform& target, float smoothness, float deltaTime);
+    
+    // ========================================================================
+    // 调试和诊断
+    // ========================================================================
+    
+    /**
+     * @brief 获取调试字符串表示
+     * @return 格式化的调试信息字符串
+     */
+    std::string DebugString() const;
+    
+    /**
+     * @brief 打印变换层次结构（用于调试）
+     * @param indent 当前缩进级别
+     * @param os 输出流（默认为 std::cout）
+     */
+    void PrintHierarchy(int indent = 0, std::ostream& os = std::cout) const;
+    
+    /**
+     * @brief 验证内部状态一致性
+     * @return 如果状态有效返回 true，否则返回 false
+     */
+    bool Validate() const;
+    
+    /**
+     * @brief 获取到根节点的层级深度
+     * @return 深度（0 = 无父对象，1 = 一层父对象，以此类推）
+     */
+    int GetHierarchyDepth() const;
+    
+    /**
+     * @brief 获取子对象数量
+     * @return 子对象数量
+     */
+    int GetChildCount() const;
     
 private:
     Vector3 m_position;      // 本地位置

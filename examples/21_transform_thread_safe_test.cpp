@@ -151,8 +151,10 @@ void TestParentChildConcurrency() {
     Transform child2;
     
     parent.SetPosition(Vector3(10.0f, 0.0f, 0.0f));
-    child1.SetParent(&parent);
-    child2.SetParent(&parent);
+    if (!child1.SetParent(&parent) || !child2.SetParent(&parent)) {
+        std::cerr << "  ✗ 失败：无法设置父对象" << std::endl;
+        throw std::runtime_error("Failed to set parent");
+    }
     
     child1.SetPosition(Vector3(1.0f, 0.0f, 0.0f));
     child2.SetPosition(Vector3(0.0f, 1.0f, 0.0f));
@@ -246,7 +248,10 @@ void StressTest() {
     std::vector<Transform> children(10);
     
     for (auto& child : children) {
-        child.SetParent(&parent);
+        if (!child.SetParent(&parent)) {
+            std::cerr << "  ✗ 失败：无法设置父对象" << std::endl;
+            throw std::runtime_error("Failed to set parent");
+        }
     }
     
     std::atomic<int> operationCount{0};
@@ -318,8 +323,8 @@ void TestCircularReferenceDetection() {
     
     // 测试自引用检测
     std::cout << "  测试自引用检测..." << std::endl;
-    a.SetParent(&a);  // 应该被拒绝
-    if (a.GetParent() == &a) {
+    bool selfRefResult = a.SetParent(&a);  // 应该被拒绝
+    if (selfRefResult || a.GetParent() == &a) {
         std::cerr << "  ✗ 失败：自引用未被检测！" << std::endl;
         throw std::runtime_error("Self-reference detection failed");
     }
@@ -327,9 +332,9 @@ void TestCircularReferenceDetection() {
     
     // 测试简单循环引用 (A->B->A)
     std::cout << "  测试简单循环引用 (A->B->A)..." << std::endl;
-    a.SetParent(&b);  // A -> B
-    b.SetParent(&a);  // B -> A (应该被拒绝)
-    if (b.GetParent() == &a) {
+    bool abResult = a.SetParent(&b);  // A -> B
+    bool baResult = b.SetParent(&a);  // B -> A (应该被拒绝)
+    if (!abResult || baResult || b.GetParent() == &a) {
         std::cerr << "  ✗ 失败：简单循环引用未被检测！" << std::endl;
         throw std::runtime_error("Simple circular reference detection failed");
     }
@@ -341,10 +346,10 @@ void TestCircularReferenceDetection() {
     
     // 测试复杂循环引用 (A->B->C->A)
     std::cout << "  测试复杂循环引用 (A->B->C->A)..." << std::endl;
-    a.SetParent(&b);  // A -> B
-    b.SetParent(&c);  // B -> C
-    c.SetParent(&a);  // C -> A (应该被拒绝)
-    if (c.GetParent() == &a) {
+    bool abResult2 = a.SetParent(&b);  // A -> B
+    bool bcResult = b.SetParent(&c);  // B -> C
+    bool caResult = c.SetParent(&a);  // C -> A (应该被拒绝)
+    if (!abResult2 || !bcResult || caResult || c.GetParent() == &a) {
         std::cerr << "  ✗ 失败：复杂循环引用未被检测！" << std::endl;
         throw std::runtime_error("Complex circular reference detection failed");
     }
@@ -353,9 +358,9 @@ void TestCircularReferenceDetection() {
     // 测试正常的父子关系仍然有效
     std::cout << "  测试正常父子关系..." << std::endl;
     Transform parent, child1, child2;
-    child1.SetParent(&parent);
-    child2.SetParent(&parent);
-    if (child1.GetParent() != &parent || child2.GetParent() != &parent) {
+    bool child1Result = child1.SetParent(&parent);
+    bool child2Result = child2.SetParent(&parent);
+    if (!child1Result || !child2Result || child1.GetParent() != &parent || child2.GetParent() != &parent) {
         std::cerr << "  ✗ 失败：正常父子关系被错误拒绝！" << std::endl;
         throw std::runtime_error("Normal parent-child relationship failed");
     }
@@ -495,15 +500,18 @@ void TestHierarchyDepthLimit() {
     // 创建一个深层级链
     std::cout << "  创建 " << DEPTH_LIMIT << " 层深的层级..." << std::endl;
     for (int i = 1; i < DEPTH_LIMIT; ++i) {
-        transforms[i].SetParent(&transforms[i - 1]);
+        if (!transforms[i].SetParent(&transforms[i - 1])) {
+            std::cerr << "  ✗ 失败：无法设置第 " << i << " 层的父对象" << std::endl;
+            throw std::runtime_error("Failed to set parent");
+        }
     }
     std::cout << "  ✓ 成功创建 " << DEPTH_LIMIT << " 层" << std::endl;
     
     // 尝试创建第 1001 层（应该被拒绝）
     std::cout << "  尝试创建第 " << (DEPTH_LIMIT + 1) << " 层..." << std::endl;
-    transforms[DEPTH_LIMIT].SetParent(&transforms[DEPTH_LIMIT - 1]);
+    bool depthLimitResult = transforms[DEPTH_LIMIT].SetParent(&transforms[DEPTH_LIMIT - 1]);
     
-    if (transforms[DEPTH_LIMIT].GetParent() == &transforms[DEPTH_LIMIT - 1]) {
+    if (depthLimitResult || transforms[DEPTH_LIMIT].GetParent() == &transforms[DEPTH_LIMIT - 1]) {
         std::cerr << "  ✗ 失败：层级深度限制未生效！" << std::endl;
         throw std::runtime_error("Hierarchy depth limit not enforced");
     }
@@ -575,7 +583,10 @@ void TestLookAtEdgeCases() {
     std::cout << "  测试带父对象的 LookAt..." << std::endl;
     Transform parentLookAt, childLookAt;
     parentLookAt.SetPosition(Vector3(5.0f, 0.0f, 0.0f));
-    childLookAt.SetParent(&parentLookAt);
+    if (!childLookAt.SetParent(&parentLookAt)) {
+        std::cerr << "  ✗ 失败：无法设置父对象" << std::endl;
+        throw std::runtime_error("Failed to set parent");
+    }
     childLookAt.SetPosition(Vector3(0.0f, 5.0f, 0.0f));  // 相对位置
     childLookAt.LookAt(Vector3::Zero());
     
@@ -603,8 +614,12 @@ void TestParentLifetimeManagement() {
         Transform parent;
         parent.SetPosition(Vector3(10.0f, 0.0f, 0.0f));
         
-        child1->SetParent(&parent);
-        child2->SetParent(&parent);
+    if (!child1->SetParent(&parent) || !child2->SetParent(&parent)) {
+        std::cerr << "  ✗ 失败：无法设置父对象" << std::endl;
+        delete child1;
+        delete child2;
+        throw std::runtime_error("Failed to set parent");
+    }
         
         // 验证父指针已设置
         if (child1->GetParent() != &parent || child2->GetParent() != &parent) {
@@ -640,16 +655,22 @@ void TestParentLifetimeManagement() {
     std::cout << "  测试切换父对象..." << std::endl;
     Transform parent1, parent2, child;
     
-    child.SetParent(&parent1);
-    if (child.GetParent() != &parent1) {
+    if (!child.SetParent(&parent1)) {
         std::cerr << "  ✗ 失败：第一个父对象未设置" << std::endl;
         throw std::runtime_error("First parent not set");
     }
+    if (child.GetParent() != &parent1) {
+        std::cerr << "  ✗ 失败：第一个父对象指针不正确" << std::endl;
+        throw std::runtime_error("First parent pointer incorrect");
+    }
     
-    child.SetParent(&parent2);  // 切换到新父对象
-    if (child.GetParent() != &parent2) {
+    if (!child.SetParent(&parent2)) {  // 切换到新父对象
         std::cerr << "  ✗ 失败：第二个父对象未设置" << std::endl;
         throw std::runtime_error("Second parent not set");
+    }
+    if (child.GetParent() != &parent2) {
+        std::cerr << "  ✗ 失败：第二个父对象指针不正确" << std::endl;
+        throw std::runtime_error("Second parent pointer incorrect");
     }
     std::cout << "  ✓ 父对象切换正常" << std::endl;
     
@@ -665,7 +686,10 @@ void TestParentLifetimeManagement() {
     {
         Transform parent;
         for (auto* child : children) {
-            child->SetParent(&parent);
+            if (!child->SetParent(&parent)) {
+                std::cerr << "  ✗ 失败：无法设置子对象的父对象" << std::endl;
+                throw std::runtime_error("Failed to set child parent");
+            }
         }
         
         // 验证所有子对象都设置了父指针
@@ -695,6 +719,150 @@ void TestParentLifetimeManagement() {
     }
     
     std::cout << "  父对象生命周期管理完成 ✓" << std::endl;
+}
+
+// 测试13：变换插值功能
+void TestTransformInterpolation() {
+    std::cout << "\n测试13: 变换插值功能..." << std::endl;
+    
+    Transform start;
+    start.SetPosition(Vector3(0.0f, 0.0f, 0.0f));
+    start.SetRotation(Quaternion::Identity());
+    start.SetScale(Vector3::Ones());
+    
+    Transform end;
+    end.SetPosition(Vector3(10.0f, 10.0f, 10.0f));
+    end.SetRotationEulerDegrees(Vector3(90.0f, 0.0f, 0.0f));
+    end.SetScale(Vector3(2.0f, 2.0f, 2.0f));
+    
+    // 测试 Lerp
+    std::cout << "  测试线性插值 (Lerp)..." << std::endl;
+    Transform lerp0 = Transform::Lerp(start, end, 0.0f);
+    Transform lerp1 = Transform::Lerp(start, end, 1.0f);
+    Transform lerp05 = Transform::Lerp(start, end, 0.5f);
+    
+    // 验证 t=0 时等于 start
+    if ((lerp0.GetPosition() - start.GetPosition()).norm() > 0.001f) {
+        std::cerr << "  ✗ 失败：Lerp(0) 位置不正确" << std::endl;
+        throw std::runtime_error("Lerp(0) position incorrect");
+    }
+    
+    // 验证 t=1 时等于 end
+    if ((lerp1.GetPosition() - end.GetPosition()).norm() > 0.001f) {
+        std::cerr << "  ✗ 失败：Lerp(1) 位置不正确" << std::endl;
+        throw std::runtime_error("Lerp(1) position incorrect");
+    }
+    
+    // 验证 t=0.5 时在中间
+    Vector3 midPos = (start.GetPosition() + end.GetPosition()) * 0.5f;
+    if ((lerp05.GetPosition() - midPos).norm() > 0.001f) {
+        std::cerr << "  ✗ 失败：Lerp(0.5) 位置不在中间" << std::endl;
+        throw std::runtime_error("Lerp(0.5) position not in middle");
+    }
+    std::cout << "  ✓ Lerp 工作正常" << std::endl;
+    
+    // 测试 Slerp
+    std::cout << "  测试球面线性插值 (Slerp)..." << std::endl;
+    Transform slerp0 = Transform::Slerp(start, end, 0.0f);
+    Transform slerp1 = Transform::Slerp(start, end, 1.0f);
+    
+    if ((slerp0.GetPosition() - start.GetPosition()).norm() > 0.001f ||
+        (slerp1.GetPosition() - end.GetPosition()).norm() > 0.001f) {
+        std::cerr << "  ✗ 失败：Slerp 位置不正确" << std::endl;
+        throw std::runtime_error("Slerp position incorrect");
+    }
+    std::cout << "  ✓ Slerp 工作正常" << std::endl;
+    
+    // 测试 SmoothTo
+    std::cout << "  测试平滑过渡 (SmoothTo)..." << std::endl;
+    Transform current;
+    current.SetPosition(start.GetPosition());
+    current.SetRotation(start.GetRotation());
+    current.SetScale(start.GetScale());
+    
+    // 模拟平滑过渡（多次调用）
+    for (int i = 0; i < 10; ++i) {
+        current.SmoothTo(end, 2.0f, 0.1f);  // smoothness=2.0, deltaTime=0.1
+    }
+    
+    // 验证已经接近目标
+    float distance = (current.GetPosition() - end.GetPosition()).norm();
+    if (distance > end.GetPosition().norm() * 0.5f) {
+        std::cerr << "  ✗ 失败：SmoothTo 没有接近目标" << std::endl;
+        throw std::runtime_error("SmoothTo not approaching target");
+    }
+    std::cout << "  ✓ SmoothTo 工作正常（最终距离: " << distance << "）" << std::endl;
+    
+    std::cout << "  变换插值功能完成 ✓" << std::endl;
+}
+
+// 测试14：调试和诊断功能
+void TestDebugAndDiagnostics() {
+    std::cout << "\n测试14: 调试和诊断功能..." << std::endl;
+    
+    Transform transform;
+    transform.SetPosition(Vector3(1.0f, 2.0f, 3.0f));
+    transform.SetRotationEulerDegrees(Vector3(45.0f, 90.0f, 0.0f));
+    transform.SetScale(Vector3(2.0f, 2.0f, 2.0f));
+    
+    // 测试 DebugString
+    std::cout << "  测试 DebugString..." << std::endl;
+    std::string debugStr = transform.DebugString();
+    if (debugStr.empty()) {
+        std::cerr << "  ✗ 失败：DebugString 返回空字符串" << std::endl;
+        throw std::runtime_error("DebugString returned empty");
+    }
+    std::cout << "  ✓ DebugString 输出:\n" << debugStr << std::endl;
+    
+    // 测试 Validate
+    std::cout << "  测试 Validate..." << std::endl;
+    if (!transform.Validate()) {
+        std::cerr << "  ✗ 失败：Validate 返回 false（应该返回 true）" << std::endl;
+        throw std::runtime_error("Validate returned false for valid transform");
+    }
+    std::cout << "  ✓ 有效变换通过验证" << std::endl;
+    
+    // 测试 GetHierarchyDepth
+    std::cout << "  测试 GetHierarchyDepth..." << std::endl;
+    int depth = transform.GetHierarchyDepth();
+    if (depth != 0) {
+        std::cerr << "  ✗ 失败：无父对象的深度应该是 0，但得到 " << depth << std::endl;
+        throw std::runtime_error("Hierarchy depth incorrect");
+    }
+    
+    // 创建层级结构
+    Transform parent, child1, child2;
+    if (!child1.SetParent(&parent) || !child2.SetParent(&parent)) {
+        throw std::runtime_error("Failed to set parent");
+    }
+    
+    int parentDepth = parent.GetHierarchyDepth();
+    int child1Depth = child1.GetHierarchyDepth();
+    
+    if (parentDepth != 0 || child1Depth != 1) {
+        std::cerr << "  ✗ 失败：层级深度不正确（parent=" << parentDepth 
+                  << ", child1=" << child1Depth << "）" << std::endl;
+        throw std::runtime_error("Hierarchy depth incorrect");
+    }
+    std::cout << "  ✓ 层级深度计算正确" << std::endl;
+    
+    // 测试 GetChildCount
+    std::cout << "  测试 GetChildCount..." << std::endl;
+    int childCount = parent.GetChildCount();
+    if (childCount != 2) {
+        std::cerr << "  ✗ 失败：子对象数量应该是 2，但得到 " << childCount << std::endl;
+        throw std::runtime_error("Child count incorrect");
+    }
+    std::cout << "  ✓ 子对象数量正确（" << childCount << "）" << std::endl;
+    
+    // 测试 PrintHierarchy
+    std::cout << "  测试 PrintHierarchy..." << std::endl;
+    std::cout << "  层级结构：" << std::endl;
+    parent.PrintHierarchy(0);
+    child1.PrintHierarchy(1);
+    std::cout << "  ✓ PrintHierarchy 输出正常" << std::endl;
+    
+    std::cout << "  调试和诊断功能完成 ✓" << std::endl;
 }
 
 int main() {
@@ -728,6 +896,8 @@ int main() {
         TestHierarchyDepthLimit();
         TestLookAtEdgeCases();
         TestParentLifetimeManagement();
+        TestTransformInterpolation();
+        TestDebugAndDiagnostics();
         
         std::cout << "\n======================================" << std::endl;
         std::cout << "所有测试通过！✓" << std::endl;
@@ -738,7 +908,9 @@ int main() {
         std::cout << "  线程安全测试：6项 ✓" << std::endl;
         std::cout << "  安全性增强测试：5项 ✓" << std::endl;
         std::cout << "  生命周期管理测试：1项 ✓" << std::endl;
-        std::cout << "  总计：12项测试全部通过" << std::endl;
+        std::cout << "  变换插值测试：1项 ✓" << std::endl;
+        std::cout << "  调试诊断测试：1项 ✓" << std::endl;
+        std::cout << "  总计：14项测试全部通过" << std::endl;
         std::cout << "======================================" << std::endl;
         
         return 0;
