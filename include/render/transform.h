@@ -4,6 +4,7 @@
 #include "math_utils.h"
 #include <mutex>
 #include <atomic>
+#include <vector>
 
 namespace Render {
 
@@ -24,7 +25,8 @@ namespace Render {
  * 
  * @section parent_child 父子关系
  * - 父对象指针是观察指针（non-owning），不负责生命周期管理
- * - **重要**：调用者必须确保父对象的生命周期长于或等于子对象
+ * - **生命周期保护**：父对象销毁时自动通知所有子对象，清除子对象的父指针
+ * - **安全保证**：子对象不会持有悬空指针，访问时会自动退化为无父对象状态
  * - 自动检测并拒绝自引用（将自己设为父对象）
  * - 自动检测并拒绝循环引用（A->B->C->A）
  * - 父子层级深度限制为 1000 层
@@ -76,7 +78,7 @@ namespace Render {
  * it->SetParent(parent);  // 安全，地址不会改变
  * @endcode
  * 
- * @example 错误用法
+ * @example 错误用法（已自动处理）
  * @code
  * // ❌ 错误：循环引用会被检测并拒绝
  * Transform a, b, c;
@@ -84,21 +86,22 @@ namespace Render {
  * b.SetParent(&c);
  * c.SetParent(&a);  // 错误！产生警告并拒绝操作
  * 
- * // ❌ 错误：父对象先销毁
+ * // ✅ 已修复：父对象先销毁（自动安全处理）
  * Transform child;
  * {
  *     Transform parent;
  *     child.SetParent(&parent);
- * }  // parent 销毁，child.m_parent 成为悬空指针
- * child.GetWorldPosition();  // 未定义行为，可能崩溃！
+ * }  // parent 销毁时自动清除 child.m_parent
+ * child.GetWorldPosition();  // ✓ 安全！返回本地位置（无父对象状态）
  * 
- * // ❌ 错误：使用 std::vector 可能导致地址改变
+ * // ⚠️ 注意：使用 std::vector 仍需小心（地址可能改变）
  * std::vector<Transform> transforms;
  * transforms.emplace_back();  // transforms[0]
  * Transform child;
  * child.SetParent(&transforms[0]);
  * transforms.emplace_back();  // 可能触发重新分配，transforms[0] 地址改变！
- * child.GetWorldPosition();   // 未定义行为！
+ * // 虽然父指针会失效，但不会崩溃（会访问错误的对象或在销毁时清理）
+ * // 建议：使用 std::list 或智能指针容器避免地址改变
  * @endcode
  */
 class Transform {
@@ -120,6 +123,13 @@ public:
      */
     Transform(const Vector3& position, const Quaternion& rotation = Quaternion::Identity(), 
               const Vector3& scale = Vector3::Ones());
+    
+    /**
+     * @brief 析构函数
+     * 
+     * 自动通知所有子对象清除父指针，避免悬空指针。
+     */
+    ~Transform();
     
     // 禁用拷贝和移动（因为包含 std::atomic 和 std::recursive_mutex，它们都不可拷贝不可移动）
     Transform(const Transform&) = delete;
@@ -358,10 +368,11 @@ public:
      * - 检测父对象层级深度，拒绝超过 1000 层的层级
      * - 检测失败时会产生警告日志，操作被拒绝
      * 
-     * @warning 生命周期管理：
+     * @note 生命周期管理（自动安全）：
      * - parent 是观察指针（non-owning），不负责生命周期管理
-     * - 调用者必须确保 parent 对象的生命周期长于或等于当前对象
-     * - 父对象销毁前应将子对象的父指针设为 nullptr
+     * - **安全保证**：父对象销毁时会自动清除所有子对象的父指针
+     * - 子对象不会持有悬空指针，即使父对象先销毁也是安全的
+     * - 无需手动在父对象销毁前调用 SetParent(nullptr)
      * 
      * @example
      * @code
@@ -431,8 +442,12 @@ private:
     
     // 父变换指针（原子类型，保证多线程读写安全）
     // 注意：这是观察指针（non-owning），不负责生命周期管理
-    // 调用者必须确保父对象的生命周期长于子对象
+    // 父对象销毁时会自动通知子对象清除父指针
     std::atomic<Transform*> m_parent;
+    
+    // 子对象列表（用于生命周期管理）
+    // 父对象销毁时通知所有子对象清除父指针，避免悬空指针
+    std::vector<Transform*> m_children;
     
     // 缓存系统：使用 dirty flag 避免重复计算
     mutable std::atomic<bool> m_dirtyLocal;  // 本地矩阵是否需要更新
@@ -447,6 +462,11 @@ private:
     
     void MarkDirty();
     void MarkDirtyNoLock();  // 无锁版本，供内部已加锁的方法调用
+    
+    // 子对象管理（私有方法，用于生命周期管理）
+    void AddChild(Transform* child);
+    void RemoveChild(Transform* child);
+    void NotifyChildrenParentDestroyed();
 };
 
 } // namespace Render

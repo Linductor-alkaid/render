@@ -1,5 +1,6 @@
 #include "render/transform.h"
 #include "render/error.h"
+#include <algorithm>  // for std::find
 
 namespace Render {
 
@@ -25,6 +26,17 @@ Transform::Transform(const Vector3& position, const Quaternion& rotation, const 
     , m_dirtyLocal(true)
     , m_dirtyWorld(true)
 {
+}
+
+Transform::~Transform() {
+    // 通知所有子对象：父对象即将销毁
+    NotifyChildrenParentDestroyed();
+    
+    // 从父对象的子对象列表中移除自己
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    if (parent) {
+        parent->RemoveChild(this);
+    }
 }
 
 // ============================================================================
@@ -418,6 +430,16 @@ void Transform::SetParent(Transform* parent) {
         }
     }
     
+    // 从旧父对象的子对象列表中移除自己
+    if (currentParent) {
+        currentParent->RemoveChild(this);
+    }
+    
+    // 添加到新父对象的子对象列表
+    if (parent) {
+        parent->AddChild(this);
+    }
+    
     // 使用原子操作存储父指针
     m_parent.store(parent, std::memory_order_release);
     MarkDirtyNoLock();
@@ -470,6 +492,50 @@ void Transform::MarkDirtyNoLock() {
     // 内部版本：假设调用者已经持有锁
     m_dirtyLocal.store(true, std::memory_order_release);
     m_dirtyWorld.store(true, std::memory_order_release);
+}
+
+// ============================================================================
+// 子对象管理（生命周期管理）
+// ============================================================================
+
+void Transform::AddChild(Transform* child) {
+    if (!child) return;
+    
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // 检查是否已存在（避免重复添加）
+    auto it = std::find(m_children.begin(), m_children.end(), child);
+    if (it == m_children.end()) {
+        m_children.push_back(child);
+    }
+}
+
+void Transform::RemoveChild(Transform* child) {
+    if (!child) return;
+    
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // 移除子对象
+    auto it = std::find(m_children.begin(), m_children.end(), child);
+    if (it != m_children.end()) {
+        m_children.erase(it);
+    }
+}
+
+void Transform::NotifyChildrenParentDestroyed() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // 通知所有子对象：父对象即将销毁，清除父指针
+    for (Transform* child : m_children) {
+        if (child) {
+            // 直接设置子对象的父指针为 nullptr
+            // 注意：不调用 child->SetParent(nullptr)，避免死锁和递归
+            child->m_parent.store(nullptr, std::memory_order_release);
+        }
+    }
+    
+    // 清空子对象列表
+    m_children.clear();
 }
 
 // ============================================================================

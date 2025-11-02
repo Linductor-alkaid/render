@@ -590,6 +590,113 @@ void TestLookAtEdgeCases() {
     std::cout << "  LookAt 边界情况测试完成 ✓" << std::endl;
 }
 
+// 测试12：父对象生命周期管理
+void TestParentLifetimeManagement() {
+    std::cout << "\n测试12: 父对象生命周期管理..." << std::endl;
+    
+    // 测试1：父对象销毁后子对象父指针自动清除
+    std::cout << "  测试父对象销毁后的自动清理..." << std::endl;
+    Transform* child1 = new Transform();
+    Transform* child2 = new Transform();
+    
+    {
+        Transform parent;
+        parent.SetPosition(Vector3(10.0f, 0.0f, 0.0f));
+        
+        child1->SetParent(&parent);
+        child2->SetParent(&parent);
+        
+        // 验证父指针已设置
+        if (child1->GetParent() != &parent || child2->GetParent() != &parent) {
+            std::cerr << "  ✗ 失败：父指针未正确设置" << std::endl;
+            throw std::runtime_error("Parent pointer not set");
+        }
+        std::cout << "    ✓ 父指针已设置" << std::endl;
+        
+        // parent 即将离开作用域并销毁
+    }
+    
+    // 验证父指针已自动清除
+    if (child1->GetParent() != nullptr || child2->GetParent() != nullptr) {
+        std::cerr << "  ✗ 失败：父对象销毁后，子对象的父指针未被清除！" << std::endl;
+        std::cerr << "    child1->GetParent() = " << child1->GetParent() << std::endl;
+        std::cerr << "    child2->GetParent() = " << child2->GetParent() << std::endl;
+        delete child1;
+        delete child2;
+        throw std::runtime_error("Parent pointer not cleared on parent destruction");
+    }
+    std::cout << "  ✓ 父对象销毁后，子对象父指针自动清除" << std::endl;
+    
+    // 测试访问不会崩溃
+    std::cout << "  测试子对象访问不会崩溃..." << std::endl;
+    Vector3 worldPos1 = child1->GetWorldPosition();
+    Vector3 worldPos2 = child2->GetWorldPosition();
+    std::cout << "  ✓ 子对象访问正常（无崩溃）" << std::endl;
+    
+    delete child1;
+    delete child2;
+    
+    // 测试2：切换父对象时的清理
+    std::cout << "  测试切换父对象..." << std::endl;
+    Transform parent1, parent2, child;
+    
+    child.SetParent(&parent1);
+    if (child.GetParent() != &parent1) {
+        std::cerr << "  ✗ 失败：第一个父对象未设置" << std::endl;
+        throw std::runtime_error("First parent not set");
+    }
+    
+    child.SetParent(&parent2);  // 切换到新父对象
+    if (child.GetParent() != &parent2) {
+        std::cerr << "  ✗ 失败：第二个父对象未设置" << std::endl;
+        throw std::runtime_error("Second parent not set");
+    }
+    std::cout << "  ✓ 父对象切换正常" << std::endl;
+    
+    // 测试3：多个子对象的清理
+    std::cout << "  测试多个子对象的清理..." << std::endl;
+    const int NUM_CHILDREN = 100;
+    std::vector<Transform*> children;
+    
+    for (int i = 0; i < NUM_CHILDREN; ++i) {
+        children.push_back(new Transform());
+    }
+    
+    {
+        Transform parent;
+        for (auto* child : children) {
+            child->SetParent(&parent);
+        }
+        
+        // 验证所有子对象都设置了父指针
+        for (auto* child : children) {
+            if (child->GetParent() != &parent) {
+                std::cerr << "  ✗ 失败：子对象父指针未设置" << std::endl;
+                throw std::runtime_error("Child parent not set");
+            }
+        }
+        std::cout << "    ✓ 所有 " << NUM_CHILDREN << " 个子对象的父指针已设置" << std::endl;
+        
+        // parent 销毁
+    }
+    
+    // 验证所有子对象的父指针都被清除
+    for (auto* child : children) {
+        if (child->GetParent() != nullptr) {
+            std::cerr << "  ✗ 失败：子对象父指针未被清除" << std::endl;
+            throw std::runtime_error("Child parent not cleared");
+        }
+    }
+    std::cout << "  ✓ 所有子对象的父指针已自动清除" << std::endl;
+    
+    // 清理
+    for (auto* child : children) {
+        delete child;
+    }
+    
+    std::cout << "  父对象生命周期管理完成 ✓" << std::endl;
+}
+
 int main() {
     // 设置控制台为UTF-8编码（Windows）
 #ifdef _WIN32
@@ -620,6 +727,7 @@ int main() {
         TestRotationAxisValidation();
         TestHierarchyDepthLimit();
         TestLookAtEdgeCases();
+        TestParentLifetimeManagement();
         
         std::cout << "\n======================================" << std::endl;
         std::cout << "所有测试通过！✓" << std::endl;
@@ -629,7 +737,8 @@ int main() {
         std::cout << "\n测试总结：" << std::endl;
         std::cout << "  线程安全测试：6项 ✓" << std::endl;
         std::cout << "  安全性增强测试：5项 ✓" << std::endl;
-        std::cout << "  总计：11项测试全部通过" << std::endl;
+        std::cout << "  生命周期管理测试：1项 ✓" << std::endl;
+        std::cout << "  总计：12项测试全部通过" << std::endl;
         std::cout << "======================================" << std::endl;
         
         return 0;
