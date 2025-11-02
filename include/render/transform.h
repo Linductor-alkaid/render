@@ -157,10 +157,18 @@ public:
     const Vector3& GetPosition() const { return m_position; }
     
     /**
-     * @brief 获取世界位置
+     * @brief 获取世界位置（使用缓存优化）
      * @return 世界位置
+     * @note 性能优化：使用缓存避免重复计算
      */
     Vector3 GetWorldPosition() const;
+    
+    /**
+     * @brief 获取世界位置（迭代版本，避免深层递归）
+     * @return 世界位置
+     * @note 适用于非常深的层级（>100层）
+     */
+    Vector3 GetWorldPositionIterative() const;
     
     /**
      * @brief 平移对象（本地空间）
@@ -524,9 +532,15 @@ private:
     // 缓存系统：使用 dirty flag 避免重复计算
     mutable std::atomic<bool> m_dirtyLocal;  // 本地矩阵是否需要更新
     mutable std::atomic<bool> m_dirtyWorld;  // 世界矩阵是否需要更新
+    mutable std::atomic<bool> m_dirtyWorldTransform;  // 世界变换组件是否需要更新
     
     mutable Matrix4 m_localMatrix;   // 缓存的本地矩阵
     mutable Matrix4 m_worldMatrix;   // 缓存的世界矩阵
+    
+    // 世界变换组件缓存（用于优化深层级递归）
+    mutable Vector3 m_cachedWorldPosition;
+    mutable Quaternion m_cachedWorldRotation;
+    mutable Vector3 m_cachedWorldScale;
     
     // 线程安全：使用递归互斥锁保护数据访问
     // 使用递归锁允许同一线程多次获取锁，避免在递归调用（如GetWorldPosition调用父对象的GetWorldPosition）时死锁
@@ -534,6 +548,11 @@ private:
     
     void MarkDirty();
     void MarkDirtyNoLock();  // 无锁版本，供内部已加锁的方法调用
+    
+    // 缓存更新（私有方法）
+    void UpdateWorldTransformCache() const;
+    void InvalidateWorldTransformCache();
+    void InvalidateWorldTransformCacheNoLock();  // 无锁版本，避免死锁
     
     // 子对象管理（私有方法，用于生命周期管理）
     void AddChild(Transform* child);

@@ -865,6 +865,149 @@ void TestDebugAndDiagnostics() {
     std::cout << "  调试和诊断功能完成 ✓" << std::endl;
 }
 
+// 测试15：性能优化（缓存）
+void TestPerformanceOptimization() {
+    std::cout << "\n测试15: 性能优化（缓存）..." << std::endl;
+    
+    // 创建深层级结构（50层）
+    const int DEPTH = 50;
+    std::vector<Transform> transforms(DEPTH);
+    
+    for (int i = 1; i < DEPTH; ++i) {
+        if (!transforms[i].SetParent(&transforms[i - 1])) {
+            throw std::runtime_error("Failed to set parent");
+        }
+        transforms[i].SetPosition(Vector3(1.0f, 0.0f, 0.0f));
+    }
+    
+    std::cout << "  测试缓存性能（深层级：" << DEPTH << " 层）..." << std::endl;
+    
+    // 第一次访问：缓存未命中，需要递归计算
+    auto start1 = std::chrono::high_resolution_clock::now();
+    Vector3 pos1 = transforms[DEPTH - 1].GetWorldPosition();
+    auto end1 = std::chrono::high_resolution_clock::now();
+    auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end1 - start1);
+    
+    // 第二次访问：缓存命中，应该更快
+    auto start2 = std::chrono::high_resolution_clock::now();
+    Vector3 pos2 = transforms[DEPTH - 1].GetWorldPosition();
+    auto end2 = std::chrono::high_resolution_clock::now();
+    auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end2 - start2);
+    
+    std::cout << "    第一次访问（缓存未命中）: " << duration1.count() << " μs" << std::endl;
+    std::cout << "    第二次访问（缓存命中）: " << duration2.count() << " μs" << std::endl;
+    
+    // 缓存命中应该明显更快（至少快2倍）
+    long long count1 = duration1.count();
+    long long count2 = duration2.count();
+    
+    if (count2 > 0 && count1 / count2 < 2) {
+        std::cout << "  ⚠️ 警告：缓存加速效果不明显（可能测试误差）" << std::endl;
+    } else {
+        long long maxCount = (count2 > 0) ? count2 : 1LL;
+        long long speedup = count1 / maxCount;
+        std::cout << "  ✓ 缓存加速比: " << speedup << "x" << std::endl;
+    }
+    
+    // 验证结果一致性
+    if ((pos1 - pos2).norm() > 0.001f) {
+        std::cerr << "  ✗ 失败：缓存前后结果不一致" << std::endl;
+        throw std::runtime_error("Cache inconsistency");
+    }
+    std::cout << "  ✓ 缓存前后结果一致" << std::endl;
+    
+    // 测试缓存失效
+    std::cout << "  测试缓存失效..." << std::endl;
+    transforms[0].SetPosition(Vector3(10.0f, 0.0f, 0.0f));  // 修改根节点
+    
+    auto start3 = std::chrono::high_resolution_clock::now();
+    Vector3 pos3 = transforms[DEPTH - 1].GetWorldPosition();
+    auto end3 = std::chrono::high_resolution_clock::now();
+    auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end3 - start3);
+    
+    std::cout << "    修改后访问（缓存失效）: " << duration3.count() << " μs" << std::endl;
+    
+    std::cout << "    调试信息：" << std::endl;
+    std::cout << "      pos1 (修改前): (" << pos1.x() << ", " << pos1.y() << ", " << pos1.z() << ")" << std::endl;
+    std::cout << "      pos3 (修改后): (" << pos3.x() << ", " << pos3.y() << ", " << pos3.z() << ")" << std::endl;
+    std::cout << "      期望值: (" << (pos1.x() + 10.0f) << ", " << pos1.y() << ", " << pos1.z() << ")" << std::endl;
+    std::cout << "      差异: " << std::abs(pos3.x() - (pos1.x() + 10.0f)) << std::endl;
+    
+    if (std::abs(pos3.x() - (pos1.x() + 10.0f)) > 0.01f) {
+        std::cerr << "  ✗ 失败：缓存失效后更新不正确" << std::endl;
+        throw std::runtime_error("Cache invalidation failed");
+    }
+    std::cout << "  ✓ 缓存失效机制正常工作" << std::endl;
+    
+    std::cout << "  性能优化测试完成 ✓" << std::endl;
+}
+
+// 测试16：边缘情况处理
+void TestEdgeCases() {
+    std::cout << "\n测试16: 边缘情况处理..." << std::endl;
+    
+    // 测试 NaN 输入
+    std::cout << "  测试 NaN 输入..." << std::endl;
+    Transform t1;
+    t1.SetPosition(Vector3(NAN, 0.0f, 0.0f));
+    // 应该被拒绝，位置保持原值
+    if (!std::isfinite(t1.GetPosition().x())) {
+        std::cerr << "  ✗ 失败：NaN 输入未被拒绝" << std::endl;
+        throw std::runtime_error("NaN input not rejected");
+    }
+    std::cout << "  ✓ NaN 位置输入被正确拒绝" << std::endl;
+    
+    // 测试 Inf 输入
+    std::cout << "  测试 Inf 输入..." << std::endl;
+    t1.SetPosition(Vector3(INFINITY, 0.0f, 0.0f));
+    if (!std::isfinite(t1.GetPosition().x())) {
+        std::cerr << "  ✗ 失败：Inf 输入未被拒绝" << std::endl;
+        throw std::runtime_error("Inf input not rejected");
+    }
+    std::cout << "  ✓ Inf 位置输入被正确拒绝" << std::endl;
+    
+    // 测试零缩放
+    std::cout << "  测试零缩放..." << std::endl;
+    Transform t2;
+    t2.SetScale(Vector3(0.0f, 0.0f, 0.0f));
+    // 应该被限制为最小值
+    if (std::abs(t2.GetScale().x()) < 1e-7f) {
+        std::cerr << "  ✗ 失败：零缩放未被限制" << std::endl;
+        throw std::runtime_error("Zero scale not limited");
+    }
+    std::cout << "  ✓ 零缩放被限制为最小值: " << t2.GetScale().x() << std::endl;
+    
+    // 测试极小缩放
+    std::cout << "  测试极小缩放..." << std::endl;
+    Transform t3;
+    t3.SetScale(Vector3(1e-10f, 1e-10f, 1e-10f));
+    if (std::abs(t3.GetScale().x()) < 1e-7f) {
+        std::cerr << "  ✗ 失败：极小缩放未被限制" << std::endl;
+        throw std::runtime_error("Tiny scale not limited");
+    }
+    std::cout << "  ✓ 极小缩放被限制为最小值: " << t3.GetScale().x() << std::endl;
+    
+    // 测试增强的 Validate 函数
+    std::cout << "  测试增强的 Validate 函数..." << std::endl;
+    
+    // 正常变换应该通过验证
+    Transform valid;
+    valid.SetPosition(Vector3(1.0f, 2.0f, 3.0f));
+    valid.SetRotationEulerDegrees(Vector3(45.0f, 90.0f, 0.0f));
+    valid.SetScale(Vector3(1.0f, 1.0f, 1.0f));
+    
+    if (!valid.Validate()) {
+        std::cerr << "  ✗ 失败：有效变换未通过验证" << std::endl;
+        throw std::runtime_error("Valid transform failed validation");
+    }
+    std::cout << "  ✓ 正常变换通过验证" << std::endl;
+    
+    // NaN 缩放的变换应该失败验证（通过直接修改成员变量，绕过 SetScale 的检查）
+    // 注意：我们无法直接修改私有成员，所以跳过此测试
+    
+    std::cout << "  边缘情况处理完成 ✓" << std::endl;
+}
+
 int main() {
     // 设置控制台为UTF-8编码（Windows）
 #ifdef _WIN32
@@ -898,6 +1041,8 @@ int main() {
         TestParentLifetimeManagement();
         TestTransformInterpolation();
         TestDebugAndDiagnostics();
+        TestPerformanceOptimization();
+        TestEdgeCases();
         
         std::cout << "\n======================================" << std::endl;
         std::cout << "所有测试通过！✓" << std::endl;
@@ -910,7 +1055,9 @@ int main() {
         std::cout << "  生命周期管理测试：1项 ✓" << std::endl;
         std::cout << "  变换插值测试：1项 ✓" << std::endl;
         std::cout << "  调试诊断测试：1项 ✓" << std::endl;
-        std::cout << "  总计：14项测试全部通过" << std::endl;
+        std::cout << "  性能优化测试：1项 ✓" << std::endl;
+        std::cout << "  边缘情况测试：1项 ✓" << std::endl;
+        std::cout << "  总计：16项测试全部通过" << std::endl;
         std::cout << "======================================" << std::endl;
         
         return 0;

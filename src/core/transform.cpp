@@ -17,6 +17,10 @@ Transform::Transform()
     , m_parent(nullptr)  // 原子类型可以用 nullptr 初始化
     , m_dirtyLocal(true)
     , m_dirtyWorld(true)
+    , m_dirtyWorldTransform(true)
+    , m_cachedWorldPosition(Vector3::Zero())
+    , m_cachedWorldRotation(Quaternion::Identity())
+    , m_cachedWorldScale(Vector3::Ones())
 {
 }
 
@@ -27,6 +31,10 @@ Transform::Transform(const Vector3& position, const Quaternion& rotation, const 
     , m_parent(nullptr)  // 原子类型可以用 nullptr 初始化
     , m_dirtyLocal(true)
     , m_dirtyWorld(true)
+    , m_dirtyWorldTransform(true)
+    , m_cachedWorldPosition(Vector3::Zero())
+    , m_cachedWorldRotation(Quaternion::Identity())
+    , m_cachedWorldScale(Vector3::Ones())
 {
 }
 
@@ -47,31 +55,88 @@ Transform::~Transform() {
 
 void Transform::SetPosition(const Vector3& position) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    
+    // 检测 NaN/Inf
+    if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(position.z())) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::SetPosition: 位置包含 NaN 或 Inf，操作被忽略"));
+        return;
+    }
+    
     m_position = position;
     MarkDirtyNoLock();
 }
 
 Vector3 Transform::GetWorldPosition() const {
-    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
+    // 检查祖先链是否有任何脏的节点
+    bool ancestorDirty = false;
+    Transform* ancestor = m_parent.load(std::memory_order_acquire);
+    while (ancestor != nullptr && !ancestorDirty) {
+        if (ancestor->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
+            ancestorDirty = true;
+            break;
+        }
+        ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+    }
+    
+    // Double-checked locking 优化：检查缓存是否有效
+    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
+        return m_cachedWorldPosition;  // 缓存命中
+    }
+    
+    // 缓存未命中或祖先已改变，需要更新
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    // 使用原子操作读取父指针
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        // 递归调用父对象方法（父对象有自己的递归锁）
-        Vector3 parentPos = parent->GetWorldPosition();
-        Quaternion parentRot = parent->GetWorldRotation();
-        Vector3 parentScale = parent->GetWorldScale();
-        
-        Vector3 scaledPos(
-            m_position.x() * parentScale.x(),
-            m_position.y() * parentScale.y(),
-            m_position.z() * parentScale.z()
-        );
-        
-        return parentPos + parentRot * scaledPos;
+    // 二次检查（简化版，只检查自己）
+    if (!m_dirtyWorldTransform.load(std::memory_order_relaxed) && !ancestorDirty) {
+        return m_cachedWorldPosition;
     }
-    return m_position;
+    
+    // 更新缓存
+    UpdateWorldTransformCache();
+    
+    return m_cachedWorldPosition;
+}
+
+Vector3 Transform::GetWorldPositionIterative() const {
+    // 迭代版本：收集所有祖先，从根向下计算，避免递归
+    std::vector<Transform*> chain;
+    chain.reserve(32);  // 预分配，避免多次重新分配
+    
+    // 收集祖先链（从当前节点到根节点）
+    Transform* current = const_cast<Transform*>(this);
+    const int MAX_DEPTH = 1000;
+    
+    while (current != nullptr && chain.size() < MAX_DEPTH) {
+        chain.push_back(current);
+        current = current->m_parent.load(std::memory_order_acquire);
+    }
+    
+    // 从根向下计算（反向遍历）
+    Vector3 worldPosition = Vector3::Zero();
+    Quaternion worldRotation = Quaternion::Identity();
+    Vector3 worldScale = Vector3::Ones();
+    
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        Transform* node = *it;
+        std::lock_guard<std::recursive_mutex> lock(node->m_mutex);
+        
+        // 累积变换
+        if (it != chain.rbegin()) {
+            // 应用父对象的缩放和旋转
+            Vector3 scaledPos = worldScale.cwiseProduct(node->m_position);
+            worldPosition = worldPosition + worldRotation * scaledPos;
+            worldRotation = worldRotation * node->m_rotation;
+            worldScale = worldScale.cwiseProduct(node->m_scale);
+        } else {
+            // 根节点
+            worldPosition = node->m_position;
+            worldRotation = node->m_rotation;
+            worldScale = node->m_scale;
+        }
+    }
+    
+    return worldPosition;
 }
 
 void Transform::Translate(const Vector3& translation) {
@@ -146,14 +211,29 @@ Vector3 Transform::GetRotationEulerDegrees() const {
 }
 
 Quaternion Transform::GetWorldRotation() const {
-    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
+    // 检查祖先链是否有任何脏的节点
+    bool ancestorDirty = false;
+    Transform* ancestor = m_parent.load(std::memory_order_acquire);
+    while (ancestor != nullptr && !ancestorDirty) {
+        if (ancestor->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
+            ancestorDirty = true;
+            break;
+        }
+        ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+    }
+    
+    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
+        return m_cachedWorldRotation;
+    }
+    
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        return parent->GetWorldRotation() * m_rotation;
+    if (!m_dirtyWorldTransform.load(std::memory_order_relaxed) && !ancestorDirty) {
+        return m_cachedWorldRotation;
     }
-    return m_rotation;
+    
+    UpdateWorldTransformCache();
+    return m_cachedWorldRotation;
 }
 
 void Transform::Rotate(const Quaternion& rotation) {
@@ -314,30 +394,66 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
 
 void Transform::SetScale(const Vector3& scale) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    m_scale = scale;
+    
+    // 检测 NaN/Inf
+    if (!std::isfinite(scale.x()) || !std::isfinite(scale.y()) || !std::isfinite(scale.z())) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::SetScale: 缩放包含 NaN 或 Inf，操作被忽略"));
+        return;
+    }
+    
+    // 检测零缩放或极小缩放
+    const float MIN_SCALE = 1e-6f;
+    Vector3 safeScale = scale;
+    
+    if (std::abs(safeScale.x()) < MIN_SCALE) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::SetScale: X 缩放过小，限制为最小值"));
+        safeScale.x() = (safeScale.x() >= 0.0f) ? MIN_SCALE : -MIN_SCALE;
+    }
+    if (std::abs(safeScale.y()) < MIN_SCALE) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::SetScale: Y 缩放过小，限制为最小值"));
+        safeScale.y() = (safeScale.y() >= 0.0f) ? MIN_SCALE : -MIN_SCALE;
+    }
+    if (std::abs(safeScale.z()) < MIN_SCALE) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::SetScale: Z 缩放过小，限制为最小值"));
+        safeScale.z() = (safeScale.z() >= 0.0f) ? MIN_SCALE : -MIN_SCALE;
+    }
+    
+    m_scale = safeScale;
     MarkDirtyNoLock();
 }
 
 void Transform::SetScale(float scale) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    m_scale = Vector3(scale, scale, scale);
-    MarkDirtyNoLock();
+    SetScale(Vector3(scale, scale, scale));  // 复用带验证的版本
 }
 
 Vector3 Transform::GetWorldScale() const {
-    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
+    // 检查祖先链是否有任何脏的节点
+    bool ancestorDirty = false;
+    Transform* ancestor = m_parent.load(std::memory_order_acquire);
+    while (ancestor != nullptr && !ancestorDirty) {
+        if (ancestor->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
+            ancestorDirty = true;
+            break;
+        }
+        ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+    }
+    
+    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
+        return m_cachedWorldScale;
+    }
+    
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        Vector3 parentScale = parent->GetWorldScale();
-        return Vector3(
-            m_scale.x() * parentScale.x(),
-            m_scale.y() * parentScale.y(),
-            m_scale.z() * parentScale.z()
-        );
+    if (!m_dirtyWorldTransform.load(std::memory_order_relaxed) && !ancestorDirty) {
+        return m_cachedWorldScale;
     }
-    return m_scale;
+    
+    UpdateWorldTransformCache();
+    return m_cachedWorldScale;
 }
 
 // ============================================================================
@@ -489,12 +605,64 @@ void Transform::MarkDirty() {
     // 使用原子操作标记为脏（无需加锁）
     m_dirtyLocal.store(true, std::memory_order_release);
     m_dirtyWorld.store(true, std::memory_order_release);
+    m_dirtyWorldTransform.store(true, std::memory_order_release);
 }
 
 void Transform::MarkDirtyNoLock() {
     // 内部版本：假设调用者已经持有锁
     m_dirtyLocal.store(true, std::memory_order_release);
     m_dirtyWorld.store(true, std::memory_order_release);
+    m_dirtyWorldTransform.store(true, std::memory_order_release);
+    
+    // 注意：不在这里通知子对象，避免死锁
+    // 子对象会在访问时自动检测父对象变化（通过检查父对象的 dirty flag）
+}
+
+void Transform::InvalidateWorldTransformCache() {
+    // 外部调用版本：标记世界变换缓存为无效，并递归标记所有子对象
+    m_dirtyWorldTransform.store(true, std::memory_order_release);
+    
+    // 通知所有子对象更新缓存
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    for (Transform* child : m_children) {
+        if (child) {
+            child->InvalidateWorldTransformCacheNoLock();
+        }
+    }
+}
+
+void Transform::InvalidateWorldTransformCacheNoLock() {
+    // 内部版本：仅标记原子标志，不加锁，避免死锁
+    m_dirtyWorldTransform.store(true, std::memory_order_release);
+    
+    // 注意：不递归调用子对象，避免复杂的锁依赖
+    // 子对象在下次访问时会自动检测父对象变化并更新缓存
+}
+
+void Transform::UpdateWorldTransformCache() const {
+    // 注意：调用此函数前必须已经持有 m_mutex 锁
+    
+    Transform* parent = m_parent.load(std::memory_order_acquire);
+    
+    if (parent) {
+        // 有父对象：递归计算（会利用父对象的缓存）
+        Vector3 parentPos = parent->GetWorldPosition();
+        Quaternion parentRot = parent->GetWorldRotation();
+        Vector3 parentScale = parent->GetWorldScale();
+        
+        // 计算世界变换
+        m_cachedWorldPosition = parentPos + parentRot * (parentScale.cwiseProduct(m_position));
+        m_cachedWorldRotation = parentRot * m_rotation;
+        m_cachedWorldScale = parentScale.cwiseProduct(m_scale);
+    } else {
+        // 无父对象：世界变换=本地变换
+        m_cachedWorldPosition = m_position;
+        m_cachedWorldRotation = m_rotation;
+        m_cachedWorldScale = m_scale;
+    }
+    
+    // 标记缓存为有效
+    m_dirtyWorldTransform.store(false, std::memory_order_release);
 }
 
 // ============================================================================
@@ -649,33 +817,57 @@ void Transform::PrintHierarchy(int indent, std::ostream& os) const {
 bool Transform::Validate() const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    // 检查四元数是否归一化
+    // 1. 检查四元数是否归一化
     float rotNorm = m_rotation.norm();
     if (std::abs(rotNorm - 1.0f) > MathUtils::EPSILON * 10.0f) {
         return false;  // 旋转四元数未归一化
     }
     
-    // 检查缩放是否包含 NaN 或 Inf
-    if (!std::isfinite(m_scale.x()) || !std::isfinite(m_scale.y()) || !std::isfinite(m_scale.z())) {
+    // 2. 检查四元数是否包含 NaN 或 Inf
+    if (!std::isfinite(m_rotation.w()) || !std::isfinite(m_rotation.x()) ||
+        !std::isfinite(m_rotation.y()) || !std::isfinite(m_rotation.z())) {
         return false;
     }
     
-    // 检查位置是否包含 NaN 或 Inf
+    // 3. 检查位置是否包含 NaN 或 Inf
     if (!std::isfinite(m_position.x()) || !std::isfinite(m_position.y()) || !std::isfinite(m_position.z())) {
         return false;
     }
     
-    // 检查父指针循环引用（简单检查）
+    // 4. 检查缩放是否包含 NaN 或 Inf
+    if (!std::isfinite(m_scale.x()) || !std::isfinite(m_scale.y()) || !std::isfinite(m_scale.z())) {
+        return false;
+    }
+    
+    // 5. 检查缩放是否过小（可能导致数值问题）
+    const float MIN_SCALE = 1e-7f;  // 比设置时更严格
+    if (std::abs(m_scale.x()) < MIN_SCALE || std::abs(m_scale.y()) < MIN_SCALE || std::abs(m_scale.z()) < MIN_SCALE) {
+        return false;  // 缩放过小
+    }
+    
+    // 6. 检查缩放是否过大（可能导致溢出）
+    const float MAX_SCALE = 1e6f;
+    if (std::abs(m_scale.x()) > MAX_SCALE || std::abs(m_scale.y()) > MAX_SCALE || std::abs(m_scale.z()) > MAX_SCALE) {
+        return false;  // 缩放过大
+    }
+    
+    // 7. 检查父指针自引用
     Transform* parent = m_parent.load(std::memory_order_acquire);
     if (parent == this) {
         return false;  // 自引用
     }
     
-    // 检查子对象列表中是否有空指针
+    // 8. 检查子对象列表中是否有空指针或自引用
     for (Transform* child : m_children) {
-        if (child == nullptr) {
-            return false;  // 空指针
+        if (child == nullptr || child == this) {
+            return false;
         }
+    }
+    
+    // 9. 检查层级深度（间接检测循环引用）
+    int depth = GetHierarchyDepth();
+    if (depth >= 1000) {
+        return false;  // 层级过深或存在循环
     }
     
     return true;
