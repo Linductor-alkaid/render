@@ -4,6 +4,7 @@
 #include "render/gl_thread_checker.h"
 #include <algorithm>
 #include <unordered_map>
+#include <thread>
 
 namespace Render {
 
@@ -16,6 +17,7 @@ Mesh::Mesh()
     , m_VBO(0)
     , m_EBO(0)
     , m_Uploaded(false)
+    , m_uploadState(UploadState::NotUploaded)
 {
 }
 
@@ -26,6 +28,7 @@ Mesh::Mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& ind
     , m_VBO(0)
     , m_EBO(0)
     , m_Uploaded(false)
+    , m_uploadState(UploadState::NotUploaded)
 {
 }
 
@@ -42,11 +45,14 @@ Mesh::Mesh(Mesh&& other) noexcept {
     m_VBO = other.m_VBO;
     m_EBO = other.m_EBO;
     m_Uploaded = other.m_Uploaded;
+    m_uploadState.store(other.m_uploadState.load(std::memory_order_acquire), 
+                        std::memory_order_release);
     
     other.m_VAO = 0;
     other.m_VBO = 0;
     other.m_EBO = 0;
     other.m_Uploaded = false;
+    other.m_uploadState.store(UploadState::NotUploaded, std::memory_order_release);
 }
 
 Mesh& Mesh::operator=(Mesh&& other) noexcept {
@@ -77,11 +83,14 @@ Mesh& Mesh::operator=(Mesh&& other) noexcept {
         m_VBO = other.m_VBO;
         m_EBO = other.m_EBO;
         m_Uploaded = other.m_Uploaded;
+        m_uploadState.store(other.m_uploadState.load(std::memory_order_acquire), 
+                            std::memory_order_release);
         
         other.m_VAO = 0;
         other.m_VBO = 0;
         other.m_EBO = 0;
         other.m_Uploaded = false;
+        other.m_uploadState.store(UploadState::NotUploaded, std::memory_order_release);
     }
     return *this;
 }
@@ -90,12 +99,14 @@ void Mesh::SetVertices(const std::vector<Vertex>& vertices) {
     std::lock_guard<std::mutex> lock(m_Mutex);
     m_Vertices = vertices;
     m_Uploaded = false;  // 需要重新上传
+    m_uploadState.store(UploadState::NotUploaded, std::memory_order_release);
 }
 
 void Mesh::SetIndices(const std::vector<uint32_t>& indices) {
     std::lock_guard<std::mutex> lock(m_Mutex);
     m_Indices = indices;
     m_Uploaded = false;  // 需要重新上传
+    m_uploadState.store(UploadState::NotUploaded, std::memory_order_release);
 }
 
 void Mesh::SetData(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
@@ -103,6 +114,7 @@ void Mesh::SetData(const std::vector<Vertex>& vertices, const std::vector<uint32
     m_Vertices = vertices;
     m_Indices = indices;
     m_Uploaded = false;  // 需要重新上传
+    m_uploadState.store(UploadState::NotUploaded, std::memory_order_release);
 }
 
 void Mesh::UpdateVertices(const std::vector<Vertex>& vertices, size_t offset) {
@@ -153,17 +165,56 @@ void Mesh::UpdateVertices(const std::vector<Vertex>& vertices, size_t offset) {
 }
 
 void Mesh::Upload() {
-    std::lock_guard<std::mutex> lock(m_Mutex);
+    // ✅ 两阶段上传优化：大幅减少锁持有时间
+    // 阶段1: 持锁复制数据（微秒级）
+    // 阶段2: 无锁OpenGL调用（毫秒级）
+    // 阶段3: 持锁更新状态（微秒级）
     
-    if (m_Vertices.empty()) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
-                                   "Mesh::Upload: No vertices to upload"));
-        return;
-    }
+    // === 阶段1：快速复制数据（持锁，微秒级）===
+    std::vector<Vertex> vertices_copy;
+    std::vector<uint32_t> indices_copy;
+    bool need_reupload = false;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        
+        if (m_Vertices.empty()) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+                                       "Mesh::Upload: No vertices to upload"));
+            m_uploadState.store(UploadState::Failed, std::memory_order_release);
+            return;
+        }
+        
+        // 检查当前状态
+        UploadState currentState = m_uploadState.load(std::memory_order_acquire);
+        if (currentState == UploadState::Uploaded && m_VAO != 0 && m_VBO != 0) {
+            Logger::GetInstance().Debug("Mesh::Upload: 网格已上传，跳过 (VAO:" + 
+                                       std::to_string(m_VAO) + ")");
+            return;
+        }
+        
+        if (currentState == UploadState::Uploading) {
+            Logger::GetInstance().Warning("Mesh::Upload: 正在上传中，跳过");
+            return;
+        }
+        
+        // 标记为正在上传（其他线程会看到此状态并等待）
+        m_uploadState.store(UploadState::Uploading, std::memory_order_release);
+        
+        // 快速复制数据
+        vertices_copy = m_Vertices;
+        indices_copy = m_Indices;
+        need_reupload = m_Uploaded;
+    }  // 🔓 锁释放！其他线程现在可以访问Mesh对象
+    
+    // === 阶段2：OpenGL调用（无锁，毫秒级）===
+    GLuint vao = 0, vbo = 0, ebo = 0;
     
     try {
-        // 如果已经上传过，先清理旧资源（内部实现，已持有锁）
-        if (m_Uploaded) {
+        // 如果需要重新上传，先清理旧资源
+        if (need_reupload) {
+            Logger::GetInstance().Info("Mesh::Upload: 重新上传");
+            std::lock_guard<std::mutex> lock(m_Mutex);
             if (m_VAO != 0) {
                 GL_THREAD_CHECK();
                 glDeleteVertexArrays(1, &m_VAO);
@@ -179,38 +230,37 @@ void Mesh::Upload() {
                 glDeleteBuffers(1, &m_EBO);
                 m_EBO = 0;
             }
-            m_Uploaded = false;
         }
         
-        // 创建 VAO
+        // 创建VAO
         GL_THREAD_CHECK();
-        glGenVertexArrays(1, &m_VAO);
-        if (m_VAO == 0) {
+        glGenVertexArrays(1, &vao);
+        if (vao == 0) {
             throw std::runtime_error("Failed to generate VAO");
         }
-        glBindVertexArray(m_VAO);
+        glBindVertexArray(vao);
         
-        // 创建并填充 VBO
-        glGenBuffers(1, &m_VBO);
-        if (m_VBO == 0) {
+        // 创建并填充VBO
+        glGenBuffers(1, &vbo);
+        if (vbo == 0) {
             throw std::runtime_error("Failed to generate VBO");
         }
-        glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, 
-                     m_Vertices.size() * sizeof(Vertex), 
-                     m_Vertices.data(), 
+                     vertices_copy.size() * sizeof(Vertex), 
+                     vertices_copy.data(), 
                      GL_STATIC_DRAW);
         
-        // 创建并填充 EBO（如果有索引）
-        if (!m_Indices.empty()) {
-            glGenBuffers(1, &m_EBO);
-            if (m_EBO == 0) {
+        // 创建并填充EBO
+        if (!indices_copy.empty()) {
+            glGenBuffers(1, &ebo);
+            if (ebo == 0) {
                 throw std::runtime_error("Failed to generate EBO");
             }
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, 
-                         m_Indices.size() * sizeof(uint32_t), 
-                         m_Indices.data(), 
+                         indices_copy.size() * sizeof(uint32_t), 
+                         indices_copy.data(), 
                          GL_STATIC_DRAW);
         }
         
@@ -222,60 +272,95 @@ void Mesh::Upload() {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
         
-        m_Uploaded = true;
+        // === 阶段3：更新状态（持锁，微秒级）===
+        {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_VAO = vao;
+            m_VBO = vbo;
+            m_EBO = ebo;
+            m_Uploaded = true;
+        }
         
-        Logger::GetInstance().Info("Mesh uploaded: " + std::to_string(m_Vertices.size()) + " vertices, " + 
-                                   std::to_string(m_Indices.size()) + " indices");
+        // 标记上传完成（原子操作，无锁）
+        m_uploadState.store(UploadState::Uploaded, std::memory_order_release);
+        
+        Logger::GetInstance().Info("Mesh uploaded: " + std::to_string(vertices_copy.size()) + 
+                                   " vertices, " + std::to_string(indices_copy.size()) + " indices");
                                    
     } catch (const std::exception& e) {
-        // 异常处理：清理部分创建的资源
+        // 异常处理
         HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
-                                 "Mesh::Upload: Exception during upload - " + std::string(e.what())));
+                                 "Mesh::Upload: Exception - " + std::string(e.what())));
         
-        // 清理资源
-        if (m_VAO != 0) {
-            glDeleteVertexArrays(1, &m_VAO);
-            m_VAO = 0;
-        }
-        if (m_VBO != 0) {
-            glDeleteBuffers(1, &m_VBO);
-            m_VBO = 0;
-        }
-        if (m_EBO != 0) {
-            glDeleteBuffers(1, &m_EBO);
-            m_EBO = 0;
+        // 清理资源（无锁）
+        if (vao != 0) glDeleteVertexArrays(1, &vao);
+        if (vbo != 0) glDeleteBuffers(1, &vbo);
+        if (ebo != 0) glDeleteBuffers(1, &ebo);
+        
+        // 标记失败
+        m_uploadState.store(UploadState::Failed, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Uploaded = false;
         }
         
-        m_Uploaded = false;
     } catch (...) {
         // 捕获所有异常
         HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
-                                 "Mesh::Upload: Unknown exception during upload"));
+                                 "Mesh::Upload: Unknown exception"));
         
         // 清理资源
-        if (m_VAO != 0) {
-            glDeleteVertexArrays(1, &m_VAO);
-            m_VAO = 0;
-        }
-        if (m_VBO != 0) {
-            glDeleteBuffers(1, &m_VBO);
-            m_VBO = 0;
-        }
-        if (m_EBO != 0) {
-            glDeleteBuffers(1, &m_EBO);
-            m_EBO = 0;
-        }
+        if (vao != 0) glDeleteVertexArrays(1, &vao);
+        if (vbo != 0) glDeleteBuffers(1, &vbo);
+        if (ebo != 0) glDeleteBuffers(1, &ebo);
         
-        m_Uploaded = false;
+        // 标记失败
+        m_uploadState.store(UploadState::Failed, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Uploaded = false;
+        }
     }
 }
 
 void Mesh::Draw(DrawMode mode) const {
+    // ✅ 优化：等待上传完成（如果正在上传中）
+    UploadState state = m_uploadState.load(std::memory_order_acquire);
+    if (state == UploadState::Uploading) {
+        // 等待上传完成（带超时）
+        int retries = 0;
+        const int MAX_RETRIES = 1000;  // 约1秒超时（假设每次yield约1ms）
+        
+        while (state == UploadState::Uploading && retries < MAX_RETRIES) {
+            std::this_thread::yield();  // 让出CPU给上传线程
+            state = m_uploadState.load(std::memory_order_acquire);
+            retries++;
+        }
+        
+        if (retries >= MAX_RETRIES) {
+            HANDLE_ERROR(RENDER_ERROR(ErrorCode::ThreadSynchronizationFailed, 
+                                     "Mesh::Draw: 等待上传超时（1秒）"));
+            return;
+        }
+        
+        if (retries > 0) {
+            Logger::GetInstance().Debug("Mesh::Draw: 等待上传完成 (重试次数: " + 
+                                       std::to_string(retries) + ")");
+        }
+    }
+    
     std::lock_guard<std::mutex> lock(m_Mutex);
     
+    // ✅ 增强：更详细的状态检查
     if (!m_Uploaded) {
         HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
-                                   "Mesh::Draw: 网格数据尚未上传到 GPU"));
+                                   "Mesh::Draw: 网格数据尚未上传到 GPU，请先调用 Upload()"));
+        return;
+    }
+    
+    if (m_VAO == 0) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidState, 
+                                 "Mesh::Draw: VAO 无效 (m_Uploaded=true 但 VAO=0)"));
         return;
     }
     
@@ -302,11 +387,38 @@ void Mesh::Draw(DrawMode mode) const {
 }
 
 void Mesh::DrawInstanced(uint32_t instanceCount, DrawMode mode) const {
+    // ✅ 优化：等待上传完成（如果正在上传中）
+    UploadState state = m_uploadState.load(std::memory_order_acquire);
+    if (state == UploadState::Uploading) {
+        // 等待上传完成（带超时）
+        int retries = 0;
+        const int MAX_RETRIES = 1000;
+        
+        while (state == UploadState::Uploading && retries < MAX_RETRIES) {
+            std::this_thread::yield();
+            state = m_uploadState.load(std::memory_order_acquire);
+            retries++;
+        }
+        
+        if (retries >= MAX_RETRIES) {
+            HANDLE_ERROR(RENDER_ERROR(ErrorCode::ThreadSynchronizationFailed, 
+                                     "Mesh::DrawInstanced: 等待上传超时"));
+            return;
+        }
+    }
+    
     std::lock_guard<std::mutex> lock(m_Mutex);
     
+    // ✅ 增强：更详细的状态检查
     if (!m_Uploaded) {
         HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
-                                   "Mesh::DrawInstanced: 网格数据尚未上传到 GPU"));
+                                   "Mesh::DrawInstanced: 网格数据尚未上传到 GPU，请先调用 Upload()"));
+        return;
+    }
+    
+    if (m_VAO == 0) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidState, 
+                                 "Mesh::DrawInstanced: VAO 无效"));
         return;
     }
     
@@ -355,6 +467,7 @@ void Mesh::Clear() {
     }
     
     m_Uploaded = false;
+    m_uploadState.store(UploadState::NotUploaded, std::memory_order_release);
 }
 
 AABB Mesh::CalculateBounds() const {

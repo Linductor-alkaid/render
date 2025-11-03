@@ -112,6 +112,50 @@ public:
     );
     
     // ========================================================================
+    // 批量资源管理
+    // ========================================================================
+    
+    /**
+     * @brief 批量上传网格到GPU（性能优化）
+     * @param meshes 要上传的网格列表
+     * @param maxConcurrent 最大并发上传数（默认5，避免OpenGL驱动过载）
+     * @param progressCallback 进度回调函数（可选）
+     * @return 成功上传的网格数量
+     * 
+     * 功能说明：
+     * - 分批上传网格，避免OpenGL驱动资源竞争
+     * - 自动跳过已上传的网格
+     * - 支持进度回调，便于显示加载进度
+     * - 异常安全：单个网格上传失败不影响其他网格
+     * 
+     * 使用场景：
+     * - 初始化场景时批量上传所有网格
+     * - 加载大型模型（如MMD模型）时避免卡顿
+     * - 需要显示加载进度的场景
+     * 
+     * 示例：
+     * @code
+     * std::vector<Ref<Mesh>> meshes = { mesh1, mesh2, mesh3, ... };
+     * 
+     * // 方式1: 简单批量上传
+     * size_t uploaded = MeshLoader::BatchUpload(meshes);
+     * 
+     * // 方式2: 带进度回调
+     * size_t total = meshes.size();
+     * auto callback = [total](size_t current, size_t total, const Ref<Mesh>& mesh) {
+     *     float progress = (float)current / total * 100.0f;
+     *     std::cout << "上传进度: " << progress << "%" << std::endl;
+     * };
+     * size_t uploaded = MeshLoader::BatchUpload(meshes, 5, callback);
+     * @endcode
+     */
+    static size_t BatchUpload(
+        const std::vector<Ref<Mesh>>& meshes,
+        size_t maxConcurrent = 5,
+        std::function<void(size_t current, size_t total, const Ref<Mesh>& mesh)> progressCallback = nullptr
+    );
+    
+    // ========================================================================
     // 基本几何形状生成
     // ========================================================================
     /**

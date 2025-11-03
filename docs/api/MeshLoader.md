@@ -68,6 +68,16 @@ public:
     );
     
     // ========================================================================
+    // 批量资源管理 ⭐ v0.12.0 新增
+    // ========================================================================
+    
+    static size_t BatchUpload(
+        const std::vector<Ref<Mesh>>& meshes,
+        size_t maxConcurrent = 5,
+        std::function<void(size_t, size_t, const Ref<Mesh>&)> progressCallback = nullptr
+    );
+    
+    // ========================================================================
     // 基本几何形状生成
     // ========================================================================
     
@@ -214,6 +224,121 @@ if (!mesh) {
 shader->Bind();
 mesh->Draw();
 ```
+
+---
+
+## 批量资源管理 ⭐ **v0.12.0 新增**
+
+### BatchUpload
+
+批量上传网格到GPU（性能优化）。
+
+```cpp
+static size_t BatchUpload(
+    const std::vector<Ref<Mesh>>& meshes,
+    size_t maxConcurrent = 5,
+    std::function<void(size_t current, size_t total, const Ref<Mesh>& mesh)> progressCallback = nullptr
+);
+```
+
+**参数**:
+- `meshes` - 要上传的网格列表
+- `maxConcurrent` - 每批最大并发上传数（默认5，避免OpenGL驱动过载）
+- `progressCallback` - 进度回调函数（可选）
+  - `current` - 当前已处理的网格数（1-based）
+  - `total` - 总网格数
+  - `mesh` - 当前处理的网格
+
+**返回值**: 成功上传的网格数量
+
+**功能特性**:
+1. **分批上传**: 按批次上传，避免同时上传过多网格导致OpenGL驱动资源竞争
+2. **进度追踪**: 可选的进度回调，便于UI更新或日志输出
+3. **智能跳过**: 自动跳过已上传的网格（节省时间）
+4. **异常安全**: 单个网格上传失败不影响其他网格的上传
+5. **详细日志**: 输出每批次和总体统计信息
+6. **批次延迟**: 批次之间10ms延迟，给OpenGL驱动缓冲时间
+
+**使用场景**:
+- 初始化场景时批量上传所有网格
+- 加载大型模型（如PMX/MMD模型，100+网格）时避免卡顿
+- 需要显示加载进度的场景
+- 防止OpenGL驱动资源竞争导致的卡死问题
+
+**示例1: 基本使用**:
+```cpp
+#include <render/mesh_loader.h>
+#include <render/resource_manager.h>
+
+// 从ResourceManager获取所有网格
+auto& resMgr = ResourceManager::GetInstance();
+std::vector<Ref<Mesh>> meshesToUpload;
+
+for (const auto& meshName : meshNames) {
+    auto mesh = resMgr.GetMesh(meshName);
+    if (mesh && !mesh->IsUploaded()) {
+        meshesToUpload.push_back(mesh);
+    }
+}
+
+// 批量上传（每批5个）
+size_t uploaded = MeshLoader::BatchUpload(meshesToUpload, 5);
+Logger::GetInstance().Info("成功上传 " + std::to_string(uploaded) + " 个网格");
+```
+
+**示例2: 带进度回调**:
+```cpp
+// 定义进度回调
+auto progressCallback = [](size_t current, size_t total, const Ref<Mesh>& mesh) {
+    float progress = (float)current / total * 100.0f;
+    Logger::GetInstance().Info("上传进度: " + std::to_string((int)progress) + "% (" + 
+                               std::to_string(current) + "/" + std::to_string(total) + ")");
+    
+    // 可以在这里更新UI进度条
+    // UpdateProgressBar(progress);
+};
+
+// 批量上传（每批10个，带进度）
+size_t uploaded = MeshLoader::BatchUpload(meshes, 10, progressCallback);
+```
+
+**示例3: 加载大型PMX模型**:
+```cpp
+// 加载PMX模型（可能有100+网格）
+auto modelParts = MeshLoader::LoadFromFileWithMaterials("models/miku/v4c5.0.pmx");
+
+Logger::GetInstance().Info("加载了 " + std::to_string(modelParts.size()) + " 个部件");
+
+// 提取网格
+std::vector<Ref<Mesh>> meshes;
+for (const auto& part : modelParts) {
+    if (part.mesh) {
+        meshes.push_back(part.mesh);
+    }
+}
+
+// 批量上传（避免卡死）
+Logger::GetInstance().Info("开始批量上传...");
+size_t uploaded = MeshLoader::BatchUpload(meshes, 5);  // 每批5个，避免驱动过载
+Logger::GetInstance().Info("上传完成: " + std::to_string(uploaded) + " 个网格");
+```
+
+**性能对比**:
+```cpp
+// ❌ 不推荐：单个上传（大量网格时可能卡死）
+for (auto& mesh : meshes) {
+    mesh->Upload();  // 可能导致OpenGL驱动资源竞争
+}
+
+// ✅ 推荐：批量上传（分批处理，避免资源竞争）
+MeshLoader::BatchUpload(meshes, 5);  // 每批5个，批次间有延迟
+```
+
+**注意事项**:
+- ⚠️ 必须在OpenGL上下文的线程（主线程）中调用
+- ⚠️ `maxConcurrent`不是指多线程并发，而是每批上传的数量
+- ✅ 批次之间有10ms延迟，给OpenGL驱动缓冲时间
+- ✅ 已上传的网格会自动跳过，不会重复上传
 
 ---
 

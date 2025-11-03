@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <atomic>
 
 namespace Render {
 
@@ -58,6 +59,18 @@ enum class DrawMode {
     LineStrip,      // 线段带
     LineLoop,       // 线段环
     Points          // 点
+};
+
+/**
+ * @brief 网格上传状态
+ * 
+ * 用于两阶段上传优化，减少锁竞争
+ */
+enum class UploadState {
+    NotUploaded,    // 未上传
+    Uploading,      // 正在上传（中间状态）
+    Uploaded,       // 已上传
+    Failed          // 上传失败
 };
 
 /**
@@ -320,6 +333,22 @@ public:
     }
     
     /**
+     * @brief 获取上传状态（线程安全，无锁）
+     * @return 当前上传状态
+     */
+    UploadState GetUploadState() const {
+        return m_uploadState.load(std::memory_order_acquire);
+    }
+    
+    /**
+     * @brief 是否正在上传中（线程安全，无锁）
+     * @return true 表示正在上传
+     */
+    bool IsUploading() const {
+        return m_uploadState.load(std::memory_order_acquire) == UploadState::Uploading;
+    }
+    
+    /**
      * @brief 计算包围盒
      */
     AABB CalculateBounds() const;
@@ -359,7 +388,8 @@ private:
     GLuint m_VBO;   // 顶点缓冲对象
     GLuint m_EBO;   // 元素缓冲对象（索引）
     
-    bool m_Uploaded;    // 是否已上传到 GPU
+    bool m_Uploaded;    // 是否已上传到 GPU（向后兼容）
+    std::atomic<UploadState> m_uploadState;  // 上传状态（用于两阶段上传优化）
     
     mutable std::mutex m_Mutex;  // 互斥锁，保护所有成员变量
 };

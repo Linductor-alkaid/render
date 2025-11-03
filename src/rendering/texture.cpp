@@ -357,9 +357,17 @@ bool Texture::CreateEmpty(int width, int height, TextureFormat format) {
 }
 
 void Texture::Bind(unsigned int unit) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // ✅ 修复：两阶段锁定，OpenGL调用移到锁外
+    GLuint textureID;
     
-    if (m_textureID == 0) {
+    // 阶段1：快速读取纹理ID（持锁）
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        textureID = m_textureID;
+    }  // 锁释放
+    
+    // 阶段2：OpenGL调用（无锁）
+    if (textureID == 0) {
         Logger::GetInstance().Warning("尝试绑定无效纹理");
         return;
     }
@@ -369,8 +377,9 @@ void Texture::Bind(unsigned int unit) const {
         unit = 0;
     }
 
+    GL_THREAD_CHECK();
     glActiveTexture(GL_TEXTURE0 + unit);
-    glBindTexture(GL_TEXTURE_2D, m_textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
 }
 
 void Texture::Unbind() const {

@@ -7,6 +7,9 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <filesystem>
+#include <thread>
+#include <chrono>
+#include <functional>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -1076,6 +1079,103 @@ Ref<Mesh> MeshLoader::CreateCircle(float radius, uint32_t segments, const Color&
     
     Logger::GetInstance().Info("Created circle mesh: " + std::to_string(vertices.size()) + " vertices");
     return mesh;
+}
+
+// ============================================================================
+// 批量资源管理
+// ============================================================================
+
+size_t MeshLoader::BatchUpload(
+    const std::vector<Ref<Mesh>>& meshes,
+    size_t maxConcurrent,
+    std::function<void(size_t current, size_t total, const Ref<Mesh>& mesh)> progressCallback)
+{
+    if (meshes.empty()) {
+        Logger::GetInstance().Warning("MeshLoader::BatchUpload: 网格列表为空");
+        return 0;
+    }
+    
+    Logger::GetInstance().Info("========================================");
+    Logger::GetInstance().Info("批量上传网格: " + std::to_string(meshes.size()) + " 个");
+    Logger::GetInstance().Info("最大并发数: " + std::to_string(maxConcurrent));
+    Logger::GetInstance().Info("========================================");
+    
+    size_t uploadedCount = 0;
+    size_t skippedCount = 0;
+    size_t failedCount = 0;
+    
+    // 确保maxConcurrent至少为1
+    if (maxConcurrent < 1) {
+        maxConcurrent = 1;
+    }
+    
+    // 分批上传
+    for (size_t i = 0; i < meshes.size(); i += maxConcurrent) {
+        size_t batchEnd = std::min(i + maxConcurrent, meshes.size());
+        size_t batchSize = batchEnd - i;
+        
+        Logger::GetInstance().Debug("批次 " + std::to_string(i / maxConcurrent + 1) + 
+                                    ": 上传 " + std::to_string(i) + "-" + 
+                                    std::to_string(batchEnd - 1) + " (" + 
+                                    std::to_string(batchSize) + " 个网格)");
+        
+        // 上传当前批次的网格
+        for (size_t j = i; j < batchEnd; ++j) {
+            const auto& mesh = meshes[j];
+            
+            if (!mesh) {
+                Logger::GetInstance().Warning("MeshLoader::BatchUpload: 网格 " + 
+                                             std::to_string(j) + " 为空，跳过");
+                skippedCount++;
+                continue;
+            }
+            
+            try {
+                // 检查是否已上传
+                if (mesh->IsUploaded()) {
+                    Logger::GetInstance().Debug("网格 " + std::to_string(j) + " 已上传，跳过");
+                    skippedCount++;
+                } else {
+                    // 上传网格
+                    mesh->Upload();
+                    uploadedCount++;
+                    
+                    Logger::GetInstance().Debug("✅ 网格 " + std::to_string(j) + 
+                                               " 上传成功 (" + 
+                                               std::to_string(mesh->GetVertexCount()) + " 顶点)");
+                }
+                
+                // 调用进度回调
+                if (progressCallback) {
+                    progressCallback(j + 1, meshes.size(), mesh);
+                }
+                
+            } catch (const std::exception& e) {
+                Logger::GetInstance().Error("网格 " + std::to_string(j) + 
+                                           " 上传失败: " + std::string(e.what()));
+                failedCount++;
+                
+                // 继续上传下一个（不中断）
+            }
+        }
+        
+        // 批次之间短暂休息，让OpenGL驱动有时间处理
+        if (batchEnd < meshes.size() && batchSize > 1) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    
+    // 输出统计信息
+    Logger::GetInstance().Info("========================================");
+    Logger::GetInstance().Info("批量上传完成:");
+    Logger::GetInstance().Info("  - 成功上传: " + std::to_string(uploadedCount) + " 个");
+    Logger::GetInstance().Info("  - 已跳过: " + std::to_string(skippedCount) + " 个");
+    if (failedCount > 0) {
+        Logger::GetInstance().Warning("  - 上传失败: " + std::to_string(failedCount) + " 个");
+    }
+    Logger::GetInstance().Info("========================================");
+    
+    return uploadedCount;
 }
 
 } // namespace Render

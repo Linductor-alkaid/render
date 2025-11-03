@@ -474,8 +474,26 @@ void Material::Bind(RenderState* renderState) {
     }
     
     // 12. 应用渲染状态
+    // ✅ 修复：从复制的数据中读取渲染状态，而不是再次加锁
     if (renderState) {
-        ApplyRenderState(renderState);
+        BlendMode blendMode;
+        CullFace cullFace;
+        bool depthTest, depthWrite;
+        
+        // 快速获取渲染状态（加锁）
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            blendMode = m_blendMode;
+            cullFace = m_cullFace;
+            depthTest = m_depthTest;
+            depthWrite = m_depthWrite;
+        }
+        
+        // 应用渲染状态（无锁）
+        renderState->SetBlendMode(blendMode);
+        renderState->SetCullFace(cullFace);
+        renderState->SetDepthTest(depthTest);
+        renderState->SetDepthWrite(depthWrite);
     }
 }
 
