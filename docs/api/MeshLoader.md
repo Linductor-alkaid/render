@@ -10,7 +10,9 @@
 1. **外部模型文件加载** - 支持 OBJ, FBX, GLTF/GLB, Collada, Blender, PMX/PMD (MMD), 3DS, PLY, STL 等格式
 2. **基本几何形状生成** - 创建立方体、球体、圆柱等基本几何形状
 
-所有生成/加载的网格都已自动上传到 GPU，可直接使用。
+默认情况下，所有生成/加载的网格都已自动上传到 GPU，可直接使用。
+
+**⭐ v0.12.0 新增**: 支持延迟上传（`autoUpload=false`），可用于异步加载场景。详见 [AsyncResourceLoader API](AsyncResourceLoader.md)。
 
 **头文件**: `render/mesh_loader.h`  
 **命名空间**: `Render`  
@@ -58,13 +60,15 @@ public:
     
     static std::vector<Ref<Mesh>> LoadFromFile(
         const std::string& filepath,
-        bool flipUVs = true
+        bool flipUVs = true,
+        bool autoUpload = true  // ⭐ v0.12.0 新增：延迟上传支持
     );
     
     static Ref<Mesh> LoadMeshFromFile(
         const std::string& filepath,
         uint32_t meshIndex = 0,
-        bool flipUVs = true
+        bool flipUVs = true,
+        bool autoUpload = true  // ⭐ v0.12.0 新增：延迟上传支持
     );
     
     // ========================================================================
@@ -127,13 +131,21 @@ public:
 ```cpp
 static std::vector<Ref<Mesh>> LoadFromFile(
     const std::string& filepath,
-    bool flipUVs = true
+    bool flipUVs = true,
+    bool autoUpload = true  // ⭐ v0.12.0 新增
 );
 ```
 
 **参数**:
 - `filepath` - 模型文件路径（相对或绝对路径）
 - `flipUVs` - 是否翻转 UV 坐标（默认 `true`，适用于 OpenGL）
+- `autoUpload` - 是否自动上传到 GPU（默认 `true`）
+  - `true`: 立即上传到 GPU，网格可直接渲染（主线程调用时）
+  - `false`: 延迟上传，适用于异步加载场景（工作线程调用时）
+
+**注意**: 
+- ⚠️ 当 `autoUpload=false` 时，返回的网格未上传到GPU，需要后续调用 `mesh->Upload()`（必须在主线程）
+- ✅ 用于异步加载器时，工作线程可设置 `autoUpload=false`，主线程再调用 `Upload()`
 
 **返回值**:
 - 网格列表（如果加载失败返回空列表）
@@ -153,8 +165,9 @@ static std::vector<Ref<Mesh>> LoadFromFile(
 - ✅ 自动三角化（所有多边形转换为三角形）
 - ✅ 自动生成法线（如果文件中不包含）
 - ✅ 自动优化（合并相同顶点、改善缓存局部性）
-- ✅ 自动上传到 GPU（返回的网格可直接渲染）
+- ✅ 自动上传到 GPU（`autoUpload=true` 时，返回的网格可直接渲染）
 - ✅ 支持多网格模型（返回网格列表）
+- ✅ 支持延迟上传（`autoUpload=false`，用于异步加载）
 
 **当前限制**:
 - ⚠️ 仅提取几何数据（位置、法线、UV、顶点颜色）
@@ -166,18 +179,21 @@ static std::vector<Ref<Mesh>> LoadFromFile(
 
 **示例**:
 ```cpp
-// 加载模型文件
+// 示例1: 同步加载（默认自动上传）
 auto meshes = MeshLoader::LoadFromFile("models/character.fbx");
-
-if (meshes.empty()) {
-    LOG_ERROR("Failed to load model");
-    return;
+// 网格已上传到GPU，可直接渲染
+for (auto& mesh : meshes) {
+    mesh->Draw();
 }
 
-// 渲染所有网格
-shader->Bind();
+// 示例2: 延迟上传（用于异步加载）
+auto meshes = MeshLoader::LoadFromFile("models/character.fbx", true, false);
+// 在工作线程加载，网格未上传
+// 在主线程上传
 for (auto& mesh : meshes) {
-    // 设置 uniforms...
+    if (!mesh->IsUploaded()) {
+        mesh->Upload();  // 必须在主线程调用
+    }
     mesh->Draw();
 }
 ```
@@ -192,7 +208,8 @@ for (auto& mesh : meshes) {
 static Ref<Mesh> LoadMeshFromFile(
     const std::string& filepath,
     uint32_t meshIndex = 0,
-    bool flipUVs = true
+    bool flipUVs = true,
+    bool autoUpload = true  // ⭐ v0.12.0 新增
 );
 ```
 
@@ -200,6 +217,9 @@ static Ref<Mesh> LoadMeshFromFile(
 - `filepath` - 模型文件路径
 - `meshIndex` - 网格索引（默认 0，第一个网格）
 - `flipUVs` - 是否翻转 UV 坐标（默认 `true`）
+- `autoUpload` - 是否自动上传到 GPU（默认 `true`）
+  - `true`: 立即上传到 GPU，网格可直接渲染（主线程调用时）
+  - `false`: 延迟上传，适用于异步加载场景（工作线程调用时）
 
 **返回值**:
 - 网格对象（如果加载失败返回 `nullptr`）
@@ -212,17 +232,18 @@ static Ref<Mesh> LoadMeshFromFile(
 
 **示例**:
 ```cpp
-// 加载第一个网格
+// 示例1: 同步加载（默认自动上传）
 auto mesh = MeshLoader::LoadMeshFromFile("models/cube.obj");
-
-if (!mesh) {
-    LOG_ERROR("Failed to load mesh");
-    return;
+if (mesh) {
+    shader->Bind();
+    mesh->Draw();  // 已上传，可直接渲染
 }
 
-// 直接渲染
-shader->Bind();
-mesh->Draw();
+// 示例2: 延迟上传（用于异步加载）
+auto mesh = MeshLoader::LoadMeshFromFile("models/cube.obj", 0, true, false);
+if (mesh && !mesh->IsUploaded()) {
+    mesh->Upload();  // 必须在主线程调用
+}
 ```
 
 ---
@@ -1132,6 +1153,7 @@ for (auto& mesh : meshes) {
 - [Mesh](Mesh.md) - 网格类
 - [Types](Types.md) - Vector3, Color 等类型
 - [Shader](Shader.md) - 着色器系统
+- [AsyncResourceLoader](AsyncResourceLoader.md) - 异步资源加载器（v0.12.0，支持延迟上传）
 
 ---
 
@@ -1140,6 +1162,7 @@ for (auto& mesh : meshes) {
 完整示例请参考：
 - [06_mesh_test.cpp](../../examples/06_mesh_test.cpp) - 基本几何形状生成测试
 - [11_model_loader_test.cpp](../../examples/11_model_loader_test.cpp) - 外部模型文件加载测试
+- [29_async_loading_test.cpp](../../examples/29_async_loading_test.cpp) - 异步加载测试（v0.12.0，演示 `autoUpload=false` 用法）
 
 ---
 
