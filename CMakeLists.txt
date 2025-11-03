@@ -180,6 +180,7 @@ set(RENDER_SOURCES
     src/core/opengl_context.cpp
     src/core/render_state.cpp
     src/core/resource_manager.cpp
+    src/core/async_resource_loader.cpp
     src/core/transform.cpp
     src/core/camera.cpp
     src/core/gl_thread_checker.cpp

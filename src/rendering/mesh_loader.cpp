@@ -24,7 +24,7 @@ namespace Render {
 /**
  * @brief 处理单个 Assimp 网格并转换为引擎网格对象
  */
-static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene) {
+static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene, bool autoUpload = true) {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
@@ -85,9 +85,13 @@ static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene) {
         }
     }
     
-    // 创建网格并上传到 GPU
+    // 创建网格
     auto mesh = CreateRef<Mesh>(vertices, indices);
-    mesh->Upload();
+    
+    // ⭐ v0.12.0: 条件上传（支持异步加载）
+    if (autoUpload) {
+        mesh->Upload();
+    }
     
     Logger::GetInstance().Info("Processed mesh: " + std::to_string(vertices.size()) + 
                                " vertices, " + std::to_string(indices.size() / 3) + " triangles");
@@ -98,16 +102,16 @@ static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene) {
 /**
  * @brief 递归处理 Assimp 场景节点
  */
-static void ProcessAssimpNode(aiNode* node, const aiScene* scene, std::vector<Ref<Mesh>>& meshes) {
+static void ProcessAssimpNode(aiNode* node, const aiScene* scene, std::vector<Ref<Mesh>>& meshes, bool autoUpload = true) {
     // 处理当前节点的所有网格
     for (uint32_t i = 0; i < node->mNumMeshes; i++) {
         aiMesh* assimpMesh = scene->mMeshes[node->mMeshes[i]];
-        meshes.push_back(ProcessAssimpMesh(assimpMesh, scene));
+        meshes.push_back(ProcessAssimpMesh(assimpMesh, scene, autoUpload));
     }
     
     // 递归处理子节点
     for (uint32_t i = 0; i < node->mNumChildren; i++) {
-        ProcessAssimpNode(node->mChildren[i], scene, meshes);
+        ProcessAssimpNode(node->mChildren[i], scene, meshes, autoUpload);
     }
 }
 
@@ -307,8 +311,8 @@ static void ProcessAssimpNodeWithMaterials(
     for (uint32_t i = 0; i < node->mNumMeshes; i++) {
         aiMesh* assimpMesh = scene->mMeshes[node->mMeshes[i]];
         
-        // 处理网格
-        auto mesh = ProcessAssimpMesh(assimpMesh, scene);
+        // 处理网格（材质加载始终自动上传）
+        auto mesh = ProcessAssimpMesh(assimpMesh, scene, true);
         
         // 处理材质（如果有）
         Ref<Material> material = nullptr;
@@ -338,10 +342,11 @@ static void ProcessAssimpNodeWithMaterials(
 // MeshLoader - 文件加载实现
 // ============================================================================
 
-std::vector<Ref<Mesh>> MeshLoader::LoadFromFile(const std::string& filepath, bool flipUVs) {
+std::vector<Ref<Mesh>> MeshLoader::LoadFromFile(const std::string& filepath, bool flipUVs, bool autoUpload) {
     std::vector<Ref<Mesh>> meshes;
     
-    Logger::GetInstance().Info("Loading model from file: " + filepath);
+    Logger::GetInstance().Info("Loading model from file: " + filepath + 
+                               (autoUpload ? " (自动上传)" : " (延迟上传)"));
     
     // 创建 Assimp 导入器
     Assimp::Importer importer;
@@ -374,15 +379,15 @@ std::vector<Ref<Mesh>> MeshLoader::LoadFromFile(const std::string& filepath, boo
     Logger::GetInstance().Info("Model loaded successfully. Processing meshes...");
     
     // 递归处理场景中的所有节点和网格
-    ProcessAssimpNode(scene->mRootNode, scene, meshes);
+    ProcessAssimpNode(scene->mRootNode, scene, meshes, autoUpload);
     
     Logger::GetInstance().Info("Model loading complete. Total meshes: " + std::to_string(meshes.size()));
     
     return meshes;
 }
 
-Ref<Mesh> MeshLoader::LoadMeshFromFile(const std::string& filepath, uint32_t meshIndex, bool flipUVs) {
-    auto meshes = LoadFromFile(filepath, flipUVs);
+Ref<Mesh> MeshLoader::LoadMeshFromFile(const std::string& filepath, uint32_t meshIndex, bool flipUVs, bool autoUpload) {
+    auto meshes = LoadFromFile(filepath, flipUVs, autoUpload);
     
     if (meshes.empty()) {
         Logger::GetInstance().Error("No meshes found in file: " + filepath);

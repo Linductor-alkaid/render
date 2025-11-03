@@ -47,6 +47,7 @@ public:
      * @brief 从文件加载模型（可能包含多个网格）
      * @param filepath 模型文件路径
      * @param flipUVs 是否翻转 UV 坐标（默认 true，适用于 OpenGL）
+     * @param autoUpload 是否自动上传到GPU（默认 true）⭐ v0.12.0 新增
      * @return 网格列表（如果加载失败返回空列表）
      * 
      * 支持的格式：
@@ -61,14 +62,17 @@ public:
      * - .stl - Stereolithography
      * 
      * 注意：
-     * - 此方法必须在 OpenGL 上下文的线程中调用（因为会调用 Upload()）
-     * - 返回的网格已自动上传到 GPU
+     * - 如果autoUpload=true：必须在OpenGL上下文的线程中调用，返回的网格已上传
+     * - 如果autoUpload=false：可以在任意线程调用，返回的网格需要手动调用Upload()
      * - 模型会自动三角化
      * - 法线会自动生成（如果文件中不包含）
+     * 
+     * ⭐ v0.12.0 新增autoUpload参数，支持异步资源加载
      */
     static std::vector<Ref<Mesh>> LoadFromFile(
         const std::string& filepath,
-        bool flipUVs = true
+        bool flipUVs = true,
+        bool autoUpload = true
     );
     
     /**
@@ -76,6 +80,7 @@ public:
      * @param filepath 模型文件路径
      * @param meshIndex 网格索引（默认 0，第一个网格）
      * @param flipUVs 是否翻转 UV 坐标（默认 true）
+     * @param autoUpload 是否自动上传到GPU（默认 true）⭐ v0.12.0 新增
      * @return 网格对象（如果加载失败返回 nullptr）
      * 
      * 如果模型包含多个网格，只返回指定索引的网格
@@ -83,7 +88,8 @@ public:
     static Ref<Mesh> LoadMeshFromFile(
         const std::string& filepath,
         uint32_t meshIndex = 0,
-        bool flipUVs = true
+        bool flipUVs = true,
+        bool autoUpload = true
     );
     
     /**
