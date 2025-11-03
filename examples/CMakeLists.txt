@@ -31,6 +31,7 @@ set(EXAMPLES
     27_test_resource_handle
     28_circular_reference_detection_test
     29_async_loading_test
+    30_framebuffer_test
 )
 
 # 批量创建示例程序

@@ -194,6 +194,7 @@ set(RENDER_SOURCES
     src/rendering/mesh.cpp
     src/rendering/mesh_loader.cpp
     src/rendering/material.cpp
+    src/rendering/framebuffer.cpp
     
     # Utils
     src/utils/logger.cpp
@@ -229,6 +230,7 @@ set(RENDER_HEADERS
     include/render/mesh.h
     include/render/mesh_loader.h
     include/render/material.h
+    include/render/framebuffer.h
     
     # Utils
     include/render/logger.h
