@@ -191,6 +191,13 @@ public:
     void Shutdown();
     
     /**
+     * @brief 清空所有待处理的任务队列
+     * 
+     * 注意：此操作会丢弃所有未完成的任务，仅在关闭时调用
+     */
+    void ClearAllPendingTasks();
+    
+    /**
      * @brief 是否已初始化
      */
     bool IsInitialized() const { return m_running.load(); }

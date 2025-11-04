@@ -6,7 +6,7 @@ in vec2 TexCoord;
 out vec4 FragColor;
 
 uniform sampler2D uTexture;
-uniform int postProcessMode;  // 0=None, 1=Grayscale, 2=Invert, 3=Blur, 4=Sharpen
+uniform int postProcessMode;  // 0=None, 1=Grayscale, 2=Invert, 3=Blur, 4=Sharpen, 5=EdgeDetection
 
 // 卷积核偏移
 const float offset = 1.0 / 300.0;
@@ -28,6 +28,13 @@ const float sharpenKernel[9] = float[](
     -1.0, -1.0, -1.0,
     -1.0,  9.0, -1.0,
     -1.0, -1.0, -1.0
+);
+
+// 边缘检测卷积核
+const float edgeDetectKernel[9] = float[](
+    1.0,  1.0,  1.0,
+    1.0, -8.0,  1.0,
+    1.0,  1.0,  1.0
 );
 
 void main()
@@ -62,6 +69,15 @@ void main()
         for(int i = 0; i < 9; i++) {
             vec3 sampleColor = texture(uTexture, TexCoord + offsets[i]).rgb;
             result += sampleColor * sharpenKernel[i];
+        }
+        FragColor = vec4(result, 1.0);
+    }
+    else if (postProcessMode == 5) {
+        // 边缘检测
+        vec3 result = vec3(0.0);
+        for(int i = 0; i < 9; i++) {
+            vec3 sampleColor = texture(uTexture, TexCoord + offsets[i]).rgb;
+            result += sampleColor * edgeDetectKernel[i];
         }
         FragColor = vec4(result, 1.0);
     }

@@ -34,6 +34,8 @@ set(EXAMPLES
     30_framebuffer_test
     31_ecs_basic_test
     32_ecs_renderer_test
+    33_ecs_async_test
+    34_postprocess_test
 )
 
 # 批量创建示例程序

@@ -11,6 +11,9 @@
 namespace Render {
 namespace ECS {
 
+// 前向声明
+class CameraSystem;
+
 // ============================================================
 // Transform 更新系统（维护变换层级）
 // ============================================================
@@ -43,6 +46,7 @@ public:
     explicit ResourceLoadingSystem(AsyncResourceLoader* asyncLoader);
     
     void OnCreate(World* world) override;
+    void OnDestroy() override;
     void Update(float deltaTime) override;
     [[nodiscard]] int GetPriority() const override { return 20; }
     
@@ -62,9 +66,35 @@ private:
     void LoadMeshResources();
     void LoadSpriteResources();
     void ProcessAsyncTasks();
+    void ApplyPendingUpdates();  ///< 应用延迟更新
+    
+    // 资源加载完成回调（不直接修改组件，而是加入队列）
+    void OnMeshLoaded(EntityID entity, const MeshLoadResult& result);
+    void OnTextureLoaded(EntityID entity, const TextureLoadResult& result);
+    
+    // 延迟更新的数据结构
+    struct PendingMeshUpdate {
+        EntityID entity;
+        std::shared_ptr<Mesh> mesh;
+        bool success;
+        std::string errorMessage;
+    };
+    
+    struct PendingTextureUpdate {
+        EntityID entity;
+        std::shared_ptr<Texture> texture;
+        bool success;
+        std::string errorMessage;
+    };
     
     size_t m_maxTasksPerFrame = 10;         ///< 每帧最大处理任务数
     AsyncResourceLoader* m_asyncLoader = nullptr;  ///< 异步加载器
+    
+    std::vector<PendingMeshUpdate> m_pendingMeshUpdates;       ///< 待应用的网格更新
+    std::vector<PendingTextureUpdate> m_pendingTextureUpdates; ///< 待应用的纹理更新
+    std::mutex m_pendingMutex;  ///< 保护待更新队列的互斥锁
+    
+    std::atomic<bool> m_shuttingDown{false};  ///< 是否正在关闭
 };
 
 // ============================================================
@@ -99,11 +129,15 @@ public:
      */
     [[nodiscard]] const RenderStats& GetStats() const { return m_stats; }
     
+    void OnCreate(World* world) override;
+    void OnDestroy() override;
+    
 private:
     void SubmitRenderables();
     bool ShouldCull(const Vector3& position, float radius);
     
     Renderer* m_renderer;                       ///< 渲染器指针
+    CameraSystem* m_cameraSystem = nullptr;     ///< 缓存的相机系统（避免递归锁）
     RenderStats m_stats;                        ///< 渲染统计信息
     std::vector<MeshRenderable> m_renderables;  ///< Renderable 对象池（避免每帧创建销毁）
 };
@@ -195,6 +229,17 @@ private:
     void UpdateLightUniforms();
     
     Renderer* m_renderer;            ///< 渲染器指针
+    
+    // 缓存的主光源数据
+    Vector3 m_primaryLightPosition;
+    Color m_primaryLightColor;
+    float m_primaryLightIntensity = 1.0f;
+    
+public:
+    // 获取主光源数据的接口（供渲染系统使用）
+    Vector3 GetPrimaryLightPosition() const { return m_primaryLightPosition; }
+    Color GetPrimaryLightColor() const { return m_primaryLightColor; }
+    float GetPrimaryLightIntensity() const { return m_primaryLightIntensity; }
 };
 
 } // namespace ECS

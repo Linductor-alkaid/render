@@ -113,6 +113,8 @@ void MeshRenderable::Render() {
     std::shared_lock lock(m_mutex);
     
     if (!m_visible || !m_mesh || !m_material) {
+        Logger::GetInstance().DebugFormat("[MeshRenderable] Skip render: visible=%d, hasMesh=%d, hasMaterial=%d",
+                                          m_visible, (m_mesh != nullptr), (m_material != nullptr));
         return;
     }
     
@@ -123,7 +125,13 @@ void MeshRenderable::Render() {
     auto shader = m_material->GetShader();
     if (shader && m_transform) {
         Matrix4 modelMatrix = m_transform->GetWorldMatrix();
-        shader->GetUniformManager()->SetMatrix4("model", modelMatrix);
+        shader->GetUniformManager()->SetMatrix4("uModel", modelMatrix);
+        
+        static int renderCount = 0;
+        if (renderCount < 5) {
+            Logger::GetInstance().InfoFormat("[MeshRenderable] Render #%d: shader valid, model matrix set", renderCount);
+            renderCount++;
+        }
     }
     
     // 绘制网格
@@ -131,9 +139,11 @@ void MeshRenderable::Render() {
 }
 
 void MeshRenderable::SubmitToRenderer(Renderer* renderer) {
-    // TODO: 实现提交到渲染器的逻辑
-    // 这将在 Renderer 集成阶段实现
-    (void)renderer;
+    // 通过渲染队列机制，由MeshRenderSystem统一提交
+    // 此方法保留用于直接提交的场景（非ECS模式）
+    if (renderer) {
+        renderer->SubmitRenderable(this);
+    }
 }
 
 void MeshRenderable::SetMesh(const Ref<Mesh>& mesh) {
@@ -281,9 +291,11 @@ void SpriteRenderable::Render() {
 }
 
 void SpriteRenderable::SubmitToRenderer(Renderer* renderer) {
-    // TODO: 实现提交到渲染器的逻辑
-    // 这将在 Renderer 集成阶段实现
-    (void)renderer;
+    // 通过渲染队列机制，由SpriteRenderSystem统一提交
+    // 此方法保留用于直接提交的场景（非ECS模式）
+    if (renderer) {
+        renderer->SubmitRenderable(this);
+    }
 }
 
 void SpriteRenderable::SetTexture(const Ref<Texture>& texture) {

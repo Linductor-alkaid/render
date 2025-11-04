@@ -81,12 +81,43 @@ void AsyncResourceLoader::Shutdown() {
     }
     m_workers.clear();
     
+    // ✅ 清空所有待处理的任务队列
+    ClearAllPendingTasks();
+    
     // 打印最终统计
     PrintStatistics();
     
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("异步资源加载器已关闭");
     Logger::GetInstance().Info("========================================");
+}
+
+void AsyncResourceLoader::ClearAllPendingTasks() {
+    size_t pendingCleared = 0;
+    size_t completedCleared = 0;
+    
+    // 清空待处理队列
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        pendingCleared = m_pendingTasks.size();
+        while (!m_pendingTasks.empty()) {
+            m_pendingTasks.pop();
+        }
+    }
+    
+    // 清空已完成队列（这些任务的回调将不会被执行）
+    {
+        std::lock_guard<std::mutex> lock(m_completedMutex);
+        completedCleared = m_completedTasks.size();
+        while (!m_completedTasks.empty()) {
+            m_completedTasks.pop();
+        }
+    }
+    
+    if (pendingCleared > 0 || completedCleared > 0) {
+        Logger::GetInstance().InfoFormat("清理任务队列: %zu 个待处理, %zu 个已完成",
+                                         pendingCleared, completedCleared);
+    }
 }
 
 void AsyncResourceLoader::WorkerThreadFunc() {

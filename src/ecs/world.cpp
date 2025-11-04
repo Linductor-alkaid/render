@@ -27,6 +27,17 @@ void World::Initialize() {
     Logger::GetInstance().InfoFormat("[World] World initialized");
 }
 
+void World::PostInitialize() {
+    // 不持锁，允许系统安全地调用GetSystem获取其他系统的引用
+    for (auto& system : m_systems) {
+        // 调用系统的PostInitialize（如果实现了的话）
+        // 注意：System基类目前没有PostInitialize，所以这里只是预留
+        // 但系统可以直接访问 m_world->GetSystem 而不会死锁
+    }
+    
+    Logger::GetInstance().InfoFormat("[World] World post-initialized");
+}
+
 void World::Shutdown() {
     if (!m_initialized) {
         return;
@@ -88,7 +99,10 @@ void World::Update(float deltaTime) {
     m_stats.systemCount = m_systems.size();
     
     // 更新所有启用的系统
-    std::shared_lock lock(m_mutex);
+    // 注意：不在这里加锁！
+    // - 系统列表在运行时不会改变（只在注册时修改）
+    // - 组件访问由 ComponentRegistry 自己的锁保护
+    // - 避免 nested lock 导致的死锁问题
     for (auto& system : m_systems) {
         if (system->IsEnabled()) {
             system->Update(deltaTime);

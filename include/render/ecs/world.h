@@ -21,8 +21,11 @@ namespace ECS {
  * - 系统自动按优先级排序
  * - 线程安全的所有操作
  * - 提供性能监控和统计
+ * 
+ * 注意：为了支持异步回调的安全生命周期管理，World继承自enable_shared_from_this
+ * 建议使用std::make_shared<World>()创建World对象
  */
-class World {
+class World : public std::enable_shared_from_this<World> {
 public:
     World();
     ~World();
@@ -39,6 +42,13 @@ public:
      * @brief 初始化 World
      */
     void Initialize();
+    
+    /**
+     * @brief 后初始化（在所有系统注册完成后调用）
+     * 
+     * 允许系统在此阶段获取对其他系统的引用，不会产生死锁
+     */
+    void PostInitialize();
     
     /**
      * @brief 关闭 World
@@ -187,7 +197,16 @@ public:
     template<typename T>
     T* GetSystem() {
         std::shared_lock lock(m_mutex);
-        
+        return GetSystemNoLock<T>();
+    }
+    
+    /**
+     * @brief 获取系统（内部使用，不加锁）
+     * @tparam T 系统类型
+     * @return 系统指针，如果未找到返回 nullptr
+     */
+    template<typename T>
+    T* GetSystemNoLock() {
         for (auto& system : m_systems) {
             T* casted = dynamic_cast<T*>(system.get());
             if (casted) {

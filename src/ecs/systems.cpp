@@ -33,7 +33,23 @@ ResourceLoadingSystem::ResourceLoadingSystem(AsyncResourceLoader* asyncLoader)
 
 void ResourceLoadingSystem::OnCreate(World* world) {
     System::OnCreate(world);
+    m_shuttingDown = false;
     Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] ResourceLoadingSystem created");
+}
+
+void ResourceLoadingSystem::OnDestroy() {
+    // 标记正在关闭，防止回调继续执行
+    m_shuttingDown = true;
+    
+    // 清空待处理的更新队列
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingMeshUpdates.clear();
+        m_pendingTextureUpdates.clear();
+    }
+    
+    Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] ResourceLoadingSystem destroyed");
+    System::OnDestroy();
 }
 
 void ResourceLoadingSystem::Update(float deltaTime) {
@@ -43,13 +59,16 @@ void ResourceLoadingSystem::Update(float deltaTime) {
         return;
     }
     
-    // 加载 Mesh 资源
+    // 1. 首先应用上一帧收集的待更新数据（此时没有持有World的锁）
+    ApplyPendingUpdates();
+    
+    // 2. 加载 Mesh 资源
     LoadMeshResources();
     
-    // 加载 Sprite 资源
+    // 3. 加载 Sprite 资源
     LoadSpriteResources();
     
-    // 处理异步任务完成回调
+    // 4. 处理异步任务完成回调（回调会将更新加入队列，不直接修改组件）
     ProcessAsyncTasks();
 }
 
@@ -60,24 +79,102 @@ void ResourceLoadingSystem::LoadMeshResources() {
     for (const auto& entity : entities) {
         auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
         
+        // ✅ 如果资源已经加载完成，跳过
+        if (meshComp.resourcesLoaded) {
+            continue;
+        }
+        
+        // ✅ 如果mesh和material都已存在，且没有设置meshName/materialName，
+        //    说明是直接设置的资源，标记为已加载
+        if (meshComp.mesh && meshComp.meshName.empty()) {
+            // 检查material
+            bool materialReady = (meshComp.material != nullptr) || meshComp.materialName.empty();
+            if (materialReady) {
+                meshComp.resourcesLoaded = true;
+                meshComp.asyncLoading = false;
+                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Entity %u has pre-loaded resources, marked as loaded", 
+                                                  entity.index);
+                continue;
+            }
+        }
+        
+        // 检查是否正在加载
+        if (meshComp.asyncLoading) {
+            continue;  // 已经在加载中，跳过
+        }
+        
         // 检查是否需要加载资源
         if (!meshComp.resourcesLoaded && !meshComp.asyncLoading) {
+            // 如果没有指定meshName，也没有mesh，则无法加载
+            if (meshComp.meshName.empty() && !meshComp.mesh) {
+                Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Entity %u: no mesh and no meshName specified", 
+                                                    entity.index);
+                meshComp.resourcesLoaded = true;  // 标记为已加载（避免重复警告）
+                continue;
+            }
+            
             // 标记正在加载
             meshComp.asyncLoading = true;
             
             // 异步加载网格
             if (!meshComp.meshName.empty() && !meshComp.mesh) {
-                // TODO: 实际的异步加载逻辑
-                // m_asyncLoader->LoadMeshAsync(meshComp.meshName, callback);
-                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Loading mesh: %s for entity", 
+                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Starting async load for mesh: %s", 
                              meshComp.meshName.c_str());
+                
+                // ✅ 使用weak_ptr捕获World的生命周期
+                EntityID entityCopy = entity;  // 捕获entity
+                std::weak_ptr<World> worldWeak;
+                
+                try {
+                    // 尝试获取World的shared_ptr
+                    worldWeak = m_world->weak_from_this();
+                } catch (const std::bad_weak_ptr&) {
+                    // World不是通过shared_ptr管理的，使用原有方式
+                    Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] World not managed by shared_ptr, using legacy callback");
+                    
+                    m_asyncLoader->LoadMeshAsync(
+                        meshComp.meshName,
+                        meshComp.meshName,
+                        [this, entityCopy](const MeshLoadResult& result) {
+                            if (!m_shuttingDown.load()) {
+                                this->OnMeshLoaded(entityCopy, result);
+                            }
+                        }
+                    );
+                    continue;
+                }
+                
+                // 使用safe callback（捕获weak_ptr）
+                m_asyncLoader->LoadMeshAsync(
+                    meshComp.meshName,
+                    meshComp.meshName,
+                    [this, entityCopy, worldWeak](const MeshLoadResult& result) {
+                        // ✅ 尝试锁定weak_ptr，检查World是否还存活
+                        if (auto worldShared = worldWeak.lock()) {
+                            // World仍然存活，可以安全访问
+                            if (!m_shuttingDown.load()) {
+                                this->OnMeshLoaded(entityCopy, result);
+                            } else {
+                                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] System shutting down, skip mesh callback");
+                            }
+                        } else {
+                            // World已被销毁，忽略回调
+                            Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] World destroyed, skip mesh callback");
+                        }
+                    }
+                );
             }
             
-            // 异步加载材质
+            // 材质通常通过ResourceManager同步获取
+            // 因为材质文件较小，不需要异步加载
             if (!meshComp.materialName.empty() && !meshComp.material) {
-                // TODO: 实际的异步加载逻辑
-                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Loading material: %s for entity", 
-                             meshComp.materialName.c_str());
+                auto& resMgr = ResourceManager::GetInstance();
+                meshComp.material = resMgr.GetMaterial(meshComp.materialName);
+                
+                if (!meshComp.material) {
+                    Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Material not found: %s", 
+                                 meshComp.materialName.c_str());
+                }
             }
         }
     }
@@ -97,17 +194,239 @@ void ResourceLoadingSystem::LoadSpriteResources() {
             
             // 异步加载纹理
             if (!spriteComp.textureName.empty() && !spriteComp.texture) {
-                // TODO: 实际的异步加载逻辑
-                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Loading texture: %s for entity", 
+                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Starting async load for texture: %s", 
                              spriteComp.textureName.c_str());
+                
+                // ✅ 使用weak_ptr捕获World的生命周期
+                EntityID entityCopy = entity;  // 捕获entity
+                std::weak_ptr<World> worldWeak;
+                
+                try {
+                    // 尝试获取World的shared_ptr
+                    worldWeak = m_world->weak_from_this();
+                } catch (const std::bad_weak_ptr&) {
+                    // World不是通过shared_ptr管理的，使用原有方式
+                    Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] World not managed by shared_ptr, using legacy callback");
+                    
+                    m_asyncLoader->LoadTextureAsync(
+                        spriteComp.textureName,
+                        spriteComp.textureName,
+                        true,
+                        [this, entityCopy](const TextureLoadResult& result) {
+                            if (!m_shuttingDown.load()) {
+                                this->OnTextureLoaded(entityCopy, result);
+                            }
+                        }
+                    );
+                    continue;
+                }
+                
+                // 使用safe callback（捕获weak_ptr）
+                m_asyncLoader->LoadTextureAsync(
+                    spriteComp.textureName,
+                    spriteComp.textureName,
+                    true,  // 生成mipmap
+                    [this, entityCopy, worldWeak](const TextureLoadResult& result) {
+                        // ✅ 尝试锁定weak_ptr，检查World是否还存活
+                        if (auto worldShared = worldWeak.lock()) {
+                            // World仍然存活，可以安全访问
+                            if (!m_shuttingDown.load()) {
+                                this->OnTextureLoaded(entityCopy, result);
+                            } else {
+                                Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] System shutting down, skip texture callback");
+                            }
+                        } else {
+                            // World已被销毁，忽略回调
+                            Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] World destroyed, skip texture callback");
+                        }
+                    }
+                );
             }
         }
     }
 }
 
 void ResourceLoadingSystem::ProcessAsyncTasks() {
-    // TODO: 处理异步任务完成回调
-    // 这将在后续与 AsyncResourceLoader 深度集成时实现
+    if (!m_asyncLoader) {
+        return;
+    }
+    
+    // 每帧处理最多10个完成的异步任务
+    // 这会在主线程中执行GPU上传
+    m_asyncLoader->ProcessCompletedTasks(10);
+}
+
+void ResourceLoadingSystem::OnMeshLoaded(EntityID entity, const MeshLoadResult& result) {
+    // 注意：此回调在主线程（ProcessCompletedTasks调用时）执行
+    // 但此时可能持有World::Update的锁，所以不能直接修改组件
+    // 而是将更新加入延迟队列
+    
+    // ✅ 安全检查：如果System正在关闭，忽略回调
+    if (m_shuttingDown.load()) {
+        Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] System shutting down, ignoring mesh load callback");
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(m_pendingMutex);
+    
+    PendingMeshUpdate update;
+    update.entity = entity;
+    update.mesh = result.resource;
+    update.success = result.IsSuccess();
+    update.errorMessage = result.errorMessage;
+    
+    m_pendingMeshUpdates.push_back(std::move(update));
+    
+    if (result.IsSuccess()) {
+        Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Mesh loaded, queued for update: %s", 
+                     result.name.c_str());
+    } else {
+        Logger::GetInstance().ErrorFormat("[ResourceLoadingSystem] Failed to load mesh: %s - %s", 
+                     result.name.c_str(), result.errorMessage.c_str());
+    }
+}
+
+void ResourceLoadingSystem::OnTextureLoaded(EntityID entity, const TextureLoadResult& result) {
+    // 注意：此回调在主线程（ProcessCompletedTasks调用时）执行
+    // 但此时可能持有World::Update的锁，所以不能直接修改组件
+    // 而是将更新加入延迟队列
+    
+    // ✅ 安全检查：如果System正在关闭，忽略回调
+    if (m_shuttingDown.load()) {
+        Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] System shutting down, ignoring texture load callback");
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(m_pendingMutex);
+    
+    PendingTextureUpdate update;
+    update.entity = entity;
+    update.texture = result.resource;
+    update.success = result.IsSuccess();
+    update.errorMessage = result.errorMessage;
+    
+    m_pendingTextureUpdates.push_back(std::move(update));
+    
+    if (result.IsSuccess()) {
+        Logger::GetInstance().DebugFormat("[ResourceLoadingSystem] Texture loaded, queued for update: %s", 
+                     result.name.c_str());
+    } else {
+        Logger::GetInstance().ErrorFormat("[ResourceLoadingSystem] Failed to load texture: %s - %s", 
+                     result.name.c_str(), result.errorMessage.c_str());
+    }
+}
+
+void ResourceLoadingSystem::ApplyPendingUpdates() {
+    if (!m_world) {
+        return;
+    }
+    
+    // ✅ 如果正在关闭，清空队列并返回
+    if (m_shuttingDown.load()) {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingMeshUpdates.clear();
+        m_pendingTextureUpdates.clear();
+        return;
+    }
+    
+    // 获取待更新的队列（交换到本地变量以减少锁持有时间）
+    std::vector<PendingMeshUpdate> meshUpdates;
+    std::vector<PendingTextureUpdate> textureUpdates;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        meshUpdates.swap(m_pendingMeshUpdates);
+        textureUpdates.swap(m_pendingTextureUpdates);
+    }
+    
+    // 应用网格更新
+    for (const auto& update : meshUpdates) {
+        // ✅ 再次检查是否正在关闭
+        if (m_shuttingDown.load()) {
+            Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] System shutting down, abort applying updates");
+            break;
+        }
+        
+        // ✅ 多重安全检查：实体是否有效
+        if (!m_world->IsValidEntity(update.entity)) {
+            Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Entity %u is no longer valid", 
+                                               update.entity.index);
+            continue;
+        }
+        
+        // ✅ 检查组件是否存在
+        if (!m_world->HasComponent<MeshRenderComponent>(update.entity)) {
+            Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Entity %u missing MeshRenderComponent", 
+                                               update.entity.index);
+            continue;
+        }
+        
+        // ✅ 安全获取组件引用
+        try {
+            auto& meshComp = m_world->GetComponent<MeshRenderComponent>(update.entity);
+            
+            if (update.success && update.mesh) {
+                meshComp.mesh = update.mesh;
+                meshComp.resourcesLoaded = true;
+                meshComp.asyncLoading = false;
+                
+                Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] ✅ Mesh applied successfully to entity %u (vertices: %zu)", 
+                                                 update.entity.index, 
+                                                 update.mesh->GetVertexCount());
+            } else {
+                // ✅ 加载失败：标记为已完成，避免重复尝试
+                meshComp.asyncLoading = false;
+                meshComp.resourcesLoaded = true;  // 标记为已加载（失败也算完成）
+                Logger::GetInstance().ErrorFormat("[ResourceLoadingSystem] Mesh loading failed for entity %u: %s (marked as loaded to prevent retry)", 
+                                                  update.entity.index, update.errorMessage.c_str());
+            }
+        } catch (const std::exception& e) {
+            Logger::GetInstance().ErrorFormat("[ResourceLoadingSystem] Exception applying mesh update: %s", e.what());
+        }
+    }
+    
+    // 应用纹理更新
+    for (const auto& update : textureUpdates) {
+        // ✅ 再次检查是否正在关闭
+        if (m_shuttingDown.load()) {
+            Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] System shutting down, abort applying updates");
+            break;
+        }
+        
+        // ✅ 多重安全检查：实体是否有效
+        if (!m_world->IsValidEntity(update.entity)) {
+            Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Entity %u is no longer valid", 
+                                               update.entity.index);
+            continue;
+        }
+        
+        // ✅ 检查组件是否存在
+        if (!m_world->HasComponent<SpriteRenderComponent>(update.entity)) {
+            Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Entity %u missing SpriteRenderComponent", 
+                                               update.entity.index);
+            continue;
+        }
+        
+        // ✅ 安全获取组件引用
+        try {
+            auto& spriteComp = m_world->GetComponent<SpriteRenderComponent>(update.entity);
+            
+            if (update.success) {
+                spriteComp.texture = update.texture;
+                spriteComp.resourcesLoaded = true;
+                spriteComp.asyncLoading = false;
+                
+                Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] Texture applied successfully to entity %u", 
+                                                 update.entity.index);
+            } else {
+                spriteComp.asyncLoading = false;
+                Logger::GetInstance().ErrorFormat("[ResourceLoadingSystem] Texture loading failed for entity %u: %s", 
+                                                  update.entity.index, update.errorMessage.c_str());
+            }
+        } catch (const std::exception& e) {
+            Logger::GetInstance().ErrorFormat("[ResourceLoadingSystem] Exception applying texture update: %s", e.what());
+        }
+    }
 }
 
 // ============================================================
@@ -119,6 +438,18 @@ MeshRenderSystem::MeshRenderSystem(Renderer* renderer)
     if (!m_renderer) {
         Logger::GetInstance().ErrorFormat("[MeshRenderSystem] Renderer is null");
     }
+}
+
+void MeshRenderSystem::OnCreate(World* world) {
+    System::OnCreate(world);
+    
+    // 注意：不在这里获取CameraSystem，因为此时World::RegisterSystem持有unique_lock
+    // 需要在World::PostInitialize后手动设置，或在ShouldCull中按需获取
+}
+
+void MeshRenderSystem::OnDestroy() {
+    m_cameraSystem = nullptr;
+    System::OnDestroy();
 }
 
 void MeshRenderSystem::Update(float deltaTime) {
@@ -133,6 +464,7 @@ void MeshRenderSystem::Update(float deltaTime) {
 
 void MeshRenderSystem::SubmitRenderables() {
     if (!m_world || !m_renderer) {
+        Logger::GetInstance().WarningFormat("[MeshRenderSystem] World or Renderer is null");
         return;
     }
     
@@ -142,23 +474,45 @@ void MeshRenderSystem::SubmitRenderables() {
     // 查询所有具有 TransformComponent 和 MeshRenderComponent 的实体
     auto entities = m_world->Query<TransformComponent, MeshRenderComponent>();
     
+    static bool firstFrame = true;
+    if (firstFrame) {
+        Logger::GetInstance().InfoFormat("[MeshRenderSystem] Found %zu entities with Transform+MeshRender", entities.size());
+        firstFrame = false;
+    }
+    
     for (const auto& entity : entities) {
         auto& transform = m_world->GetComponent<TransformComponent>(entity);
         auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
         
         // 检查可见性
         if (!meshComp.visible) {
+            Logger::GetInstance().DebugFormat("[MeshRenderSystem] Entity %u not visible, skip", entity.index);
             continue;
         }
         
         // 检查资源是否已加载
         if (!meshComp.resourcesLoaded || !meshComp.mesh || !meshComp.material) {
+            Logger::GetInstance().DebugFormat("[MeshRenderSystem] Entity %u not ready: resourcesLoaded=%d, hasMesh=%d, hasMaterial=%d", 
+                                             entity.index, meshComp.resourcesLoaded, 
+                                             (meshComp.mesh != nullptr), (meshComp.material != nullptr));
             continue;
         }
         
-        // 简单的视锥体裁剪（基于距离）
+        // 视锥体裁剪优化
         Vector3 position = transform.GetPosition();
-        float radius = 10.0f;  // TODO: 从网格包围盒计算
+        
+        // 从网格包围盒计算半径
+        float radius = 1.0f;  // 默认半径
+        if (meshComp.mesh) {
+            AABB bounds = meshComp.mesh->CalculateBounds();
+            Vector3 size = bounds.max - bounds.min;
+            radius = size.norm() * 0.5f;  // 包围盒对角线的一半作为半径
+            
+            // 考虑Transform的缩放
+            Vector3 scale = transform.GetScale();
+            float maxScale = std::max(std::max(scale.x(), scale.y()), scale.z());
+            radius *= maxScale;
+        }
         
         if (ShouldCull(position, radius)) {
             m_stats.culledMeshes++;
@@ -186,14 +540,39 @@ void MeshRenderSystem::SubmitRenderables() {
         m_renderer->SubmitRenderable(&renderable);
         m_stats.drawCalls++;
     }
+    
+    // ✅ 调试信息：显示提交的数量
+    static int logCounter = 0;
+    if (logCounter++ < 10 || logCounter % 60 == 0) {
+        Logger::GetInstance().InfoFormat("[MeshRenderSystem] Submitted %zu renderables (total entities: %zu, culled: %zu)", 
+                                         m_stats.visibleMeshes, entities.size(), m_stats.culledMeshes);
+    }
 }
 
 bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
-    // TODO: 实现真正的视锥体裁剪
-    // 这里暂时返回 false（不裁剪）
+    // 注意：不能在这里调用GetSystem，因为此时World::Update持有shared_lock
+    // 会导致尝试获取nested shared_lock而死锁
+    // 暂时禁用视锥体裁剪，直到实现proper的PostInitialize机制
+    
     (void)position;
     (void)radius;
-    return false;
+    
+    return false;  // 禁用裁剪
+    
+    /*
+    // 原有的裁剪逻辑（需要在World::PostInitialize中设置m_cameraSystem后才能使用）
+    if (!m_cameraSystem) {
+        return false;
+    }
+    
+    Camera* mainCamera = m_cameraSystem->GetMainCameraObject();
+    if (!mainCamera) {
+        return false;
+    }
+    
+    const Frustum& frustum = mainCamera->GetFrustum();
+    return !frustum.IntersectsSphere(position, radius);
+    */
 }
 
 // ============================================================
@@ -260,9 +639,12 @@ void CameraSystem::Update(float deltaTime) {
             continue;
         }
         
-        // TODO: 更新相机位置和朝向
-        // Camera 类可能需要专门的接口来设置位置和旋转
-        (void)transform;
+        // 同步Transform到Camera
+        Vector3 pos = transform.GetPosition();
+        Quaternion rot = transform.GetRotation();
+        
+        cameraComp.camera->SetPosition(pos);
+        cameraComp.camera->SetRotation(rot);
         
         // 设置主相机（第一个激活的相机）
         if (!m_mainCamera.IsValid()) {
@@ -331,8 +713,38 @@ size_t LightSystem::GetLightCount() const {
 }
 
 void LightSystem::UpdateLightUniforms() {
-    // TODO: 收集光源数据并上传到着色器
-    // 这将在后续阶段实现
+    // 收集所有可见光源的数据
+    // 注意：实际的uniform设置应该在渲染时进行，这里只是准备数据
+    
+    if (!m_world) {
+        return;
+    }
+    
+    auto visibleLights = GetVisibleLights();
+    
+    if (visibleLights.empty()) {
+        return;
+    }
+    
+    // 对于简单的Phong模型，我们只需要第一个光源
+    // 更复杂的系统可以支持多光源
+    EntityID firstLight = visibleLights[0];
+    
+    if (!m_world->HasComponent<TransformComponent>(firstLight)) {
+        return;
+    }
+    
+    const auto& transform = m_world->GetComponent<TransformComponent>(firstLight);
+    const auto& lightComp = m_world->GetComponent<LightComponent>(firstLight);
+    
+    // 缓存光源数据供渲染使用
+    m_primaryLightPosition = transform.GetPosition();
+    m_primaryLightColor = lightComp.color;
+    m_primaryLightIntensity = lightComp.intensity;
+    
+    // 在实际应用中，这些数据会在MeshRenderSystem渲染时
+    // 通过UniformManager设置到着色器
+    // 示例：shader->GetUniformManager()->SetVector3("uLightPos", m_primaryLightPosition);
 }
 
 } // namespace ECS
