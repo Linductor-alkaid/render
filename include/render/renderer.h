@@ -7,8 +7,12 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <vector>
 
 namespace Render {
+
+// 前向声明
+class Renderable;
 
 /**
  * @brief 渲染统计信息
@@ -175,6 +179,38 @@ public:
      */
     bool IsInitialized() const { return m_initialized; }
     
+    // ========================================================================
+    // Renderable 支持（ECS 集成）
+    // ========================================================================
+    
+    /**
+     * @brief 提交 Renderable 对象到渲染队列
+     * @param renderable Renderable 对象指针
+     * 
+     * 注意：Renderable 对象必须在 FlushRenderQueue 调用前保持有效
+     */
+    void SubmitRenderable(Renderable* renderable);
+    
+    /**
+     * @brief 渲染所有提交的 Renderable 对象
+     * 
+     * 会按以下顺序排序：
+     * 1. 按层级 (layerID) 排序
+     * 2. 按材质排序（减少状态切换）
+     * 3. 按渲染优先级排序
+     */
+    void FlushRenderQueue();
+    
+    /**
+     * @brief 清空渲染队列
+     */
+    void ClearRenderQueue();
+    
+    /**
+     * @brief 获取渲染队列中的对象数量
+     */
+    [[nodiscard]] size_t GetRenderQueueSize() const;
+    
 private:
     void UpdateStats();
     
@@ -189,6 +225,12 @@ private:
     float m_lastFrameTime;
     float m_fpsUpdateTimer;
     uint32_t m_frameCount;
+    
+    // 渲染队列（ECS 集成）
+    std::vector<Renderable*> m_renderQueue;
+    
+    // 辅助函数
+    void SortRenderQueue();
     
     // 线程安全
     mutable std::mutex m_mutex;  // 保护所有可变状态

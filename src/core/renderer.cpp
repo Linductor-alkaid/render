@@ -1,7 +1,9 @@
 #include "render/renderer.h"
+#include "render/renderable.h"
 #include "render/logger.h"
 #include "render/error.h"
 #include <SDL3/SDL.h>
+#include <algorithm>
 
 namespace Render {
 
@@ -165,6 +167,73 @@ void Renderer::UpdateStats() {
         m_fpsUpdateTimer = 0.0f;
         m_frameCount = 0;
     }
+}
+
+// ========================================================================
+// Renderable 支持（ECS 集成）
+// ========================================================================
+
+void Renderer::SubmitRenderable(Renderable* renderable) {
+    if (!renderable) {
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_renderQueue.push_back(renderable);
+}
+
+void Renderer::FlushRenderQueue() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_renderQueue.empty()) {
+        return;
+    }
+    
+    // 排序渲染队列
+    SortRenderQueue();
+    
+    // 渲染所有对象
+    for (auto* renderable : m_renderQueue) {
+        if (renderable && renderable->IsVisible()) {
+            renderable->Render();
+        }
+    }
+    
+    // 清空队列
+    m_renderQueue.clear();
+}
+
+void Renderer::ClearRenderQueue() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_renderQueue.clear();
+}
+
+size_t Renderer::GetRenderQueueSize() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_renderQueue.size();
+}
+
+void Renderer::SortRenderQueue() {
+    // 按以下优先级排序：
+    // 1. 层级 (layerID) - 低层级先渲染
+    // 2. 渲染优先级 (renderPriority) - 低优先级先渲染
+    // 3. 类型 (为了批处理)
+    
+    std::sort(m_renderQueue.begin(), m_renderQueue.end(),
+        [](const Renderable* a, const Renderable* b) {
+            // 先按层级排序
+            if (a->GetLayerID() != b->GetLayerID()) {
+                return a->GetLayerID() < b->GetLayerID();
+            }
+            
+            // 再按渲染优先级排序
+            if (a->GetRenderPriority() != b->GetRenderPriority()) {
+                return a->GetRenderPriority() < b->GetRenderPriority();
+            }
+            
+            // 最后按类型排序（相同类型一起渲染，提高批处理效率）
+            return static_cast<int>(a->GetType()) < static_cast<int>(b->GetType());
+        });
 }
 
 } // namespace Render

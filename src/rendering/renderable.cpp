@@ -1,0 +1,344 @@
+#include "render/renderable.h"
+#include "render/renderer.h"
+#include "render/shader.h"
+#include "render/logger.h"
+
+namespace Render {
+
+// ============================================================
+// Renderable 基类实现
+// ============================================================
+
+Renderable::Renderable(RenderableType type)
+    : m_type(type) {
+}
+
+Renderable::Renderable(Renderable&& other) noexcept
+    : m_type(other.m_type),
+      m_transform(std::move(other.m_transform)),
+      m_visible(other.m_visible),
+      m_layerID(other.m_layerID),
+      m_renderPriority(other.m_renderPriority) {
+    // m_mutex 不可移动，使用默认构造
+}
+
+Renderable& Renderable::operator=(Renderable&& other) noexcept {
+    if (this != &other) {
+        m_type = other.m_type;
+        m_transform = std::move(other.m_transform);
+        m_visible = other.m_visible;
+        m_layerID = other.m_layerID;
+        m_renderPriority = other.m_renderPriority;
+        // m_mutex 不可移动，保持原有状态
+    }
+    return *this;
+}
+
+void Renderable::SetTransform(const Ref<Transform>& transform) {
+    std::unique_lock lock(m_mutex);
+    m_transform = transform;
+}
+
+Ref<Transform> Renderable::GetTransform() const {
+    std::shared_lock lock(m_mutex);
+    return m_transform;
+}
+
+Matrix4 Renderable::GetWorldMatrix() const {
+    std::shared_lock lock(m_mutex);
+    if (m_transform) {
+        return m_transform->GetWorldMatrix();
+    }
+    return Matrix4::Identity();
+}
+
+void Renderable::SetVisible(bool visible) {
+    std::unique_lock lock(m_mutex);
+    m_visible = visible;
+}
+
+bool Renderable::IsVisible() const {
+    std::shared_lock lock(m_mutex);
+    return m_visible;
+}
+
+void Renderable::SetLayerID(uint32_t layerID) {
+    std::unique_lock lock(m_mutex);
+    m_layerID = layerID;
+}
+
+uint32_t Renderable::GetLayerID() const {
+    std::shared_lock lock(m_mutex);
+    return m_layerID;
+}
+
+void Renderable::SetRenderPriority(uint32_t priority) {
+    std::unique_lock lock(m_mutex);
+    m_renderPriority = priority;
+}
+
+uint32_t Renderable::GetRenderPriority() const {
+    std::shared_lock lock(m_mutex);
+    return m_renderPriority;
+}
+
+// ============================================================
+// MeshRenderable 实现
+// ============================================================
+
+MeshRenderable::MeshRenderable()
+    : Renderable(RenderableType::Mesh) {
+}
+
+MeshRenderable::MeshRenderable(MeshRenderable&& other) noexcept
+    : Renderable(std::move(other)),
+      m_mesh(std::move(other.m_mesh)),
+      m_material(std::move(other.m_material)),
+      m_castShadows(other.m_castShadows),
+      m_receiveShadows(other.m_receiveShadows) {
+}
+
+MeshRenderable& MeshRenderable::operator=(MeshRenderable&& other) noexcept {
+    if (this != &other) {
+        Renderable::operator=(std::move(other));
+        m_mesh = std::move(other.m_mesh);
+        m_material = std::move(other.m_material);
+        m_castShadows = other.m_castShadows;
+        m_receiveShadows = other.m_receiveShadows;
+    }
+    return *this;
+}
+
+void MeshRenderable::Render() {
+    std::shared_lock lock(m_mutex);
+    
+    if (!m_visible || !m_mesh || !m_material) {
+        return;
+    }
+    
+    // 绑定材质
+    m_material->Bind();
+    
+    // 获取着色器并设置模型矩阵
+    auto shader = m_material->GetShader();
+    if (shader && m_transform) {
+        Matrix4 modelMatrix = m_transform->GetWorldMatrix();
+        shader->GetUniformManager()->SetMatrix4("model", modelMatrix);
+    }
+    
+    // 绘制网格
+    m_mesh->Draw();
+}
+
+void MeshRenderable::SubmitToRenderer(Renderer* renderer) {
+    // TODO: 实现提交到渲染器的逻辑
+    // 这将在 Renderer 集成阶段实现
+    (void)renderer;
+}
+
+void MeshRenderable::SetMesh(const Ref<Mesh>& mesh) {
+    std::unique_lock lock(m_mutex);
+    m_mesh = mesh;
+}
+
+Ref<Mesh> MeshRenderable::GetMesh() const {
+    std::shared_lock lock(m_mutex);
+    return m_mesh;
+}
+
+void MeshRenderable::SetMaterial(const Ref<Material>& material) {
+    std::unique_lock lock(m_mutex);
+    m_material = material;
+}
+
+Ref<Material> MeshRenderable::GetMaterial() const {
+    std::shared_lock lock(m_mutex);
+    return m_material;
+}
+
+void MeshRenderable::SetCastShadows(bool cast) {
+    std::unique_lock lock(m_mutex);
+    m_castShadows = cast;
+}
+
+bool MeshRenderable::GetCastShadows() const {
+    std::shared_lock lock(m_mutex);
+    return m_castShadows;
+}
+
+void MeshRenderable::SetReceiveShadows(bool receive) {
+    std::unique_lock lock(m_mutex);
+    m_receiveShadows = receive;
+}
+
+bool MeshRenderable::GetReceiveShadows() const {
+    std::shared_lock lock(m_mutex);
+    return m_receiveShadows;
+}
+
+AABB MeshRenderable::GetBoundingBox() const {
+    std::shared_lock lock(m_mutex);
+    
+    if (!m_mesh) {
+        return AABB();
+    }
+    
+    // 使用 AccessVertices 回调方式计算包围盒
+    AABB localBounds;
+    bool boundsValid = false;
+    
+    m_mesh->AccessVertices([&localBounds, &boundsValid](const std::vector<Vertex>& vertices) {
+        if (vertices.empty()) {
+            return;
+        }
+        
+        // 计算局部空间包围盒
+        Vector3 minPoint = vertices[0].position;
+        Vector3 maxPoint = vertices[0].position;
+        
+        for (const auto& vertex : vertices) {
+            minPoint = minPoint.cwiseMin(vertex.position);
+            maxPoint = maxPoint.cwiseMax(vertex.position);
+        }
+        
+        localBounds = AABB(minPoint, maxPoint);
+        boundsValid = true;
+    });
+    
+    if (!boundsValid) {
+        return AABB();
+    }
+    
+    // 如果有变换，将包围盒转换到世界空间
+    if (m_transform) {
+        Matrix4 worldMatrix = m_transform->GetWorldMatrix();
+        
+        // 变换包围盒的8个顶点
+        std::vector<Vector3> corners = {
+            Vector3(localBounds.min.x(), localBounds.min.y(), localBounds.min.z()),
+            Vector3(localBounds.max.x(), localBounds.min.y(), localBounds.min.z()),
+            Vector3(localBounds.min.x(), localBounds.max.y(), localBounds.min.z()),
+            Vector3(localBounds.max.x(), localBounds.max.y(), localBounds.min.z()),
+            Vector3(localBounds.min.x(), localBounds.min.y(), localBounds.max.z()),
+            Vector3(localBounds.max.x(), localBounds.min.y(), localBounds.max.z()),
+            Vector3(localBounds.min.x(), localBounds.max.y(), localBounds.max.z()),
+            Vector3(localBounds.max.x(), localBounds.max.y(), localBounds.max.z())
+        };
+        
+        // 变换所有顶点并计算新的包围盒
+        Vector3 worldMin = (worldMatrix * Vector4(corners[0].x(), corners[0].y(), corners[0].z(), 1.0f)).head<3>();
+        Vector3 worldMax = worldMin;
+        
+        for (const auto& corner : corners) {
+            Vector3 transformed = (worldMatrix * Vector4(corner.x(), corner.y(), corner.z(), 1.0f)).head<3>();
+            worldMin = worldMin.cwiseMin(transformed);
+            worldMax = worldMax.cwiseMax(transformed);
+        }
+        
+        return AABB(worldMin, worldMax);
+    }
+    
+    return localBounds;
+}
+
+// ============================================================
+// SpriteRenderable 实现
+// ============================================================
+
+SpriteRenderable::SpriteRenderable()
+    : Renderable(RenderableType::Sprite) {
+    m_layerID = 800;  // UI_LAYER
+}
+
+SpriteRenderable::SpriteRenderable(SpriteRenderable&& other) noexcept
+    : Renderable(std::move(other)),
+      m_texture(std::move(other.m_texture)),
+      m_sourceRect(other.m_sourceRect),
+      m_size(other.m_size),
+      m_tintColor(other.m_tintColor) {
+}
+
+SpriteRenderable& SpriteRenderable::operator=(SpriteRenderable&& other) noexcept {
+    if (this != &other) {
+        Renderable::operator=(std::move(other));
+        m_texture = std::move(other.m_texture);
+        m_sourceRect = other.m_sourceRect;
+        m_size = other.m_size;
+        m_tintColor = other.m_tintColor;
+    }
+    return *this;
+}
+
+void SpriteRenderable::Render() {
+    std::shared_lock lock(m_mutex);
+    
+    if (!m_visible || !m_texture) {
+        return;
+    }
+    
+    // TODO: 实现 2D 精灵渲染
+    // 这将在后续阶段实现
+}
+
+void SpriteRenderable::SubmitToRenderer(Renderer* renderer) {
+    // TODO: 实现提交到渲染器的逻辑
+    // 这将在 Renderer 集成阶段实现
+    (void)renderer;
+}
+
+void SpriteRenderable::SetTexture(const Ref<Texture>& texture) {
+    std::unique_lock lock(m_mutex);
+    m_texture = texture;
+}
+
+Ref<Texture> SpriteRenderable::GetTexture() const {
+    std::shared_lock lock(m_mutex);
+    return m_texture;
+}
+
+void SpriteRenderable::SetSourceRect(const Rect& rect) {
+    std::unique_lock lock(m_mutex);
+    m_sourceRect = rect;
+}
+
+Rect SpriteRenderable::GetSourceRect() const {
+    std::shared_lock lock(m_mutex);
+    return m_sourceRect;
+}
+
+void SpriteRenderable::SetSize(const Vector2& size) {
+    std::unique_lock lock(m_mutex);
+    m_size = size;
+}
+
+Vector2 SpriteRenderable::GetSize() const {
+    std::shared_lock lock(m_mutex);
+    return m_size;
+}
+
+void SpriteRenderable::SetTintColor(const Color& color) {
+    std::unique_lock lock(m_mutex);
+    m_tintColor = color;
+}
+
+Color SpriteRenderable::GetTintColor() const {
+    std::shared_lock lock(m_mutex);
+    return m_tintColor;
+}
+
+AABB SpriteRenderable::GetBoundingBox() const {
+    std::shared_lock lock(m_mutex);
+    
+    // 2D 精灵的包围盒（Z=0）
+    Vector3 halfSize(m_size.x() * 0.5f, m_size.y() * 0.5f, 0.0f);
+    Vector3 center = Vector3::Zero();
+    
+    if (m_transform) {
+        center = m_transform->GetPosition();
+    }
+    
+    return AABB(center - halfSize, center + halfSize);
+}
+
+} // namespace Render
+

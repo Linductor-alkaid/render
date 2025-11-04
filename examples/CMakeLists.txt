@@ -32,6 +32,8 @@ set(EXAMPLES
     28_circular_reference_detection_test
     29_async_loading_test
     30_framebuffer_test
+    31_ecs_basic_test
+    32_ecs_renderer_test
 )
 
 # 批量创建示例程序

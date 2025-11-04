@@ -185,6 +185,11 @@ set(RENDER_SOURCES
     src/core/camera.cpp
     src/core/gl_thread_checker.cpp
     
+    # ECS
+    src/ecs/entity_manager.cpp
+    src/ecs/world.cpp
+    src/ecs/systems.cpp
+    
     # Rendering
     src/rendering/shader.cpp
     src/rendering/uniform_manager.cpp
@@ -195,6 +200,7 @@ set(RENDER_SOURCES
     src/rendering/mesh_loader.cpp
     src/rendering/material.cpp
     src/rendering/framebuffer.cpp
+    src/rendering/renderable.cpp
     
     # Utils
     src/utils/logger.cpp
@@ -221,6 +227,15 @@ set(RENDER_HEADERS
     include/render/math_utils.h
     include/render/gl_thread_checker.h
     
+    # ECS
+    include/render/ecs/entity.h
+    include/render/ecs/entity_manager.h
+    include/render/ecs/component_registry.h
+    include/render/ecs/components.h
+    include/render/ecs/system.h
+    include/render/ecs/systems.h
+    include/render/ecs/world.h
+    
     # Rendering
     include/render/shader.h
     include/render/uniform_manager.h
@@ -231,6 +246,7 @@ set(RENDER_HEADERS
     include/render/mesh_loader.h
     include/render/material.h
     include/render/framebuffer.h
+    include/render/renderable.h
     
     # Utils
     include/render/logger.h
