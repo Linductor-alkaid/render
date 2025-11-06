@@ -105,7 +105,8 @@ bool EntityManager::IsValid(EntityID entity) const {
 void EntityManager::SetName(EntityID entity, const std::string& name) {
     std::unique_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         Logger::GetInstance().WarningFormat("[EntityManager] Attempted to set name on invalid entity");
         return;
     }
@@ -116,7 +117,8 @@ void EntityManager::SetName(EntityID entity, const std::string& name) {
 std::string EntityManager::GetName(EntityID entity) const {
     std::shared_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         return "";
     }
     
@@ -126,7 +128,8 @@ std::string EntityManager::GetName(EntityID entity) const {
 void EntityManager::SetActive(EntityID entity, bool active) {
     std::unique_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         Logger::GetInstance().WarningFormat("[EntityManager] Attempted to set active state on invalid entity");
         return;
     }
@@ -137,7 +140,8 @@ void EntityManager::SetActive(EntityID entity, bool active) {
 bool EntityManager::IsActive(EntityID entity) const {
     std::shared_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         return false;
     }
     
@@ -147,7 +151,8 @@ bool EntityManager::IsActive(EntityID entity) const {
 void EntityManager::AddTag(EntityID entity, const std::string& tag) {
     std::unique_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         Logger::GetInstance().WarningFormat("[EntityManager] Attempted to add tag to invalid entity");
         return;
     }
@@ -164,7 +169,8 @@ void EntityManager::AddTag(EntityID entity, const std::string& tag) {
 void EntityManager::RemoveTag(EntityID entity, const std::string& tag) {
     std::unique_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         Logger::GetInstance().WarningFormat("[EntityManager] Attempted to remove tag from invalid entity");
         return;
     }
@@ -187,7 +193,8 @@ void EntityManager::RemoveTag(EntityID entity, const std::string& tag) {
 bool EntityManager::HasTag(EntityID entity, const std::string& tag) const {
     std::shared_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         return false;
     }
     
@@ -198,7 +205,8 @@ bool EntityManager::HasTag(EntityID entity, const std::string& tag) const {
 std::vector<std::string> EntityManager::GetTags(EntityID entity) const {
     std::shared_lock lock(m_mutex);
     
-    if (!IsValid(entity)) {
+    // ✅ 使用 IsValidNoLock 避免递归锁
+    if (!IsValidNoLock(entity)) {
         return {};
     }
     
@@ -214,7 +222,8 @@ std::vector<EntityID> EntityManager::GetAllEntities() const {
     
     for (uint32_t i = 0; i < m_entities.size(); ++i) {
         EntityID id{ i, m_entities[i].version };
-        if (IsValid(id)) {
+        // ✅ 使用 IsValidNoLock 避免递归锁
+        if (IsValidNoLock(id)) {
             entities.push_back(id);
         }
     }
@@ -235,7 +244,8 @@ std::vector<EntityID> EntityManager::GetEntitiesWithTag(const std::string& tag) 
     entities.reserve(it->second.size());
     
     for (const auto& entity : it->second) {
-        if (IsValid(entity)) {
+        // ✅ 使用 IsValidNoLock 避免递归锁
+        if (IsValidNoLock(entity)) {
             entities.push_back(entity);
         }
     }
@@ -250,7 +260,8 @@ std::vector<EntityID> EntityManager::GetActiveEntities() const {
     
     for (uint32_t i = 0; i < m_entities.size(); ++i) {
         EntityID id{ i, m_entities[i].version };
-        if (IsValid(id) && m_entities[i].active) {
+        // ✅ 使用 IsValidNoLock 避免递归锁
+        if (IsValidNoLock(id) && m_entities[i].active) {
             entities.push_back(id);
         }
     }
@@ -264,7 +275,8 @@ size_t EntityManager::GetEntityCount() const {
     size_t count = 0;
     for (uint32_t i = 0; i < m_entities.size(); ++i) {
         EntityID id{ i, m_entities[i].version };
-        if (IsValid(id)) {
+        // ✅ 使用 IsValidNoLock 避免递归锁
+        if (IsValidNoLock(id)) {
             count++;
         }
     }
@@ -278,7 +290,8 @@ size_t EntityManager::GetActiveEntityCount() const {
     size_t count = 0;
     for (uint32_t i = 0; i < m_entities.size(); ++i) {
         EntityID id{ i, m_entities[i].version };
-        if (IsValid(id) && m_entities[i].active) {
+        // ✅ 使用 IsValidNoLock 避免递归锁
+        if (IsValidNoLock(id) && m_entities[i].active) {
             count++;
         }
     }

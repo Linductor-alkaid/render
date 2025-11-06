@@ -42,6 +42,19 @@
 
 ### 资源管理
 - **[ResourceManager](ResourceManager.md)** - 统一资源管理器（纹理、网格、材质、着色器） 🔒 **线程安全**
+- **[AsyncResourceLoader](AsyncResourceLoader.md)** - 异步资源加载器 🔒 **线程安全**
+
+### ECS 系统
+- **[ECS](ECS.md)** - ECS 系统总览（Entity Component System）
+- **[Entity](Entity.md)** - 实体和实体管理器（轻量级 ID、版本号、标签系统）
+- **[Component](Component.md)** - 组件和组件注册表（Transform、MeshRender、Camera、Light 等）
+- **[System](System.md)** - 系统基类和内置系统（Camera、Transform、ResourceLoading、MeshRender、Light 等）
+- **[World](World.md)** - ECS 世界容器（统一的实体、组件、系统管理）
+
+### Renderable 渲染对象
+- **[Renderable](Renderable.md)** - 渲染对象基类（统一的渲染接口）
+- **[MeshRenderable](MeshRenderable.md)** - 3D 网格渲染对象
+- **[SpriteRenderable](SpriteRenderable.md)** - 2D 精灵渲染对象
 
 ### 数学库
 - **[Types](Types.md)** - 数学类型和基础类型定义（Vector, Matrix, Quaternion, Plane, Ray）
@@ -79,6 +92,13 @@
 7. [设置相机矩阵](Camera.md#矩阵操作) 
 
 ### 常用任务
+- [创建 ECS 世界](ECS.md#快速开始)
+- [创建实体和组件](World.md#实体管理)
+- [注册系统](World.md#系统管理)
+- [查询实体](World.md#查询)
+- [创建自定义系统](System.md#创建自定义系统)
+- [使用 MeshRenderable](MeshRenderable.md#完整使用示例)
+- [使用 SpriteRenderable](SpriteRenderable.md#完整使用示例)
 - [窗口管理](Renderer.md#窗口管理)
 - [渲染状态设置](RenderState.md#状态设置)
 - [OpenGL 状态封装（纹理/VAO/着色器）](RenderState.md#opengl-状态封装)
@@ -174,13 +194,31 @@ MathUtils (静态工具类)
 
 ## API 版本
 
-- **Engine Version**: 0.13.0
-- **API Version**: 0.13.0
+- **Engine Version**: 0.14.0
+- **API Version**: 0.14.0
 - **OpenGL Version**: 4.5+
 - **C++ Standard**: C++20
-- **Last Updated**: 2025-11-03
+- **Last Updated**: 2025-11-04
 
 ### 版本更新记录
+- **v0.14.0** (2025-11-04): 🏗️ **ECS 和 Renderable 系统实现**
+  - ✅ 新增完整的 ECS（Entity Component System）架构
+  - ✅ 新增 `Entity` - 轻量级实体 ID（索引 + 版本号）
+  - ✅ 新增 `EntityManager` - 实体管理器（创建、销毁、标签系统）
+  - ✅ 新增 `Component` - 组件系统（Transform、MeshRender、Sprite、Camera、Light）
+  - ✅ 新增 `ComponentRegistry` - 组件注册表（类型安全、O(1) 访问）
+  - ✅ 新增 `System` - 系统基类（优先级、生命周期）
+  - ✅ 新增内置系统（CameraSystem、TransformSystem、ResourceLoadingSystem、MeshRenderSystem、LightSystem）
+  - ✅ 新增 `World` - ECS 世界容器（统一管理接口）
+  - ✅ 新增 `Renderable` - 渲染对象基类
+  - ✅ 新增 `MeshRenderable` - 3D 网格渲染对象
+  - ✅ 新增 `SpriteRenderable` - 2D 精灵渲染对象
+  - 🔒 **全面线程安全** - 所有 ECS 操作使用互斥锁保护
+  - ⚡ **资源复用** - Transform、Camera 等对象使用 shared_ptr 复用
+  - ⚡ **异步资源加载集成** - ResourceLoadingSystem 与 AsyncResourceLoader 深度集成
+  - ✅ 新增 ECS 异步加载集成测试程序 (33_ecs_async_test)
+  - ✅ 完整的 ECS 和 Renderable API 文档（8个文档）
+  - 🎯 **数据导向设计** - 组件存储紧凑，缓存友好
 - **v0.13.0** (2025-11-03): 🎨 **帧缓冲系统实现**
   - ✅ 新增 `Framebuffer` 类 - 完整的帧缓冲对象管理
   - ✅ 支持多种附件类型（颜色、深度、模板）
@@ -346,7 +384,9 @@ MathUtils (静态工具类)
 - [20_camera_test.cpp](../../examples/20_camera_test.cpp) - **相机系统测试（三种相机控制模式）** 📷 
 - [21_transform_thread_safe_test.cpp](../../examples/21_transform_thread_safe_test.cpp) - **Transform 线程安全测试** 🔒 
 - [22_gl_thread_safety_test.cpp](../../examples/22_gl_thread_safety_test.cpp) - **OpenGL 线程安全检查测试** 🔒 
+- [29_async_loading_test.cpp](../../examples/29_async_loading_test.cpp) - **异步资源加载测试** ⚡
 - [30_framebuffer_test.cpp](../../examples/30_framebuffer_test.cpp) - **帧缓冲测试（离屏渲染、后处理、MSAA）** 🎨 
+- [33_ecs_async_test.cpp](../../examples/33_ecs_async_test.cpp) - **ECS + 异步加载集成测试** 🏗️ 
 
 ## 相关文档
 

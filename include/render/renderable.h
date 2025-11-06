@@ -7,6 +7,7 @@
 #include "render/texture.h"
 #include <Eigen/Dense>
 #include <shared_mutex>
+#include <optional>
 
 namespace Render {
 
@@ -55,8 +56,10 @@ public:
     
     /**
      * @brief 渲染对象（纯虚函数）
+     * @param renderState 渲染状态管理器（可选）
+     *                    如果提供，材质将应用其渲染状态设置
      */
-    virtual void Render() = 0;
+    virtual void Render(RenderState* renderState = nullptr) = 0;
     
     /**
      * @brief 提交到渲染器（纯虚函数）
@@ -158,10 +161,46 @@ protected:
 // ============================================================
 
 /**
+ * @brief 材质属性覆盖
+ * 
+ * 用于在渲染时临时覆盖材质属性，而不修改共享的Material对象
+ * 这样多个实体可以共享同一个Material，但有不同的外观
+ */
+struct MaterialOverride {
+    std::optional<Color> diffuseColor;      ///< 漫反射颜色覆盖
+    std::optional<Color> specularColor;     ///< 镜面反射颜色覆盖
+    std::optional<Color> emissiveColor;     ///< 自发光颜色覆盖
+    std::optional<float> shininess;         ///< 镜面反射强度覆盖
+    std::optional<float> metallic;          ///< 金属度覆盖
+    std::optional<float> roughness;         ///< 粗糙度覆盖
+    std::optional<float> opacity;           ///< 不透明度覆盖
+    
+    /// 检查是否有任何覆盖
+    [[nodiscard]] bool HasAnyOverride() const {
+        return diffuseColor.has_value() || specularColor.has_value() || 
+               emissiveColor.has_value() || shininess.has_value() || 
+               metallic.has_value() || roughness.has_value() || 
+               opacity.has_value();
+    }
+    
+    /// 清除所有覆盖
+    void Clear() {
+        diffuseColor.reset();
+        specularColor.reset();
+        emissiveColor.reset();
+        shininess.reset();
+        metallic.reset();
+        roughness.reset();
+        opacity.reset();
+    }
+};
+
+/**
  * @brief MeshRenderable（3D 网格渲染对象）
  * 
  * 用于渲染 3D 网格，支持：
  * - 网格和材质设置
+ * - 材质属性覆盖（MaterialOverride）
  * - 阴影投射和接收
  * - 包围盒计算
  */
@@ -180,7 +219,7 @@ public:
     
     // ==================== 渲染 ====================
     
-    void Render() override;
+    void Render(RenderState* renderState = nullptr) override;
     void SubmitToRenderer(Renderer* renderer) override;
     
     // ==================== 资源设置 ====================
@@ -208,6 +247,34 @@ public:
      * @return 材质对象
      */
     [[nodiscard]] Ref<Material> GetMaterial() const;
+    
+    // ==================== 材质属性覆盖 ====================
+    
+    /**
+     * @brief 设置材质属性覆盖
+     * @param override 材质属性覆盖
+     * 
+     * 这些覆盖会在渲染时应用，不会修改原始的Material对象
+     * 这样允许多个实体共享同一个Material但有不同的外观
+     */
+    void SetMaterialOverride(const MaterialOverride& override);
+    
+    /**
+     * @brief 获取材质属性覆盖
+     * @return 材质属性覆盖
+     */
+    [[nodiscard]] MaterialOverride GetMaterialOverride() const;
+    
+    /**
+     * @brief 检查是否有材质属性覆盖
+     * @return 是否有覆盖
+     */
+    [[nodiscard]] bool HasMaterialOverride() const;
+    
+    /**
+     * @brief 清除所有材质属性覆盖
+     */
+    void ClearMaterialOverride();
     
     // ==================== 阴影 ====================
     
@@ -242,6 +309,7 @@ public:
 private:
     Ref<Mesh> m_mesh;                     ///< 网格对象
     Ref<Material> m_material;             ///< 材质对象
+    MaterialOverride m_materialOverride;  ///< 材质属性覆盖
     bool m_castShadows = true;            ///< 是否投射阴影
     bool m_receiveShadows = true;         ///< 是否接收阴影
 };
@@ -273,7 +341,7 @@ public:
     
     // ==================== 渲染 ====================
     
-    void Render() override;
+    void Render(RenderState* renderState = nullptr) override;
     void SubmitToRenderer(Renderer* renderer) override;
     
     // ==================== 纹理 ====================

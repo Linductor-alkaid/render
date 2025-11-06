@@ -239,7 +239,7 @@ public:
      */
     template<typename T>
     void AddComponent(EntityID entity, const T& component) {
-        GetComponentArray<T>()->Add(entity, component);
+        GetComponentArrayInternal<T>()->Add(entity, component);
     }
     
     /**
@@ -250,7 +250,7 @@ public:
      */
     template<typename T>
     void AddComponent(EntityID entity, T&& component) {
-        GetComponentArray<T>()->Add(entity, std::move(component));
+        GetComponentArrayInternal<T>()->Add(entity, std::move(component));
     }
     
     /**
@@ -260,7 +260,7 @@ public:
      */
     template<typename T>
     void RemoveComponent(EntityID entity) {
-        GetComponentArray<T>()->Remove(entity);
+        GetComponentArrayInternal<T>()->Remove(entity);
     }
     
     /**
@@ -271,7 +271,7 @@ public:
      */
     template<typename T>
     T& GetComponent(EntityID entity) {
-        return GetComponentArray<T>()->Get(entity);
+        return GetComponentArrayInternal<T>()->Get(entity);
     }
     
     /**
@@ -282,7 +282,7 @@ public:
      */
     template<typename T>
     const T& GetComponent(EntityID entity) const {
-        return GetComponentArray<T>()->Get(entity);
+        return GetComponentArrayInternal<T>()->Get(entity);
     }
     
     /**
@@ -293,8 +293,14 @@ public:
      */
     template<typename T>
     [[nodiscard]] bool HasComponent(EntityID entity) const {
-        auto array = GetComponentArray<T>();
-        return array ? array->Has(entity) : false;
+        // ✅ 修复：如果组件类型未注册，应该返回 false 而不是抛出异常
+        try {
+            auto array = GetComponentArrayInternal<T>();
+            return array ? array->Has(entity) : false;
+        } catch (const std::runtime_error&) {
+            // 组件类型未注册，返回 false
+            return false;
+        }
     }
     
     /**
@@ -310,42 +316,90 @@ public:
         }
     }
     
+    // ==================== 安全的迭代接口 ====================
+    
     /**
-     * @brief 获取指定类型的组件数组
+     * @brief 遍历指定类型的所有组件（安全接口）
      * @tparam T 组件类型
-     * @return 组件数组指针
+     * @tparam Func 回调函数类型
+     * @param func 回调函数 void(EntityID, T&)
+     * 
+     * @note 这是推荐的迭代方式，比直接获取组件数组更安全
+     * @note 在回调函数执行期间持有锁，确保线程安全
+     * @note 如果组件类型未注册，方法会安全返回（不抛出异常）
      */
-    template<typename T>
-    ComponentArray<T>* GetComponentArray() {
-        std::shared_lock lock(m_mutex);
-        
-        std::type_index typeIndex = std::type_index(typeid(T));
-        auto it = m_componentArrays.find(typeIndex);
-        
-        if (it == m_componentArrays.end()) {
-            throw std::runtime_error("Component type not registered");
+    template<typename T, typename Func>
+    void ForEachComponent(Func&& func) {
+        try {
+            auto array = GetComponentArrayInternal<T>();
+            if (array) {
+                array->ForEach(std::forward<Func>(func));
+            }
+        } catch (const std::runtime_error&) {
+            // 组件类型未注册，安全返回
         }
-        
-        return static_cast<ComponentArray<T>*>(it->second.get());
     }
     
     /**
-     * @brief 获取指定类型的组件数组（只读）
+     * @brief 遍历指定类型的所有组件（只读，安全接口）
      * @tparam T 组件类型
-     * @return 组件数组指针
+     * @tparam Func 回调函数类型
+     * @param func 回调函数 void(EntityID, const T&)
+     * 
+     * @note 这是推荐的迭代方式，比直接获取组件数组更安全
+     * @note 在回调函数执行期间持有锁，确保线程安全
+     * @note 如果组件类型未注册，方法会安全返回（不抛出异常）
+     */
+    template<typename T, typename Func>
+    void ForEachComponent(Func&& func) const {
+        try {
+            auto array = GetComponentArrayInternal<T>();
+            if (array) {
+                array->ForEach(std::forward<Func>(func));
+            }
+        } catch (const std::runtime_error&) {
+            // 组件类型未注册，安全返回
+        }
+    }
+    
+    /**
+     * @brief 获取具有指定组件的所有实体（安全接口）
+     * @tparam T 组件类型
+     * @return 实体 ID 列表
+     * 
+     * @note 返回的是快照，后续实体可能已被删除
+     * @note 使用前应该检查实体有效性
+     * @note 如果组件类型未注册，返回空列表
      */
     template<typename T>
-    const ComponentArray<T>* GetComponentArray() const {
-        std::shared_lock lock(m_mutex);
-        
-        std::type_index typeIndex = std::type_index(typeid(T));
-        auto it = m_componentArrays.find(typeIndex);
-        
-        if (it == m_componentArrays.end()) {
-            throw std::runtime_error("Component type not registered");
+    [[nodiscard]] std::vector<EntityID> GetEntitiesWithComponent() const {
+        try {
+            auto array = GetComponentArrayInternal<T>();
+            if (array) {
+                return array->GetEntities();
+            }
+        } catch (const std::runtime_error&) {
+            // 组件类型未注册，返回空列表
         }
-        
-        return static_cast<const ComponentArray<T>*>(it->second.get());
+        return {};
+    }
+    
+    /**
+     * @brief 获取指定类型的组件数量
+     * @tparam T 组件类型
+     * @return 组件数量
+     * 
+     * @note 如果组件类型未注册，返回 0
+     */
+    template<typename T>
+    [[nodiscard]] size_t GetComponentCount() const {
+        try {
+            auto array = GetComponentArrayInternal<T>();
+            return array ? array->Size() : 0;
+        } catch (const std::runtime_error&) {
+            // 组件类型未注册，返回 0
+            return 0;
+        }
     }
     
     /**
@@ -359,6 +413,82 @@ public:
     }
     
 private:
+    /**
+     * @brief 获取指定类型的组件数组（内部方法，返回裸指针）
+     * @tparam T 组件类型
+     * @return 组件数组指针
+     * @throws std::runtime_error 如果组件类型未注册
+     * 
+     * @note 此方法仅供内部使用，外部代码应使用安全的公共接口
+     * @note 调用者必须确保在使用指针期间持有适当的锁
+     */
+    template<typename T>
+    ComponentArray<T>* GetComponentArrayInternal() {
+        std::shared_lock lock(m_mutex);
+        
+        std::type_index typeIndex = std::type_index(typeid(T));
+        auto it = m_componentArrays.find(typeIndex);
+        
+        if (it == m_componentArrays.end()) {
+            throw std::runtime_error("Component type not registered");
+        }
+        
+        return static_cast<ComponentArray<T>*>(it->second.get());
+    }
+    
+    /**
+     * @brief 获取指定类型的组件数组（内部方法，只读）
+     * @tparam T 组件类型
+     * @return 组件数组指针
+     * @throws std::runtime_error 如果组件类型未注册
+     * 
+     * @note 此方法仅供内部使用，外部代码应使用安全的公共接口
+     * @note 调用者必须确保在使用指针期间持有适当的锁
+     */
+    template<typename T>
+    const ComponentArray<T>* GetComponentArrayInternal() const {
+        std::shared_lock lock(m_mutex);
+        
+        std::type_index typeIndex = std::type_index(typeid(T));
+        auto it = m_componentArrays.find(typeIndex);
+        
+        if (it == m_componentArrays.end()) {
+            throw std::runtime_error("Component type not registered");
+        }
+        
+        return static_cast<const ComponentArray<T>*>(it->second.get());
+    }
+    
+    /**
+     * @brief 兼容旧代码：获取组件数组（已废弃）
+     * @tparam T 组件类型
+     * @return 组件数组指针
+     * @deprecated 请使用 ForEachComponent 或 GetEntitiesWithComponent 替代
+     * 
+     * @warning 此方法返回裸指针，存在生命周期风险
+     * @warning 仅为向后兼容保留，新代码不应使用
+     */
+    template<typename T>
+    [[deprecated("Use ForEachComponent or GetEntitiesWithComponent instead")]]
+    ComponentArray<T>* GetComponentArray() {
+        return GetComponentArrayInternal<T>();
+    }
+    
+    /**
+     * @brief 兼容旧代码：获取组件数组（已废弃，只读）
+     * @tparam T 组件类型
+     * @return 组件数组指针
+     * @deprecated 请使用 ForEachComponent 或 GetEntitiesWithComponent 替代
+     * 
+     * @warning 此方法返回裸指针，存在生命周期风险
+     * @warning 仅为向后兼容保留，新代码不应使用
+     */
+    template<typename T>
+    [[deprecated("Use ForEachComponent or GetEntitiesWithComponent instead")]]
+    const ComponentArray<T>* GetComponentArray() const {
+        return GetComponentArrayInternal<T>();
+    }
+    
     std::unordered_map<std::type_index, std::unique_ptr<IComponentArray>> m_componentArrays;
     mutable std::shared_mutex m_mutex;
 };

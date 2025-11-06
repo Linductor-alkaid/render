@@ -6,13 +6,19 @@
 #include "render/renderable.h"
 #include "render/async_resource_loader.h"
 #include "render/camera.h"
+#include "render/types.h"
 #include <vector>
 
 namespace Render {
+
+// 前向声明
+class Mesh;
+
 namespace ECS {
 
 // 前向声明
 class CameraSystem;
+struct GeometryComponent;
 
 // ============================================================
 // Transform 更新系统（维护变换层级）
@@ -21,13 +27,66 @@ class CameraSystem;
 /**
  * @brief Transform 更新系统
  * 
- * 更新所有 TransformComponent 的层级关系
- * 优先级：10（高优先级）
+ * **功能**：
+ * - 同步父子关系（实体ID -> Transform指针）
+ * - 批量更新 Transform 世界变换
+ * - 验证父实体有效性
+ * 
+ * **优化**：
+ * - 按层级深度排序，确保父对象先更新
+ * - 只更新标记为dirty的Transform
+ * - 批量处理减少单个调用开销
+ * 
+ * 优先级：10（高优先级，在其他系统之前运行）
  */
 class TransformSystem : public System {
 public:
     void Update(float deltaTime) override;
     [[nodiscard]] int GetPriority() const override { return 10; }
+    
+    /**
+     * @brief 同步所有实体的父子关系
+     * 
+     * @note 将 TransformComponent 的 parentEntity 同步到 Transform 的父指针
+     * @note 验证父实体有效性，自动清除无效的父子关系
+     */
+    void SyncParentChildRelations();
+    
+    /**
+     * @brief 批量更新所有 dirty Transform 的世界变换
+     * 
+     * @note 按层级深度排序，确保父对象先更新
+     * @note 只更新标记为 dirty 的 Transform
+     */
+    void BatchUpdateTransforms();
+    
+    /**
+     * @brief 验证所有 Transform 状态（调试用）
+     * @return 无效 Transform 数量
+     */
+    size_t ValidateAll();
+    
+    /**
+     * @brief 启用/禁用批量更新优化
+     * @param enable 是否启用
+     */
+    void SetBatchUpdateEnabled(bool enable) { m_batchUpdateEnabled = enable; }
+    
+    /**
+     * @brief 获取上次更新的统计信息
+     */
+    struct UpdateStats {
+        size_t totalEntities = 0;      ///< 总实体数
+        size_t dirtyTransforms = 0;    ///< 需要更新的 Transform 数
+        size_t syncedParents = 0;      ///< 同步的父子关系数
+        size_t clearedParents = 0;     ///< 清除的无效父子关系数
+    };
+    
+    [[nodiscard]] const UpdateStats& GetStats() const { return m_stats; }
+    
+private:
+    bool m_batchUpdateEnabled = true;  ///< 是否启用批量更新
+    UpdateStats m_stats;               ///< 更新统计信息
 };
 
 // ============================================================
@@ -57,6 +116,12 @@ public:
     void SetMaxTasksPerFrame(size_t maxTasks) { m_maxTasksPerFrame = maxTasks; }
     
     /**
+     * @brief 获取每帧最大处理任务数
+     * @return 每帧最大处理任务数
+     */
+    [[nodiscard]] size_t GetMaxTasksPerFrame() const { return m_maxTasksPerFrame; }
+    
+    /**
      * @brief 设置异步加载器
      * @param asyncLoader 异步加载器指针
      */
@@ -65,6 +130,7 @@ public:
 private:
     void LoadMeshResources();
     void LoadSpriteResources();
+    void LoadTextureOverrides();  ///< 加载纹理覆盖
     void ProcessAsyncTasks();
     void ApplyPendingUpdates();  ///< 应用延迟更新
     
@@ -87,11 +153,21 @@ private:
         std::string errorMessage;
     };
     
+    // ✅ 新增：纹理覆盖更新结构
+    struct PendingTextureOverrideUpdate {
+        EntityID entity;
+        std::string textureName;        ///< 纹理在材质中的名称（如"diffuse"）
+        std::shared_ptr<Texture> texture;
+        bool success;
+        std::string errorMessage;
+    };
+    
     size_t m_maxTasksPerFrame = 10;         ///< 每帧最大处理任务数
     AsyncResourceLoader* m_asyncLoader = nullptr;  ///< 异步加载器
     
     std::vector<PendingMeshUpdate> m_pendingMeshUpdates;       ///< 待应用的网格更新
     std::vector<PendingTextureUpdate> m_pendingTextureUpdates; ///< 待应用的纹理更新
+    std::vector<PendingTextureOverrideUpdate> m_pendingTextureOverrideUpdates; ///< 待应用的纹理覆盖更新
     std::mutex m_pendingMutex;  ///< 保护待更新队列的互斥锁
     
     std::atomic<bool> m_shuttingDown{false};  ///< 是否正在关闭
@@ -172,6 +248,15 @@ private:
  * 
  * 管理相机组件，更新视图矩阵和投影矩阵
  * 优先级：5（最高优先级）
+ * 
+ * **主相机管理策略**：
+ * - 自动验证主相机有效性，如果无效会自动选择新的主相机
+ * - 按照depth值选择主相机（depth越小优先级越高）
+ * - 支持手动设置和清除主相机
+ * 
+ * **线程安全性**：
+ * - 此系统不是线程安全的，应在主线程的Update中调用
+ * - Camera对象本身是线程安全的
  */
 class CameraSystem : public System {
 public:
@@ -180,19 +265,62 @@ public:
     void Update(float deltaTime) override;
     [[nodiscard]] int GetPriority() const override { return 5; }
     
+    // ==================== 主相机查询 ====================
+    
     /**
      * @brief 获取主相机实体
-     * @return 主相机实体 ID
+     * @return 主相机实体 ID（可能无效）
      */
     [[nodiscard]] EntityID GetMainCamera() const;
     
     /**
-     * @brief 获取主相机对象
-     * @return 主相机对象指针
+     * @brief 获取主相机对象（裸指针）
+     * @return 主相机对象指针，失败返回nullptr
+     * 
+     * @warning 返回的指针可能失效，建议使用GetMainCameraSharedPtr()
+     * @deprecated 推荐使用GetMainCameraSharedPtr()替代
      */
     [[nodiscard]] Camera* GetMainCameraObject() const;
     
+    /**
+     * @brief 获取主相机对象（shared_ptr）
+     * @return 主相机对象智能指针，失败返回nullptr
+     * 
+     * @note 推荐使用此方法，更加安全
+     */
+    [[nodiscard]] Ref<Camera> GetMainCameraSharedPtr() const;
+    
+    // ==================== 主相机管理 ====================
+    
+    /**
+     * @brief 手动设置主相机
+     * @param entity 要设置为主相机的实体
+     * @return 成功返回true，失败返回false
+     * 
+     * @note 会验证实体是否有效、是否有CameraComponent等
+     */
+    bool SetMainCamera(EntityID entity);
+    
+    /**
+     * @brief 清除主相机（下次Update时会自动选择）
+     */
+    void ClearMainCamera();
+    
+    /**
+     * @brief 按深度选择主相机
+     * @return 返回选中的相机实体ID（可能无效）
+     * 
+     * @note 会选择depth最小的激活相机
+     */
+    EntityID SelectMainCameraByDepth();
+    
 private:
+    /**
+     * @brief 验证主相机是否仍然有效
+     * @return 如果有效返回true
+     */
+    bool ValidateMainCamera() const;
+    
     EntityID m_mainCamera;   ///< 主相机实体 ID
 };
 
@@ -240,6 +368,181 @@ public:
     Vector3 GetPrimaryLightPosition() const { return m_primaryLightPosition; }
     Color GetPrimaryLightColor() const { return m_primaryLightColor; }
     float GetPrimaryLightIntensity() const { return m_primaryLightIntensity; }
+};
+
+// ============================================================
+// Uniform 系统（全局 uniform 管理）
+// ============================================================
+
+/**
+ * @brief Uniform 系统
+ * 
+ * 自动管理全局 uniform，包括相机矩阵、光源数据等
+ * 遍历所有材质，设置通用的 uniform 参数
+ * 优先级：90（在渲染系统之前，在光照系统之后）
+ */
+class UniformSystem : public System {
+public:
+    explicit UniformSystem(Renderer* renderer);
+    
+    void Update(float deltaTime) override;
+    [[nodiscard]] int GetPriority() const override { return 90; }
+    
+    void OnCreate(World* world) override;
+    void OnDestroy() override;
+    
+    /**
+     * @brief 设置是否启用自动 uniform 管理
+     * @param enable 是否启用
+     */
+    void SetEnabled(bool enable) { m_enabled = enable; }
+    
+    /**
+     * @brief 获取是否启用
+     */
+    [[nodiscard]] bool IsEnabled() const { return m_enabled; }
+    
+private:
+    void SetCameraUniforms();
+    void SetLightUniforms();
+    void SetTimeUniforms();
+    
+    Renderer* m_renderer;                    ///< 渲染器指针
+    CameraSystem* m_cameraSystem = nullptr;  ///< 缓存的相机系统
+    LightSystem* m_lightSystem = nullptr;    ///< 缓存的光源系统
+    
+    bool m_enabled = true;                   ///< 是否启用自动管理
+    float m_time = 0.0f;                     ///< 累计时间
+};
+
+// ============================================================
+// Window 系统（窗口管理）
+// ============================================================
+
+/**
+ * @brief Window 系统
+ * 
+ * 监控窗口大小变化，自动更新相机宽高比和视口
+ * 优先级：3（在相机系统之前）
+ * 
+ * @note 前置条件：
+ * 1. Renderer 必须已经初始化（调用 Renderer::Initialize()）
+ * 2. OpenGLContext 必须已经初始化
+ * 3. 必须在主线程（OpenGL线程）中注册和更新
+ * 
+ * @note 实现机制：
+ * - 使用 OpenGLContext 的窗口大小变化回调机制（事件驱动）
+ * - 不再使用轮询检测窗口大小变化
+ * - 自动更新相机宽高比和渲染视口
+ */
+class WindowSystem : public System {
+public:
+    explicit WindowSystem(Renderer* renderer);
+    
+    void Update(float deltaTime) override;
+    [[nodiscard]] int GetPriority() const override { return 3; }
+    
+    void OnCreate(World* world) override;
+    void OnDestroy() override;
+    
+private:
+    /// 窗口大小变化回调处理
+    void OnWindowResized(int width, int height);
+    
+    Renderer* m_renderer;                    ///< 渲染器指针
+    CameraSystem* m_cameraSystem = nullptr;  ///< 缓存的相机系统
+};
+
+// ============================================================
+// Geometry 系统（几何形状生成）
+// ============================================================
+
+/**
+ * @brief Geometry 系统
+ * 
+ * 自动生成基本几何形状的网格
+ * 优先级：15（在资源加载之前）
+ */
+class GeometrySystem : public System {
+public:
+    GeometrySystem() = default;
+    
+    void Update(float deltaTime) override;
+    [[nodiscard]] int GetPriority() const override { return 15; }
+    
+private:
+    void GenerateGeometry();
+    std::shared_ptr<Mesh> CreateGeometryMesh(const GeometryComponent& geom);
+};
+
+// ============================================================
+// ResourceCleanup 系统（资源清理）
+// ============================================================
+
+/**
+ * @brief 资源清理系统
+ * 
+ * 定期清理未使用的资源，防止内存泄漏
+ * 优先级：1000（最后执行，低优先级）
+ */
+class ResourceCleanupSystem : public System {
+public:
+    /**
+     * @brief 构造函数
+     * @param cleanupIntervalSeconds 清理间隔（秒）
+     * @param unusedFrameThreshold 资源未使用多少帧后清理（默认 60 帧 = 约 1 秒）
+     */
+    explicit ResourceCleanupSystem(float cleanupIntervalSeconds = 60.0f, 
+                                  uint32_t unusedFrameThreshold = 60);
+    
+    void Update(float deltaTime) override;
+    [[nodiscard]] int GetPriority() const override { return 1000; }
+    
+    /**
+     * @brief 设置清理间隔
+     * @param seconds 间隔秒数
+     */
+    void SetCleanupInterval(float seconds) { m_cleanupInterval = seconds; }
+    
+    /**
+     * @brief 获取清理间隔
+     */
+    [[nodiscard]] float GetCleanupInterval() const { return m_cleanupInterval; }
+    
+    /**
+     * @brief 手动触发清理
+     */
+    void ForceCleanup();
+    
+    /**
+     * @brief 启用/禁用自动清理
+     */
+    void SetEnabled(bool enabled) { m_enabled = enabled; }
+    
+    /**
+     * @brief 是否启用
+     */
+    [[nodiscard]] bool IsEnabled() const { return m_enabled; }
+    
+    /**
+     * @brief 获取上次清理的统计信息
+     */
+    struct CleanupStats {
+        size_t meshCleaned = 0;
+        size_t textureCleaned = 0;
+        size_t materialCleaned = 0;
+        size_t shaderCleaned = 0;
+        size_t totalCleaned = 0;
+    };
+    
+    [[nodiscard]] const CleanupStats& GetLastCleanupStats() const { return m_lastStats; }
+    
+private:
+    float m_timer = 0.0f;                    ///< 计时器
+    float m_cleanupInterval;                 ///< 清理间隔（秒）
+    uint32_t m_unusedFrameThreshold;         ///< 未使用帧数阈值
+    bool m_enabled = true;                   ///< 是否启用
+    CleanupStats m_lastStats;                ///< 上次清理统计
 };
 
 } // namespace ECS

@@ -192,10 +192,10 @@ void Renderer::FlushRenderQueue() {
     // 排序渲染队列
     SortRenderQueue();
     
-    // 渲染所有对象
+    // ✅ 渲染所有对象，传递 RenderState 以应用材质渲染状态
     for (auto* renderable : m_renderQueue) {
         if (renderable && renderable->IsVisible()) {
-            renderable->Render();
+            renderable->Render(m_renderState.get());
         }
     }
     

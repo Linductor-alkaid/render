@@ -1,5 +1,6 @@
 #include "render/ecs/world.h"
 #include "render/logger.h"
+#include "render/resource_manager.h"
 #include <algorithm>
 
 namespace Render {
@@ -92,6 +93,10 @@ void World::Update(float deltaTime) {
     
     // 记录开始时间
     auto startTime = std::chrono::high_resolution_clock::now();
+    
+    // ✅ 修复：在每帧开始时更新ResourceManager的帧计数
+    // 这对于资源生命周期管理和CleanupUnused()正确工作至关重要
+    ResourceManager::GetInstance().BeginFrame();
     
     // 更新统计信息
     m_stats.entityCount = m_entityManager.GetEntityCount();

@@ -231,10 +231,10 @@ int main(int argc, char* argv[]) {
         Matrix4 view = camera.GetViewMatrix();
         Matrix4 projection = camera.GetProjectionMatrix();
         
-        sceneUniforms->SetMatrix4("view", view);
-        sceneUniforms->SetMatrix4("projection", projection);
-        sceneUniforms->SetBool("useTexture", false);
-        sceneUniforms->SetBool("useVertexColor", true);
+        sceneUniforms->SetMatrix4("uView", view);
+        sceneUniforms->SetMatrix4("uProjection", projection);
+        sceneUniforms->SetBool("uUseTexture", false);
+        sceneUniforms->SetBool("uUseVertexColor", true);
         
         // 绘制所有立方体
         for (size_t i = 0; i < cubes.size(); ++i) {
@@ -253,8 +253,8 @@ int main(int argc, char* argv[]) {
             model(2, 0) = -std::sin(angle);
             model(2, 2) = std::cos(angle);
             
-            sceneUniforms->SetMatrix4("model", model);
-            sceneUniforms->SetColor("color", cubeColors[i % cubeColors.size()]);
+            sceneUniforms->SetMatrix4("uModel", model);
+            sceneUniforms->SetColor("uColor", cubeColors[i % cubeColors.size()]);
             
             cubes[i]->Draw();
         }

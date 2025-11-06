@@ -13,23 +13,23 @@ out vec3 FragPos;
 out vec4 VertexColor;
 
 // Uniforms
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProjection;
 
 void main() {
     // 计算世界空间位置
-    vec4 worldPos = model * vec4(aPosition, 1.0);
+    vec4 worldPos = uModel * vec4(aPosition, 1.0);
     FragPos = worldPos.xyz;
     
     // 变换法线到世界空间
-    Normal = mat3(transpose(inverse(model))) * aNormal;
+    Normal = mat3(transpose(inverse(uModel))) * aNormal;
     
     // 传递纹理坐标和顶点颜色
     TexCoord = aTexCoord;
     VertexColor = aColor;
     
     // 计算最终位置
-    gl_Position = projection * view * worldPos;
+    gl_Position = uProjection * uView * worldPos;
 }
 

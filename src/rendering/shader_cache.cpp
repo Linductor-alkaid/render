@@ -107,6 +107,11 @@ std::shared_ptr<Shader> ShaderCache::GetShader(const std::string& name) {
     return nullptr;
 }
 
+bool ShaderCache::HasShader(const std::string& name) const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_shaders.find(name) != m_shaders.end();
+}
+
 bool ShaderCache::ReloadShader(const std::string& name) {
     std::shared_ptr<Shader> shader;
     {

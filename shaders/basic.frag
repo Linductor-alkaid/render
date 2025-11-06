@@ -10,21 +10,21 @@ in vec4 VertexColor;
 out vec4 FragColor;
 
 // Uniforms
-uniform vec4 color;
-uniform sampler2D texture0;
-uniform bool useTexture;
-uniform bool useVertexColor;
+uniform vec4 uColor;
+uniform sampler2D uTexture0;
+uniform bool uUseTexture;
+uniform bool uUseVertexColor;
 
 void main() {
-    vec4 baseColor = color;
+    vec4 baseColor = uColor;
     
     // 使用纹理
-    if (useTexture) {
-        baseColor *= texture(texture0, TexCoord);
+    if (uUseTexture) {
+        baseColor *= texture(uTexture0, TexCoord);
     }
     
     // 使用顶点颜色
-    if (useVertexColor) {
+    if (uUseVertexColor) {
         baseColor *= VertexColor;
     }
     

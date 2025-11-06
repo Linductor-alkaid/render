@@ -2,10 +2,14 @@
 
 #include "render/transform.h"
 #include "render/types.h"
+#include "entity.h"  // 需要 EntityID 定义
 #include <string>
 #include <vector>
 #include <memory>
 #include <unordered_set>
+#include <optional>  // C++17 std::optional
+#include <unordered_map>
+#include <sstream>  // std::ostringstream
 
 namespace Render {
 
@@ -18,6 +22,9 @@ class Framebuffer;
 
 namespace ECS {
 
+// 前向声明
+class World;
+
 // ============================================================
 // Transform 组件（避免反复创建销毁）
 // ============================================================
@@ -27,9 +34,15 @@ namespace ECS {
  * 
  * 使用 shared_ptr 复用 Transform 对象，避免频繁创建销毁
  * 提供快捷访问接口，简化使用
+ * 
+ * **父子关系管理**（方案B - 使用实体ID）:
+ * - 使用 parentEntity 存储父实体ID而非直接的Transform指针
+ * - 由 TransformSystem 负责同步实体ID到Transform指针
+ * - 确保生命周期安全，父实体销毁时自动清除关系
  */
 struct TransformComponent {
     Ref<Transform> transform;    ///< 复用 Transform 对象（shared_ptr）
+    EntityID parentEntity = EntityID::Invalid();  ///< 父实体ID（安全的父子关系管理）
     
     // 默认构造函数 - 自动创建 Transform 对象
     TransformComponent() : transform(std::make_shared<Transform>()) {}
@@ -80,19 +93,98 @@ struct TransformComponent {
         if (transform) transform->LookAt(target, up);
     }
     
-    // 父子关系
-    void SetParent(const Ref<Transform>& parent) {
-        if (transform && parent) transform->SetParent(parent.get());
+    // ==================== 父子关系（基于实体ID - 方案B）====================
+    
+    /**
+     * @brief 设置父实体（通过实体ID）
+     * @param world World 对象指针
+     * @param parent 父实体ID
+     * @return 成功返回 true，失败返回 false
+     * 
+     * @note 此方法会验证父实体的有效性
+     * @note 实际的Transform指针同步由TransformSystem自动处理
+     * @note 失败情况：父实体无效、父实体没有TransformComponent等
+     */
+    bool SetParentEntity(World* world, EntityID parent);
+    
+    /**
+     * @brief 获取父实体ID
+     * @return 父实体ID，如果没有父实体返回 Invalid
+     */
+    [[nodiscard]] EntityID GetParentEntity() const {
+        return parentEntity;
     }
     
-    // 移除父对象
-    void RemoveParent() {
+    /**
+     * @brief 移除父对象
+     * @return 总是返回 true
+     */
+    bool RemoveParent() {
+        parentEntity = EntityID::Invalid();
         if (transform) transform->SetParent(nullptr);
+        return true;
     }
     
-    // 获取父对象
+    /**
+     * @brief 验证父实体是否仍然有效
+     * @param world World 对象指针
+     * @return 如果父实体有效（或没有父实体）返回 true
+     * 
+     * @note 如果父实体已销毁，会自动清除父子关系
+     */
+    bool ValidateParentEntity(World* world);
+    
+    // ==================== 兼容性接口（原始指针）====================
+    
+    /**
+     * @brief 获取父对象（原始指针）
+     * @return 父Transform指针，可能为 nullptr
+     * 
+     * @warning 返回的指针可能会失效，推荐使用 GetParentEntity()
+     * @deprecated 建议使用基于实体ID的接口
+     */
     [[nodiscard]] Transform* GetParent() const {
         return transform ? transform->GetParent() : nullptr;
+    }
+    
+    // ==================== 验证和调试接口 ====================
+    
+    /**
+     * @brief 验证 Transform 状态
+     * @return 如果 Transform 有效返回 true
+     */
+    [[nodiscard]] bool Validate() const {
+        return transform && transform->Validate();
+    }
+    
+    /**
+     * @brief 获取调试字符串
+     */
+    [[nodiscard]] std::string DebugString() const {
+        if (!transform) {
+            return "TransformComponent { transform: null }";
+        }
+        std::string result = "TransformComponent { ";
+        result += transform->DebugString();
+        if (parentEntity.IsValid()) {
+            result += ", parentEntity: " + std::to_string(parentEntity.index);
+        }
+        result += " }";
+        return result;
+    }
+    
+    /**
+     * @brief 获取层级深度
+     */
+    [[nodiscard]] int GetHierarchyDepth() const {
+        return transform ? transform->GetHierarchyDepth() : 0;
+    }
+    
+    /**
+     * @brief 获取子对象数量
+     */
+    [[nodiscard]] int GetChildCount() const {
+        return transform ? transform->GetChildCount() : 0;
     }
 };
 
@@ -179,28 +271,92 @@ struct ActiveComponent {
  * 支持异步资源加载和 LOD
  */
 struct MeshRenderComponent {
-    // 资源引用（通过 ResourceManager 管理）
+    // ==================== 资源引用（通过 ResourceManager 管理）====================
     std::string meshName;          ///< 网格资源名称
     std::string materialName;      ///< 材质资源名称
+    std::string shaderName;        ///< 着色器名称（可选，覆盖材质的着色器）
+    
+    // 着色器路径（可选，用于动态加载）
+    // 如果提供了路径，ResourceLoadingSystem会自动加载着色器到ShaderCache
+    // 如果未提供路径，则仅从ShaderCache中获取已预加载的着色器
+    std::string shaderVertPath;    ///< 顶点着色器路径（可选）
+    std::string shaderFragPath;    ///< 片段着色器路径（可选）
+    std::string shaderGeomPath;    ///< 几何着色器路径（可选）
     
     Ref<Mesh> mesh;                ///< 网格对象（延迟加载）
     Ref<Material> material;        ///< 材质对象（延迟加载）
     
-    // 渲染属性
+    // ==================== 渲染属性 ====================
     bool visible = true;           ///< 是否可见
     bool castShadows = true;       ///< 是否投射阴影
     bool receiveShadows = true;    ///< 是否接收阴影
     uint32_t layerID = 300;        ///< 渲染层级（默认 WORLD_GEOMETRY）
     uint32_t renderPriority = 0;   ///< 渲染优先级
     
-    // LOD 支持
+    // ==================== 材质属性覆盖 ====================
+    // 这些属性会在渲染时覆盖材质的默认值
+    
+    struct MaterialOverride {
+        std::optional<Color> diffuseColor;      ///< 漫反射颜色覆盖
+        std::optional<Color> specularColor;     ///< 镜面反射颜色覆盖
+        std::optional<Color> emissiveColor;     ///< 自发光颜色覆盖
+        std::optional<float> shininess;         ///< 镜面反射强度覆盖
+        std::optional<float> metallic;          ///< 金属度覆盖
+        std::optional<float> roughness;         ///< 粗糙度覆盖
+        std::optional<float> opacity;           ///< 不透明度覆盖
+    };
+    
+    MaterialOverride materialOverride;  ///< 材质属性覆盖
+    
+    // ==================== 纹理设置 ====================
+    
+    struct TextureSettings {
+        bool generateMipmaps = true;
+        // 可以在这里扩展纹理参数（过滤模式、包裹模式等）
+    };
+    
+    std::unordered_map<std::string, TextureSettings> textureSettings;  ///< 纹理设置（按名称）
+    std::unordered_map<std::string, std::string> textureOverrides;      ///< 纹理覆盖（纹理名 -> 资源路径）
+    
+    // ==================== LOD 支持 ====================
     std::vector<float> lodDistances;  ///< LOD 距离阈值
     
-    // 异步加载状态
+    // ==================== 实例化渲染支持 ====================
+    bool useInstancing = false;                      ///< 是否使用实例化渲染
+    uint32_t instanceCount = 1;                      ///< 实例数量
+    std::vector<Matrix4> instanceTransforms;         ///< 实例变换矩阵（可选）
+    
+    // ==================== 异步加载状态 ====================
     bool resourcesLoaded = false;     ///< 资源是否已加载
     bool asyncLoading = false;        ///< 是否正在异步加载
     
     MeshRenderComponent() = default;
+    
+    // ==================== 便捷方法 ====================
+    
+    /// 设置漫反射颜色覆盖
+    void SetDiffuseColor(const Color& color) { materialOverride.diffuseColor = color; }
+    
+    /// 设置镜面反射颜色覆盖
+    void SetSpecularColor(const Color& color) { materialOverride.specularColor = color; }
+    
+    /// 设置自发光颜色覆盖
+    void SetEmissiveColor(const Color& color) { materialOverride.emissiveColor = color; }
+    
+    /// 设置镜面反射强度覆盖
+    void SetShininess(float value) { materialOverride.shininess = value; }
+    
+    /// 设置金属度覆盖
+    void SetMetallic(float value) { materialOverride.metallic = value; }
+    
+    /// 设置粗糙度覆盖
+    void SetRoughness(float value) { materialOverride.roughness = value; }
+    
+    /// 设置不透明度覆盖
+    void SetOpacity(float value) { materialOverride.opacity = value; }
+    
+    /// 清除所有材质覆盖
+    void ClearMaterialOverrides() { materialOverride = MaterialOverride{}; }
 };
 
 // ============================================================
@@ -237,6 +393,25 @@ struct SpriteRenderComponent {
  * @brief Camera 组件
  * 
  * 使用 shared_ptr 复用 Camera 对象
+ * 
+ * **离屏渲染支持**：
+ * 通过设置 renderTarget，相机可以渲染到 Framebuffer 而不是屏幕。
+ * 这可以用于后处理、阴影贴图、反射等效果。
+ * 
+ * **使用示例**：
+ * ```cpp
+ * // 创建离屏渲染目标
+ * auto fbo = std::make_shared<Framebuffer>(1024, 1024);
+ * fbo->AttachColorTexture();
+ * fbo->AttachDepthTexture();
+ * 
+ * // 设置相机使用该渲染目标
+ * cameraComp.renderTarget = fbo;
+ * cameraComp.renderTargetName = "shadowMap";  // 可选的名称
+ * 
+ * // 渲染到纹理后，可以在材质中使用
+ * material->SetTexture("shadowMap", fbo->GetColorTexture(0));
+ * ```
  */
 struct CameraComponent {
     Ref<Camera> camera;            ///< 相机对象（复用）
@@ -244,14 +419,71 @@ struct CameraComponent {
     bool active = true;            ///< 是否激活
     uint32_t layerMask = 0xFFFFFFFF;  ///< 可见层级遮罩
     int32_t depth = 0;             ///< 渲染深度（深度越低越先渲染）
-    Color clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+    Color clearColor{0.1f, 0.1f, 0.1f, 1.0f};  ///< 清屏颜色
+    bool clearDepth = true;        ///< 是否清除深度缓冲
+    bool clearStencil = false;     ///< 是否清除模板缓冲
     
-    // 渲染目标（可选）
-    std::string renderTargetName;
-    Ref<Framebuffer> renderTarget;
+    // ==================== 渲染目标（离屏渲染）====================
+    std::string renderTargetName;  ///< 渲染目标名称（可选，用于调试）
+    Ref<Framebuffer> renderTarget; ///< 渲染目标（nullptr = 渲染到屏幕）
     
-    CameraComponent() = default;
+    // ==================== 构造函数 ====================
+    
+    /// 默认构造函数 - 显式初始化camera为nullptr
+    CameraComponent() : camera(nullptr) {}
+    
+    /// 使用现有Camera对象构造
     explicit CameraComponent(const Ref<Camera>& cam) : camera(cam) {}
+    
+    // ==================== 便捷方法 ====================
+    
+    /// 判断是否渲染到离屏目标
+    [[nodiscard]] bool IsOffscreen() const { return renderTarget != nullptr; }
+    
+    /**
+     * @brief 检查相机组件是否有效且可用
+     * @return 如果相机对象存在且组件激活返回true
+     */
+    [[nodiscard]] bool IsValid() const {
+        return camera != nullptr && active;
+    }
+    
+    /**
+     * @brief 验证组件状态（更严格的检查）
+     * @return 如果组件完全有效返回true
+     * 
+     * @note 会检查相机对象、离屏渲染目标等
+     */
+    [[nodiscard]] bool Validate() const {
+        if (!camera) {
+            return false;
+        }
+        // 如果使用离屏渲染，检查framebuffer是否有效
+        if (renderTarget) {
+            // 注意：Framebuffer可能没有IsValid()方法，这里只检查非空
+            // 如果有IsValid()方法，可以取消注释：
+            // if (!renderTarget->IsValid()) return false;
+        }
+        return true;
+    }
+    
+    /**
+     * @brief 获取调试信息
+     * @return 组件状态的字符串表示
+     */
+    [[nodiscard]] std::string DebugString() const {
+        std::ostringstream oss;
+        oss << "CameraComponent{";
+        oss << "active=" << active;
+        oss << ", camera=" << (camera ? "valid" : "null");
+        oss << ", depth=" << depth;
+        oss << ", layerMask=0x" << std::hex << layerMask << std::dec;
+        if (renderTarget) {
+            oss << ", offscreen='" << renderTargetName << "'";
+        }
+        oss << "}";
+        return oss.str();
+    }
 };
 
 // ============================================================
@@ -295,6 +527,76 @@ struct LightComponent {
     bool enabled = true;
     
     LightComponent() = default;
+};
+
+// ============================================================
+// Geometry 几何形状组件
+// ============================================================
+
+/**
+ * @brief 几何形状类型
+ */
+enum class GeometryType {
+    Cube,       ///< 立方体
+    Sphere,     ///< 球体
+    Cylinder,   ///< 圆柱体
+    Cone,       ///< 圆锥体
+    Plane,      ///< 平面
+    Quad,       ///< 四边形（2D）
+    Torus,      ///< 圆环
+    Capsule,    ///< 胶囊体
+    Triangle,   ///< 三角形
+    Circle      ///< 圆形（2D）
+};
+
+/**
+ * @brief Geometry 几何形状组件
+ * 
+ * 用于程序化生成基本几何形状
+ * 与 MeshRenderComponent 配合使用
+ * 
+ * **使用示例**：
+ * ```cpp
+ * auto entity = world.CreateEntity();
+ * 
+ * // 添加几何形状组件
+ * auto& geom = world.AddComponent<GeometryComponent>(entity);
+ * geom.type = GeometryType::Sphere;
+ * geom.size = 2.0f;
+ * geom.segments = 32;
+ * 
+ * // 添加网格渲染组件
+ * auto& meshRender = world.AddComponent<MeshRenderComponent>(entity);
+ * meshRender.materialName = "default";
+ * 
+ * // GeometrySystem 会自动生成网格并赋值给 meshRender.mesh
+ * ```
+ */
+struct GeometryComponent {
+    GeometryType type = GeometryType::Cube;  ///< 几何形状类型
+    
+    // 通用参数
+    float size = 1.0f;                       ///< 大小（缩放因子）
+    int segments = 16;                       ///< 分段数（影响精度）
+    
+    // Sphere/Cylinder/Cone 专用
+    int rings = 16;                          ///< 环数（仅用于球体、圆柱等）
+    
+    // Cylinder/Cone 专用
+    float height = 1.0f;                     ///< 高度
+    
+    // Torus 专用
+    float innerRadius = 0.25f;               ///< 内半径
+    float outerRadius = 0.5f;                ///< 外半径
+    
+    // Capsule 专用
+    float radius = 0.5f;                     ///< 半径
+    float cylinderHeight = 1.0f;             ///< 中间圆柱部分的高度
+    
+    bool generated = false;                  ///< 是否已生成网格
+    
+    GeometryComponent() = default;
+    explicit GeometryComponent(GeometryType t) : type(t) {}
 };
 
 } // namespace ECS

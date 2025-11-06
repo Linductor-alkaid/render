@@ -55,6 +55,13 @@ public:
     std::shared_ptr<Shader> GetShader(const std::string& name);
     
     /**
+     * @brief 检查着色器是否在缓存中
+     * @param name 着色器名称
+     * @return 存在返回 true，否则返回 false
+     */
+    bool HasShader(const std::string& name) const;
+    
+    /**
      * @brief 重载指定着色器
      * @param name 着色器名称
      * @return 成功返回 true

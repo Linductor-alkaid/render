@@ -157,6 +157,21 @@ private:
         std::unordered_set<std::string> tags;      ///< 标签集合
     };
     
+    /**
+     * @brief 检查实体是否有效（内部方法，不加锁）
+     * @param entity 实体 ID
+     * @return 如果实体有效返回 true
+     * 
+     * @note 调用者必须已经持有 m_mutex 的锁
+     * @note 此方法用于避免递归锁问题
+     */
+    [[nodiscard]] bool IsValidNoLock(EntityID entity) const {
+        if (entity.index >= m_entities.size()) {
+            return false;
+        }
+        return m_entities[entity.index].version == entity.version;
+    }
+    
     std::vector<EntityData> m_entities;            ///< 实体数据（索引对应）
     std::queue<uint32_t> m_freeIndices;            ///< 空闲索引队列（复用）
     

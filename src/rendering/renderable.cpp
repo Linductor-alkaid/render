@@ -2,6 +2,7 @@
 #include "render/renderer.h"
 #include "render/shader.h"
 #include "render/logger.h"
+#include "render/render_state.h"
 
 namespace Render {
 
@@ -94,6 +95,7 @@ MeshRenderable::MeshRenderable(MeshRenderable&& other) noexcept
     : Renderable(std::move(other)),
       m_mesh(std::move(other.m_mesh)),
       m_material(std::move(other.m_material)),
+      m_materialOverride(std::move(other.m_materialOverride)),
       m_castShadows(other.m_castShadows),
       m_receiveShadows(other.m_receiveShadows) {
 }
@@ -103,13 +105,14 @@ MeshRenderable& MeshRenderable::operator=(MeshRenderable&& other) noexcept {
         Renderable::operator=(std::move(other));
         m_mesh = std::move(other.m_mesh);
         m_material = std::move(other.m_material);
+        m_materialOverride = std::move(other.m_materialOverride);
         m_castShadows = other.m_castShadows;
         m_receiveShadows = other.m_receiveShadows;
     }
     return *this;
 }
 
-void MeshRenderable::Render() {
+void MeshRenderable::Render(RenderState* renderState) {
     std::shared_lock lock(m_mutex);
     
     if (!m_visible || !m_mesh || !m_material) {
@@ -118,19 +121,82 @@ void MeshRenderable::Render() {
         return;
     }
     
-    // 绑定材质
-    m_material->Bind();
+    // ✅ 绑定材质并应用渲染状态
+    m_material->Bind(renderState);
     
     // 获取着色器并设置模型矩阵
     auto shader = m_material->GetShader();
     if (shader && m_transform) {
-        Matrix4 modelMatrix = m_transform->GetWorldMatrix();
-        shader->GetUniformManager()->SetMatrix4("uModel", modelMatrix);
+        // ✅ 检查着色器是否有效
+        if (!shader->IsValid()) {
+            Logger::GetInstance().WarningFormat("[MeshRenderable] Shader is invalid, skipping render");
+            return;
+        }
         
-        static int renderCount = 0;
-        if (renderCount < 5) {
-            Logger::GetInstance().InfoFormat("[MeshRenderable] Render #%d: shader valid, model matrix set", renderCount);
-            renderCount++;
+        // ✅ 安全检查：确保 UniformManager 已初始化
+        auto* uniformMgr = shader->GetUniformManager();
+        if (!uniformMgr) {
+            static bool warnedOnce = false;
+            if (!warnedOnce) {
+                Logger::GetInstance().WarningFormat("[MeshRenderable] Shader '%s' has null UniformManager", 
+                                                   shader->GetName().c_str());
+                warnedOnce = true;
+            }
+            return;  // 无法设置 uniform，跳过渲染
+        }
+        
+        // ✅ 使用异常保护设置模型矩阵和MaterialOverride
+        try {
+            Matrix4 modelMatrix = m_transform->GetWorldMatrix();
+            // 统一使用u前缀
+            uniformMgr->SetMatrix4("uModel", modelMatrix);
+            
+            // ==================== ✅ 应用 MaterialOverride ====================
+            // 在Material::Bind()之后应用覆盖，这样不会修改共享的Material对象
+            // 而是直接设置shader uniform，实现每个实体有不同的外观
+            if (m_materialOverride.HasAnyOverride()) {
+                if (m_materialOverride.diffuseColor.has_value()) {
+                    // 统一使用u前缀
+                    uniformMgr->SetColor("material.diffuse", m_materialOverride.diffuseColor.value());
+                    uniformMgr->SetColor("uColor", m_materialOverride.diffuseColor.value());
+                }
+                if (m_materialOverride.specularColor.has_value()) {
+                    uniformMgr->SetColor("material.specular", m_materialOverride.specularColor.value());
+                }
+                if (m_materialOverride.emissiveColor.has_value()) {
+                    uniformMgr->SetColor("material.emissive", m_materialOverride.emissiveColor.value());
+                }
+                if (m_materialOverride.shininess.has_value()) {
+                    uniformMgr->SetFloat("material.shininess", m_materialOverride.shininess.value());
+                }
+                if (m_materialOverride.metallic.has_value()) {
+                    uniformMgr->SetFloat("material.metallic", m_materialOverride.metallic.value());
+                }
+                if (m_materialOverride.roughness.has_value()) {
+                    uniformMgr->SetFloat("material.roughness", m_materialOverride.roughness.value());
+                }
+                if (m_materialOverride.opacity.has_value()) {
+                    uniformMgr->SetFloat("material.opacity", m_materialOverride.opacity.value());
+                }
+                
+                // ✅ 如果opacity < 1.0，动态调整渲染状态
+                if (m_materialOverride.opacity.has_value() && 
+                    m_materialOverride.opacity.value() < 1.0f && 
+                    renderState) {
+                    renderState->SetBlendMode(BlendMode::Alpha);
+                    renderState->SetDepthWrite(false);
+                    renderState->SetDepthTest(true);
+                }
+            }
+            
+            static int renderCount = 0;
+            if (renderCount < 5) {
+                Logger::GetInstance().InfoFormat("[MeshRenderable] Render #%d: shader valid, model matrix set, overrides applied", renderCount);
+                renderCount++;
+            }
+        } catch (const std::exception& e) {
+            Logger::GetInstance().ErrorFormat("[MeshRenderable] Exception setting uniforms: %s", e.what());
+            return;
         }
     }
     
@@ -164,6 +230,26 @@ void MeshRenderable::SetMaterial(const Ref<Material>& material) {
 Ref<Material> MeshRenderable::GetMaterial() const {
     std::shared_lock lock(m_mutex);
     return m_material;
+}
+
+void MeshRenderable::SetMaterialOverride(const MaterialOverride& override) {
+    std::unique_lock lock(m_mutex);
+    m_materialOverride = override;
+}
+
+MaterialOverride MeshRenderable::GetMaterialOverride() const {
+    std::shared_lock lock(m_mutex);
+    return m_materialOverride;
+}
+
+bool MeshRenderable::HasMaterialOverride() const {
+    std::shared_lock lock(m_mutex);
+    return m_materialOverride.HasAnyOverride();
+}
+
+void MeshRenderable::ClearMaterialOverride() {
+    std::unique_lock lock(m_mutex);
+    m_materialOverride.Clear();
 }
 
 void MeshRenderable::SetCastShadows(bool cast) {
@@ -279,15 +365,17 @@ SpriteRenderable& SpriteRenderable::operator=(SpriteRenderable&& other) noexcept
     return *this;
 }
 
-void SpriteRenderable::Render() {
+void SpriteRenderable::Render(RenderState* renderState) {
     std::shared_lock lock(m_mutex);
     
     if (!m_visible || !m_texture) {
         return;
     }
     
+    // ✅ 应用渲染状态（如果提供）
     // TODO: 实现 2D 精灵渲染
     // 这将在后续阶段实现
+    (void)renderState;  // 标记参数已使用
 }
 
 void SpriteRenderable::SubmitToRenderer(Renderer* renderer) {

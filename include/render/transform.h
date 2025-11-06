@@ -515,6 +515,36 @@ public:
      */
     int GetChildCount() const;
     
+    // ========================================================================
+    // ECS 批量更新支持
+    // ========================================================================
+    
+    /**
+     * @brief 检查是否需要更新世界变换
+     * @return 如果需要更新返回 true
+     * 
+     * @note 用于 TransformSystem 批量更新优化
+     */
+    [[nodiscard]] bool IsDirty() const {
+        return m_dirtyWorld.load(std::memory_order_acquire);
+    }
+    
+    /**
+     * @brief 强制更新世界变换缓存
+     * 
+     * @note 供 TransformSystem 批量更新使用
+     * @note 只有在 IsDirty() 返回 true 时才会实际更新
+     * @note 此方法线程安全
+     */
+    void ForceUpdateWorldTransform() {
+        if (m_dirtyWorld.load(std::memory_order_acquire)) {
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
+            if (m_dirtyWorldTransform.load(std::memory_order_relaxed)) {
+                UpdateWorldTransformCache();
+            }
+        }
+    }
+    
 private:
     Vector3 m_position;      // 本地位置
     Quaternion m_rotation;   // 本地旋转

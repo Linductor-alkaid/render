@@ -325,6 +325,10 @@ void Material::Bind(RenderState* renderState) {
     std::unordered_map<std::string, Vector4> vector4Params;
     std::unordered_map<std::string, Matrix4> matrix4Params;
     std::string name;
+    // ✅ 拷贝渲染状态（避免后续重复加锁）
+    BlendMode blendMode;
+    CullFace cullFace;
+    bool depthTest, depthWrite;
     
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -359,141 +363,162 @@ void Material::Bind(RenderState* renderState) {
         vector4Params = m_vector4Params;
         matrix4Params = m_matrix4Params;
         name = m_name;
+        // ✅ 拷贝渲染状态
+        blendMode = m_blendMode;
+        cullFace = m_cullFace;
+        depthTest = m_depthTest;
+        depthWrite = m_depthWrite;
     }
     
     // 在锁外执行OpenGL调用
-    // 1. 激活着色器
+    // 1. ✅ 检查着色器是否有效
+    if (!shader->IsValid()) {
+        LOG_ERROR("Shader is invalid for material '" + name + "'");
+        return;
+    }
+    
+    // 2. 激活着色器
     shader->Use();
     
-    // 2. 获取 UniformManager
+    // 3. ✅ 应用材质的渲染状态设置（如果提供了 RenderState）
+    if (renderState) {
+        renderState->SetBlendMode(blendMode);
+        renderState->SetCullFace(cullFace);
+        renderState->SetDepthTest(depthTest);
+        renderState->SetDepthWrite(depthWrite);
+    }
+    
+    // 4. 获取 UniformManager 并进行安全检查
     auto* uniformMgr = shader->GetUniformManager();
     if (!uniformMgr) {
         LOG_ERROR("UniformManager is null for material '" + name + "'");
         return;
     }
     
-    // 3. 设置材质颜色属性
-    if (uniformMgr->HasUniform("material.ambient")) {
-        uniformMgr->SetColor("material.ambient", ambientColor);
-    }
-    if (uniformMgr->HasUniform("material.diffuse")) {
-        uniformMgr->SetColor("material.diffuse", diffuseColor);
-    }
-    if (uniformMgr->HasUniform("material.specular")) {
-        uniformMgr->SetColor("material.specular", specularColor);
-    }
-    if (uniformMgr->HasUniform("material.emissive")) {
-        uniformMgr->SetColor("material.emissive", emissiveColor);
-    }
-    
-    // 4.输送材质物理属性
-    if (uniformMgr->HasUniform("material.shininess")) {
-        uniformMgr->SetFloat("material.shininess", shininess);
-    }
-    if (uniformMgr->HasUniform("material.opacity")) {
-        uniformMgr->SetFloat("material.opacity", opacity);
-    }
-    if (uniformMgr->HasUniform("material.metallic")) {
-        uniformMgr->SetFloat("material.metallic", metallic);
-    }
-    if (uniformMgr->HasUniform("material.roughness")) {
-        uniformMgr->SetFloat("material.roughness", roughness);
-    }
-    
-    // 5. 绑定纹理
-    int textureUnit = 0;
-    bool hasDiffuse = false;
-    
-    for (const auto& pair : textures) {
-        const std::string& texName = pair.first;
-        auto texture = pair.second;
+    // 5. ✅ 使用异常保护设置材质属性（统一使用u前缀）
+    try {
+        // 结构体形式（material_phong.frag 等高级着色器使用）
+        if (uniformMgr->HasUniform("material.ambient")) {
+            uniformMgr->SetColor("material.ambient", ambientColor);
+        }
+        if (uniformMgr->HasUniform("material.diffuse")) {
+            uniformMgr->SetColor("material.diffuse", diffuseColor);
+        }
+        if (uniformMgr->HasUniform("material.specular")) {
+            uniformMgr->SetColor("material.specular", specularColor);
+        }
+        if (uniformMgr->HasUniform("material.emissive")) {
+            uniformMgr->SetColor("material.emissive", emissiveColor);
+        }
+        if (uniformMgr->HasUniform("material.shininess")) {
+            uniformMgr->SetFloat("material.shininess", shininess);
+        }
+        if (uniformMgr->HasUniform("material.opacity")) {
+            uniformMgr->SetFloat("material.opacity", opacity);
+        }
+        if (uniformMgr->HasUniform("material.metallic")) {
+            uniformMgr->SetFloat("material.metallic", metallic);
+        }
+        if (uniformMgr->HasUniform("material.roughness")) {
+            uniformMgr->SetFloat("material.roughness", roughness);
+        }
         
-        if (texture && texture->IsValid()) {
-            // 绑定纹理到纹理单元
-            texture->Bind(textureUnit);
+        // 简单形式（basic.frag 等基础着色器使用，统一u前缀）
+        if (uniformMgr->HasUniform("uColor")) {
+            uniformMgr->SetColor("uColor", diffuseColor);
+        }
+        
+        // 设置纹理和顶点颜色标志
+        if (uniformMgr->HasUniform("uUseTexture")) {
+            bool hasTexture = (textures.find("diffuseMap") != textures.end() || 
+                             textures.find("uTexture0") != textures.end());
+            uniformMgr->SetBool("uUseTexture", hasTexture);
+        }
+        
+        if (uniformMgr->HasUniform("uUseVertexColor")) {
+            uniformMgr->SetBool("uUseVertexColor", true);
+        }
+        
+    } catch (const std::exception& e) {
+        LOG_ERROR("Exception setting material properties: " + std::string(e.what()));
+        return;
+    }
+    
+    // 6. ✅ 使用异常保护绑定纹理和自定义参数
+    try {
+        int textureUnit = 0;
+        bool hasDiffuse = false;
+        
+        for (const auto& pair : textures) {
+            const std::string& texName = pair.first;
+            auto texture = pair.second;
             
-            // 设置纹理单元 uniform
-            if (uniformMgr->HasUniform(texName)) {
-                uniformMgr->SetInt(texName, textureUnit);
+            if (texture && texture->IsValid()) {
+                // 绑定纹理到纹理单元
+                texture->Bind(textureUnit);
+                
+                // 设置纹理单元 uniform
+                if (uniformMgr->HasUniform(texName)) {
+                    uniformMgr->SetInt(texName, textureUnit);
+                }
+                
+                // 标记纹理类型
+                if (texName == "diffuseMap") {
+                    hasDiffuse = true;
+                }
+                
+                textureUnit++;
             }
-            
-            // 标记纹理类型
-            if (texName == "diffuseMap") {
-                hasDiffuse = true;
+        }
+        
+        // 设置纹理存在标志
+        if (uniformMgr->HasUniform("hasDiffuseMap")) {
+            uniformMgr->SetBool("hasDiffuseMap", hasDiffuse);
+        }
+        
+        // 设置自定义整型参数
+        for (const auto& pair : intParams) {
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetInt(pair.first, pair.second);
             }
-            
-            textureUnit++;
-        }
-    }
-    
-    // 设置纹理存在标志
-    if (uniformMgr->HasUniform("hasDiffuseMap")) {
-        uniformMgr->SetBool("hasDiffuseMap", hasDiffuse);
-    }
-    
-    // 6. 设置自定义整型参数
-    for (const auto& pair : intParams) {
-        if (uniformMgr->HasUniform(pair.first)) {
-            uniformMgr->SetInt(pair.first, pair.second);
-        }
-    }
-    
-    // 7. 设置自定义浮点参数
-    for (const auto& pair : floatParams) {
-        if (uniformMgr->HasUniform(pair.first)) {
-            uniformMgr->SetFloat(pair.first, pair.second);
-        }
-    }
-    
-    // 8. 设置自定义向量2参数
-    for (const auto& pair : vector2Params) {
-        if (uniformMgr->HasUniform(pair.first)) {
-            uniformMgr->SetVector2(pair.first, pair.second);
-        }
-    }
-    
-    // 9. 设置自定义向量3参数
-    for (const auto& pair : vector3Params) {
-        if (uniformMgr->HasUniform(pair.first)) {
-            uniformMgr->SetVector3(pair.first, pair.second);
-        }
-    }
-    
-    // 10. 设置自定义向量4参数
-    for (const auto& pair : vector4Params) {
-        if (uniformMgr->HasUniform(pair.first)) {
-            uniformMgr->SetVector4(pair.first, pair.second);
-        }
-    }
-    
-    // 11. 设置自定义矩阵4参数
-    for (const auto& pair : matrix4Params) {
-        if (uniformMgr->HasUniform(pair.first)) {
-            uniformMgr->SetMatrix4(pair.first, pair.second);
-        }
-    }
-    
-    // 12. 应用渲染状态
-    // ✅ 修复：从复制的数据中读取渲染状态，而不是再次加锁
-    if (renderState) {
-        BlendMode blendMode;
-        CullFace cullFace;
-        bool depthTest, depthWrite;
-        
-        // 快速获取渲染状态（加锁）
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            blendMode = m_blendMode;
-            cullFace = m_cullFace;
-            depthTest = m_depthTest;
-            depthWrite = m_depthWrite;
         }
         
-        // 应用渲染状态（无锁）
-        renderState->SetBlendMode(blendMode);
-        renderState->SetCullFace(cullFace);
-        renderState->SetDepthTest(depthTest);
-        renderState->SetDepthWrite(depthWrite);
+        // 设置自定义浮点参数
+        for (const auto& pair : floatParams) {
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetFloat(pair.first, pair.second);
+            }
+        }
+        
+        // 设置自定义向量2参数
+        for (const auto& pair : vector2Params) {
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetVector2(pair.first, pair.second);
+            }
+        }
+        
+        // 设置自定义向量3参数
+        for (const auto& pair : vector3Params) {
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetVector3(pair.first, pair.second);
+            }
+        }
+        
+        // 设置自定义向量4参数
+        for (const auto& pair : vector4Params) {
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetVector4(pair.first, pair.second);
+            }
+        }
+        
+        // 设置自定义矩阵4参数
+        for (const auto& pair : matrix4Params) {
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetMatrix4(pair.first, pair.second);
+            }
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR("Exception setting texture/custom parameters: " + std::string(e.what()));
     }
 }
 

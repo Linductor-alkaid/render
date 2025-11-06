@@ -51,6 +51,15 @@
 
 ### 专题文档
 
+#### ECS 系统 🏗️ **已完善** ⭐⭐⭐⭐⭐
+- **[ECS 快速入门](ECS_QUICK_START.md)** - 快速开始使用 ECS 系统 ⭐ **推荐新手阅读**
+- **[ECS 最终实施报告](ECS_FINAL_IMPLEMENTATION_REPORT.md)** - 完整实施报告和验证结果 ⭐ **新增**
+- [ECS 改进总结](ECS_IMPROVEMENTS_SUMMARY.md) - 详细的改进说明和使用指南
+- [ECS 剩余功能评估](ECS_REMAINING_FEATURES_ASSESSMENT.md) - 未来扩展参考
+- [ECS 与 Renderable API](api/ECS.md) - ECS 系统 API 文档
+- [ECS 与渲染器集成分析](ECS_RENDERER_INTEGRATION_ANALYSIS.md) - 集成情况分析
+- [ECS 核心功能利用分析](todolists/ECS_CORE_FEATURE_UTILIZATION.md) - 功能利用率分析
+
 #### 线程安全 🔒
 - [线程安全总结](THREAD_SAFETY_SUMMARY.md) - 整体线程安全设计
 - [Renderer 线程安全](RENDERER_THREAD_SAFETY.md)
@@ -197,15 +206,26 @@ for (auto& result : results) {
 
 ## 🎯 下一步
 
+### ✅ 已完成（ECS 系统）
+- ✅ 相机系统（CameraSystem + UniformSystem）
+- ✅ 光照系统（LightSystem + UniformSystem）
+- ✅ 渲染层级（layerID + renderPriority）
+- ✅ 材质系统完整集成
+- ✅ 资源统一管理
+- ✅ 视锥体裁剪优化
+- ✅ 窗口响应系统
+- ✅ 几何形状生成
+- ✅ 错误处理集成
+
 ### 正在开发
-- [ ] 相机系统
-- [ ] 光照系统
-- [ ] 渲染层级
+- [ ] 阴影系统（离屏渲染已支持）
+- [ ] 后处理效果（Framebuffer 已支持）
+- [ ] 实例化渲染完整实现
 
 ### 计划中
-- [ ] 阴影系统
-- [ ] 后处理效果
 - [ ] 粒子系统
+- [ ] 骨骼动画
+- [ ] PBR 材质工作流
 
 ---
 
