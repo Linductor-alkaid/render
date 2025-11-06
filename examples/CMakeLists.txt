@@ -51,44 +51,26 @@ foreach(example ${EXAMPLES})
     endif()
 endforeach()
 
-# 创建一个自定义目标来管理着色器文件的复制
-# 这样只有当着色器文件实际变化时才会触发复制
-file(GLOB_RECURSE SHADER_FILES "${CMAKE_SOURCE_DIR}/shaders/*")
-
-add_custom_target(copy_shaders
-    COMMENT "Checking shader files..."
-)
-
-foreach(shader_file ${SHADER_FILES})
-    file(RELATIVE_PATH rel_path ${CMAKE_SOURCE_DIR}/shaders ${shader_file})
-    add_custom_command(TARGET copy_shaders
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${shader_file}
-            ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders/${rel_path}
-        DEPENDS ${shader_file}
-        COMMENT "Copying ${rel_path}"
-    )
-endforeach()
-
-# 复制 SDL3 DLL 到输出目录（Windows）
+# 复制 SDL3 DLL 和着色器到输出目录（Windows）
 if(WIN32 AND SDL3_LIBRARY)
     get_filename_component(SDL3_DLL_DIR ${SDL3_LIBRARY} DIRECTORY)
     file(GLOB SDL3_DLLS "${SDL3_DLL_DIR}/*.dll")
     
-    foreach(dll ${SDL3_DLLS})
-        get_filename_component(dll_name ${dll} NAME)
-        add_custom_command(TARGET copy_shaders
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    foreach(example ${EXAMPLES})
+        foreach(dll ${SDL3_DLLS})
+            add_custom_command(TARGET ${example} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${dll}
-                ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${dll_name}
-            DEPENDS ${dll}
-            COMMENT "Copying ${dll_name}"
+                $<TARGET_FILE_DIR:${example}>
+            )
+        endforeach()
+        
+        # 复制 shaders 目录到可执行文件目录
+        add_custom_command(TARGET ${example} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/shaders
+            $<TARGET_FILE_DIR:${example}>/shaders
         )
     endforeach()
 endif()
-
-# 让所有示例程序依赖于 copy_shaders 目标
-foreach(example ${EXAMPLES})
-    add_dependencies(${example} copy_shaders)
-endforeach()
 

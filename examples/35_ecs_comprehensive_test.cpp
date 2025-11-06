@@ -24,6 +24,12 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <fstream>
+#include <cstdlib>
+#include <ctime>
 
 #include "render/renderer.h"
 #include "render/shader_cache.h"
@@ -41,12 +47,24 @@ using namespace Render;
 using namespace Render::ECS;
 
 // ============================================================
-// 相机控制系统（用户交互）
+// 第一人称相机控制系统（直接更新Transform组件）
 // ============================================================
-class CameraControlSystem : public System {
+class FirstPersonCameraSystem : public System {
 private:
-    bool m_autoRotate = false;  // 默认关闭自动旋转，使用手动控制
-    float m_angle = 180.0f;     // 初始角度：相机在-Z方向
+    // 输入状态
+    bool m_moveForward = false;
+    bool m_moveBackward = false;
+    bool m_moveLeft = false;
+    bool m_moveRight = false;
+    bool m_moveUp = false;
+    bool m_moveDown = false;
+    
+    // 旋转角度
+    float m_yaw = 0.0f;    // 偏航角（度）
+    float m_pitch = 0.0f;  // 俯仰角（度）
+    
+    float m_moveSpeed = 10.0f;
+    float m_mouseSensitivity = 0.15f;
     
 public:
     void Update(float deltaTime) override {
@@ -55,39 +73,65 @@ public:
         auto entities = m_world->Query<CameraComponent, TransformComponent>();
         if (entities.empty()) return;
         
-        auto& cameraEntity = entities[0];
-        
-        if (!m_world->IsValidEntity(cameraEntity)) return;
-        if (!m_world->HasComponent<CameraComponent>(cameraEntity)) return;
+        if (!m_world->IsValidEntity(entities[0])) return;
+        if (!m_world->HasComponent<TransformComponent>(entities[0])) return;
         
         try {
-            auto& cameraComp = m_world->GetComponent<CameraComponent>(cameraEntity);
-            auto& transform = m_world->GetComponent<TransformComponent>(cameraEntity);
+            auto& transform = m_world->GetComponent<TransformComponent>(entities[0]);
             
-            if (m_autoRotate) {
-                // 自动旋转模式
-                m_angle += deltaTime * 20.0f;
-                
-                float radius = 15.0f;
-                float height = 5.0f;
-                float x = radius * std::cos(m_angle * 3.14159f / 180.0f);
-                float z = -radius * std::sin(m_angle * 3.14159f / 180.0f);
-                
-                transform.SetPosition(Vector3(x, height, z));
-                transform.LookAt(Vector3(0, 0, 0));
+            // 计算旋转
+            Quaternion rotation = MathUtils::FromEulerDegrees(m_pitch, m_yaw, 0);
+            
+            // 计算移动方向（基于当前朝向）
+            Vector3 forward = rotation * Vector3(0, 0, -1);  // 前方向
+            Vector3 right = rotation * Vector3(1, 0, 0);     // 右方向
+            Vector3 up = Vector3(0, 1, 0);                   // 世界上方向
+            
+            Vector3 velocity(0, 0, 0);
+            
+            // WASD移动（参考20测试：W前进，S后退）
+            if (m_moveForward) velocity += forward;
+            if (m_moveBackward) velocity -= forward;
+            if (m_moveLeft) velocity -= right;
+            if (m_moveRight) velocity += right;
+            
+            // QE上下移动
+            if (m_moveUp) velocity += up;
+            if (m_moveDown) velocity -= up;
+            
+            // 归一化速度并应用
+            if (velocity.norm() > 0.001f) {
+                velocity.normalize();
+                Vector3 newPos = transform.GetPosition() + velocity * m_moveSpeed * deltaTime;
+                transform.SetPosition(newPos);
             }
-            // 手动控制在主循环中直接操作transform
+            
+            // 更新旋转
+            transform.SetRotation(rotation);
+            
         } catch (const std::exception& e) {
-            Logger::GetInstance().ErrorFormat("[CameraControlSystem] Error: %s", e.what());
+            Logger::GetInstance().ErrorFormat("[FirstPersonCameraSystem] Error: %s", e.what());
         }
     }
     
-    // 不需要额外的方法，直接在主循环中操作
+    // 鼠标控制
+    void OnMouseMove(float deltaX, float deltaY) {
+        m_yaw -= deltaX * m_mouseSensitivity;
+        m_pitch -= deltaY * m_mouseSensitivity;
+        
+        // 限制俯仰角
+        m_pitch = std::max(-89.0f, std::min(89.0f, m_pitch));
+    }
     
-    void SetAutoRotate(bool enable) { m_autoRotate = enable; }
-    bool IsAutoRotate() const { return m_autoRotate; }
+    // 键盘控制
+    void SetMoveForward(bool active) { m_moveForward = active; }
+    void SetMoveBackward(bool active) { m_moveBackward = active; }
+    void SetMoveLeft(bool active) { m_moveLeft = active; }
+    void SetMoveRight(bool active) { m_moveRight = active; }
+    void SetMoveUp(bool active) { m_moveUp = active; }
+    void SetMoveDown(bool active) { m_moveDown = active; }
     
-    int GetPriority() const override { return 8; }
+    int GetPriority() const override { return 2; }  // 在CameraSystem(5)之前执行
 };
 
 // ============================================================
@@ -138,19 +182,21 @@ int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
     
-    Logger::GetInstance().Info("=== ECS 综合功能测试 ===");
+    // 初始化随机数种子
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
+    
+    Logger::GetInstance().Info("=== ECS Miku渲染压力测试 ===");
     Logger::GetInstance().Info("测试内容：");
-    Logger::GetInstance().Info("  - 所有新增系统（Window、Geometry、Uniform、ResourceCleanup）");
-    Logger::GetInstance().Info("  - 材质属性覆盖");
-    Logger::GetInstance().Info("  - 视锥体裁剪");
-    Logger::GetInstance().Info("  - 透明物体排序");
-    Logger::GetInstance().Info("  - 20 个测试样例（使用 5 种几何形状）");
+    Logger::GetInstance().Info("  - 使用ECS系统渲染100个Miku模型（2500个网格）");
+    Logger::GetInstance().Info("  - 大规模场景压力测试");
+    Logger::GetInstance().Info("  - 轨道相机控制，围绕场景中心旋转");
+    Logger::GetInstance().Info("  - 渐进式加载，分帧创建实体");
     
     // ============================================================
     // 1. 初始化渲染器
     // ============================================================
     auto renderer = std::make_unique<Renderer>();
-    if (!renderer->Initialize("ECS 综合功能测试 - 20 Miku 样例", 1920, 1080)) {
+    if (!renderer->Initialize("ECS Miku压力测试 - 100个实例", 1920, 1080)) {
         Logger::GetInstance().Error("Failed to initialize renderer");
         return -1;
     }
@@ -173,40 +219,81 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("✓ 资源管理器初始化成功（4 个工作线程）");
     
     // ============================================================
-    // 2.5 创建默认着色器和材质
+    // 2.5 创建着色器和加载miku模型（参考20测试）
     // ============================================================
-    Logger::GetInstance().Info("创建默认着色器和材质...");
+    Logger::GetInstance().Info("加载着色器...");
     
-    // 加载基础着色器
-    auto shader = shaderCache.LoadShader("basic", 
-        "shaders/basic.vert", 
-        "shaders/basic.frag");
+    // 加载Phong着色器（用于miku模型）
+    auto phongShader = shaderCache.LoadShader("material_phong", 
+        "shaders/material_phong.vert", 
+        "shaders/material_phong.frag");
     
-    if (!shader) {
-        Logger::GetInstance().Warning("无法加载基础着色器，尝试备用着色器...");
-        shader = shaderCache.LoadShader("camera_test", 
-            "shaders/camera_test.vert", 
-            "shaders/camera_test.frag");
+    if (!phongShader) {
+        Logger::GetInstance().Warning("无法加载Phong着色器，尝试基础着色器...");
+        phongShader = shaderCache.LoadShader("basic", 
+            "shaders/basic.vert", 
+            "shaders/basic.frag");
     }
     
-    if (!shader) {
+    if (!phongShader) {
         Logger::GetInstance().Error("无法加载任何着色器，程序无法继续");
         return -1;
     }
     
-    // 创建默认材质
-    auto defaultMaterial = std::make_shared<Material>();
-    defaultMaterial->SetName("default");
-    defaultMaterial->SetShader(shader);
-    defaultMaterial->SetDiffuseColor(Color(0.8f, 0.8f, 0.8f, 1.0f));
-    defaultMaterial->SetSpecularColor(Color(1.0f, 1.0f, 1.0f, 1.0f));
-    defaultMaterial->SetShininess(32.0f);
+    resourceManager.RegisterShader("phong", phongShader);
+    Logger::GetInstance().Info("✓ 着色器加载完成");
     
-    // 注册默认材质到 ResourceManager
-    resourceManager.RegisterMaterial("default", defaultMaterial);
-    resourceManager.RegisterShader("default", shader);
+    // 准备异步加载miku模型
+    Logger::GetInstance().Info("准备异步加载miku模型...");
+    std::vector<std::string> modelPaths = {
+        "models/miku/v4c5.0short.pmx",
+        "models/miku/v4c5.0.pmx",
+        "../models/miku/v4c5.0short.pmx",
+        "../models/miku/v4c5.0.pmx"
+    };
     
-    Logger::GetInstance().Info("✓ 默认着色器和材质创建完成");
+    std::vector<std::string> meshNames;
+    std::vector<std::string> materialNames;
+    std::string selectedModelPath;
+    std::string textureBasePath;
+    
+    // 找到一个存在的模型文件路径
+    for (const auto& path : modelPaths) {
+        // 简单检查：尝试读取文件判断是否存在
+        std::ifstream file(path);
+        if (file.good()) {
+            selectedModelPath = path;
+            textureBasePath = path.substr(0, path.find_last_of("/\\") + 1);
+            Logger::GetInstance().InfoFormat("找到模型文件: %s", path.c_str());
+            Logger::GetInstance().InfoFormat("纹理基础路径: %s", textureBasePath.c_str());
+            file.close();
+            break;
+        }
+    }
+    
+    if (selectedModelPath.empty()) {
+        Logger::GetInstance().Error("未找到miku模型文件");
+        return -1;
+    }
+    
+    // 渐进式加载模型（在渲染循环中分批加载）
+    Logger::GetInstance().Info("准备渐进式加载miku模型...");
+    Logger::GetInstance().Info("将在渲染循环中加载，避免阻塞主线程");
+    
+    // 存储加载状态
+    struct ProgressiveLoadState {
+        std::string modelPath;
+        std::string texturePath;
+        Ref<Shader> shader;
+        std::vector<MeshWithMaterial> parts;
+        bool loadStarted = false;
+        bool loadComplete = false;
+        size_t partsLoaded = 0;
+    };
+    auto loadState = std::make_shared<ProgressiveLoadState>();
+    loadState->modelPath = selectedModelPath;
+    loadState->texturePath = textureBasePath;
+    loadState->shader = phongShader;
     
     // ============================================================
     // 3. 创建 ECS World
@@ -238,8 +325,8 @@ int main(int argc, char* argv[]) {
     world->RegisterSystem<CameraSystem>();                             // 优先级 5
     Logger::GetInstance().Info("  ✓ CameraSystem (优先级 5)");
     
-    world->RegisterSystem<CameraControlSystem>();                      // 优先级 8
-    Logger::GetInstance().Info("  ✓ CameraControlSystem (优先级 8)");
+    world->RegisterSystem<FirstPersonCameraSystem>();                  // 优先级 2
+    Logger::GetInstance().Info("  ✓ FirstPersonCameraSystem (优先级 2)");
     
     world->RegisterSystem<TransformSystem>();                          // 优先级 10
     Logger::GetInstance().Info("  ✓ TransformSystem (优先级 10)");
@@ -270,7 +357,7 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("✓ 系统后初始化完成");
     
     // ============================================================
-    // 6. 创建相机
+    // 6. 创建相机（参考20测试的设置）
     // ============================================================
     EntityID camera = world->CreateEntity({
         .name = "MainCamera",
@@ -278,30 +365,35 @@ int main(int argc, char* argv[]) {
         .tags = {"camera", "main"}
     });
     
-    TransformComponent cameraTransform;
-    cameraTransform.SetPosition(Vector3(0, 5, -15));  // ✅ 修复：相机在-Z方向，看向原点
-    cameraTransform.LookAt(Vector3(0, 0, 0));
-    world->AddComponent(camera, cameraTransform);
+    // 先添加Transform组件
+    world->AddComponent<TransformComponent>(camera, TransformComponent());
+    auto& cameraTransform = world->GetComponent<TransformComponent>(camera);
+    cameraTransform.SetPosition(Vector3(0.0f, 10.0f, 20.0f));  // 与20测试相同
+    cameraTransform.LookAt(Vector3(0.0f, 8.0f, 0.0f));  // 看向模型头部位置
     
+    // 添加Camera组件
     CameraComponent cameraComp;
     cameraComp.camera = std::make_shared<Camera>();
-    cameraComp.camera->SetPerspective(60.0f, 16.0f/9.0f, 0.1f, 1000.0f);
+    cameraComp.camera->SetPerspective(60.0f, 16.0f/9.0f, 0.01f, 1000.0f);  // 近裁剪面0.01
     cameraComp.active = true;
     cameraComp.depth = 0;
     cameraComp.clearDepth = true;
     world->AddComponent(camera, cameraComp);
     
-    Logger::GetInstance().Info("✓ 主相机创建完成");
+    Logger::GetInstance().Info("✓ 主相机创建完成（与20测试相同设置）");
     
     // ============================================================
     // 7. 创建光源
     // ============================================================
     EntityID light = world->CreateEntity({.name = "DirectionalLight"});
     
-    TransformComponent lightTransform;
+    // 先添加Transform组件
+    world->AddComponent<TransformComponent>(light, TransformComponent());
+    auto& lightTransform = world->GetComponent<TransformComponent>(light);
+    lightTransform.SetPosition(Vector3(10.0f, 15.0f, 10.0f));  // 与20测试相同的光源位置
     lightTransform.SetRotation(MathUtils::FromEulerDegrees(45, 30, 0));
-    world->AddComponent(light, lightTransform);
     
+    // 添加Light组件
     LightComponent lightComp;
     lightComp.type = LightType::Directional;
     lightComp.color = Color(1.0f, 1.0f, 0.95f);
@@ -309,189 +401,21 @@ int main(int argc, char* argv[]) {
     lightComp.enabled = true;
     world->AddComponent(light, lightComp);
     
+    // 输出光源信息
     Logger::GetInstance().Info("✓ 定向光源创建完成");
+    Logger::GetInstance().InfoFormat("  位置: (通过旋转计算)");
+    Logger::GetInstance().InfoFormat("  颜色: (%.2f, %.2f, %.2f)", lightComp.color.r, lightComp.color.g, lightComp.color.b);
+    Logger::GetInstance().InfoFormat("  强度: %.2f", lightComp.intensity);
     
     // ============================================================
-    // 8. 创建地板（使用 GeometrySystem）
+    // 8. 等待创建miku模型实体（在渲染循环中处理）
     // ============================================================
-    EntityID floor = world->CreateEntity({.name = "Floor"});
+    // 注意：实体创建将在主循环中完成，因为需要在OpenGL线程中上传GPU资源
+    Logger::GetInstance().Info("✓ Miku模型实体将在渲染循环中创建");
     
-    TransformComponent floorTransform;
-    floorTransform.SetPosition(Vector3(0, -2, 0));
-    floorTransform.SetScale(Vector3(30, 0.2f, 30));
-    world->AddComponent(floor, floorTransform);
+    // 不再创建测试样例，只渲染miku模型
     
-    // 使用 GeometryComponent 生成平面
-    GeometryComponent floorGeom;
-    floorGeom.type = GeometryType::Cube;
-    floorGeom.size = 1.0f;
-    world->AddComponent(floor, floorGeom);
-    
-    MeshRenderComponent floorMesh;
-    floorMesh.material = defaultMaterial;  // 使用默认材质
-    floorMesh.SetDiffuseColor(Color(0.3f, 0.3f, 0.35f, 1.0f));
-    floorMesh.visible = true;
-    world->AddComponent(floor, floorMesh);
-    
-    Logger::GetInstance().Info("✓ 地板创建完成（使用 GeometrySystem）");
-    
-    // ============================================================
-    // 9. 创建 20 个测试样例（使用 GeometrySystem 生成几何形状）
-    // ============================================================
-    Logger::GetInstance().Info("创建 20 个测试样例（使用几何形状）...");
-    
-    std::vector<EntityID> testEntities;
-    
-    // 排列成 4 行 5 列
-    const int rows = 4;
-    const int cols = 5;
-    const float spacing = 3.0f;
-    const float offsetX = -(cols - 1) * spacing / 2.0f;
-    const float offsetZ = -(rows - 1) * spacing / 2.0f;
-    
-    // 定义不同的几何形状类型（循环使用）
-    std::vector<GeometryType> geometryTypes = {
-        GeometryType::Cube,
-        GeometryType::Sphere,
-        GeometryType::Cylinder,
-        GeometryType::Cone,
-        GeometryType::Torus
-    };
-    
-    for (int row = 0; row < rows; ++row) {
-        for (int col = 0; col < cols; ++col) {
-            int index = row * cols + col;
-            std::string name = "TestEntity_" + std::to_string(index);
-            
-            EntityID entity = world->CreateEntity({
-                .name = name,
-                .active = true,
-                .tags = {"test", "geometry"}
-            });
-            
-            // 变换组件
-            TransformComponent transform;
-            float x = offsetX + col * spacing;
-            float z = offsetZ + row * spacing;
-            transform.SetPosition(Vector3(x, 1.0f, z));  // 高度 1.0，避免穿过地板
-            transform.SetScale(1.0f);
-            world->AddComponent(entity, transform);
-            
-            // 几何形状组件（使用 GeometrySystem 自动生成）
-            GeometryComponent geom;
-            geom.type = geometryTypes[index % geometryTypes.size()];  // 循环使用不同形状
-            geom.size = 0.8f;
-            geom.segments = 32;
-            geom.rings = 16;
-            if (geom.type == GeometryType::Cylinder || geom.type == GeometryType::Cone) {
-                geom.height = 1.5f;
-            }
-            world->AddComponent(entity, geom);
-            
-            // 网格渲染组件
-            MeshRenderComponent mesh;
-            // 注意：不设置 meshName，让 GeometrySystem 自动生成网格
-            // GeometrySystem 会自动设置 mesh.mesh 和 resourcesLoaded = true
-            // 但需要手动设置材质
-            mesh.material = defaultMaterial;  // 使用默认材质
-            mesh.visible = true;
-            mesh.castShadows = true;
-            mesh.receiveShadows = true;
-            
-            // ==================== 材质属性覆盖测试 ====================
-            // 每个样例使用不同的材质覆盖，展示不同效果
-            
-            float t = static_cast<float>(index) / 19.0f;  // 0.0 ~ 1.0
-            
-            if (index < 5) {
-                // 第 1 行：不同颜色测试
-                float hue = index / 5.0f;
-                float r = std::abs(std::sin(hue * 6.28f));
-                float g = std::abs(std::sin((hue + 0.33f) * 6.28f));
-                float b = std::abs(std::sin((hue + 0.67f) * 6.28f));
-                mesh.SetDiffuseColor(Color(r, g, b, 1.0f));
-                
-            } else if (index < 10) {
-                // 第 2 行：金属度测试（0.0 ~ 1.0）
-                float metallic = (index - 5) / 4.0f;
-                mesh.SetMetallic(metallic);
-                mesh.SetDiffuseColor(Color(0.8f, 0.8f, 0.9f, 1.0f));
-                
-            } else if (index < 15) {
-                // 第 3 行：粗糙度测试（0.0 ~ 1.0）
-                float roughness = (index - 10) / 4.0f;
-                mesh.SetRoughness(roughness);
-                mesh.SetDiffuseColor(Color(0.9f, 0.7f, 0.5f, 1.0f));
-                
-            } else {
-                // 第 4 行：透明度测试（0.3 ~ 1.0）
-                float opacity = 0.3f + (index - 15) * 0.175f;
-                mesh.SetOpacity(opacity);
-                mesh.SetDiffuseColor(Color(0.5f, 0.8f, 1.0f, opacity));
-            }
-            
-            // ==================== 多纹理覆盖测试（可选）====================
-            // 如果有自定义纹理，可以这样覆盖：
-            // mesh.textureOverrides["diffuse"] = "assets/textures/custom_diffuse_" + std::to_string(index) + ".png";
-            // mesh.textureOverrides["normal"] = "assets/textures/custom_normal.png";
-            
-            world->AddComponent(entity, mesh);
-            testEntities.push_back(entity);
-            
-            Logger::GetInstance().InfoFormat("  ✓ 测试实体 #%d 创建完成 (位置: %.1f, 1.0, %.1f, 形状: %d)", 
-                                            index, x, z, static_cast<int>(geom.type));
-        }
-    }
-    
-    Logger::GetInstance().InfoFormat("✓ 20 个测试样例创建完成（使用几何形状）");
-    
-    // ============================================================
-    // 10. 创建几个额外的几何形状测试（GeometrySystem）
-    // ============================================================
-    Logger::GetInstance().Info("创建几何形状测试...");
-    
-    // 球体
-    EntityID sphere = world->CreateEntity({.name = "Sphere"});
-    TransformComponent sphereTransform;
-    sphereTransform.SetPosition(Vector3(-10, 1, 0));
-    world->AddComponent(sphere, sphereTransform);
-    
-    GeometryComponent sphereGeom;
-    sphereGeom.type = GeometryType::Sphere;
-    sphereGeom.size = 1.0f;
-    sphereGeom.segments = 32;
-    sphereGeom.rings = 32;
-    world->AddComponent(sphere, sphereGeom);
-    
-    MeshRenderComponent sphereMesh;
-    sphereMesh.material = defaultMaterial;  // 使用默认材质
-    sphereMesh.SetDiffuseColor(Color(1.0f, 0.3f, 0.3f, 1.0f));
-    sphereMesh.SetMetallic(0.8f);
-    sphereMesh.SetRoughness(0.2f);
-    world->AddComponent(sphere, sphereMesh);
-    
-    // 圆柱体
-    EntityID cylinder = world->CreateEntity({.name = "Cylinder"});
-    TransformComponent cylinderTransform;
-    cylinderTransform.SetPosition(Vector3(10, 1, 0));
-    world->AddComponent(cylinder, cylinderTransform);
-    
-    GeometryComponent cylinderGeom;
-    cylinderGeom.type = GeometryType::Cylinder;
-    cylinderGeom.size = 1.0f;
-    cylinderGeom.height = 2.0f;
-    cylinderGeom.segments = 32;
-    cylinderGeom.rings = 16;
-    world->AddComponent(cylinder, cylinderGeom);
-    
-    MeshRenderComponent cylinderMesh;
-    cylinderMesh.material = defaultMaterial;  // 使用默认材质
-    cylinderMesh.SetDiffuseColor(Color(0.3f, 1.0f, 0.3f, 1.0f));
-    cylinderMesh.SetMetallic(0.5f);
-    cylinderMesh.SetRoughness(0.5f);
-    world->AddComponent(cylinder, cylinderMesh);
-    
-    Logger::GetInstance().Info("✓ 几何形状测试创建完成");
+    // 不再创建额外的几何形状
     
     // ============================================================
     // 11. 主循环
@@ -499,14 +423,16 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("进入主循环...");
     Logger::GetInstance().Info("控制说明:");
-    Logger::GetInstance().Info("  T      - 切换自动旋转/手动控制");
-    Logger::GetInstance().Info("  WASD   - 移动相机（前后左右）");
-    Logger::GetInstance().Info("  Q/E    - 上下移动相机");
-    Logger::GetInstance().Info("  F1     - 显示统计信息");
-    Logger::GetInstance().Info("  F2     - 手动清理资源");
-    Logger::GetInstance().Info("  F3     - 切换随机实体可见性");
-    Logger::GetInstance().Info("  ESC    - 退出程序");
+    Logger::GetInstance().Info("  W/S          - 前进/后退");
+    Logger::GetInstance().Info("  A/D          - 左移/右移");
+    Logger::GetInstance().Info("  Q/E          - 下降/上升");
+    Logger::GetInstance().Info("  鼠标移动     - 旋转视角（第一人称）");
+    Logger::GetInstance().Info("  F1           - 显示统计信息");
+    Logger::GetInstance().Info("  ESC          - 退出程序");
     Logger::GetInstance().Info("========================================");
+    
+    // 启用相对鼠标模式（第一人称相机控制）
+    SDL_SetWindowRelativeMouseMode(renderer->GetContext()->GetWindow(), true);
     
     bool running = true;
     uint64_t lastTime = SDL_GetPerformanceCounter();
@@ -516,7 +442,165 @@ int main(int argc, char* argv[]) {
     int frameCount = 0;
     float lastFPS = 0.0f;
     
+    // 异步加载状态跟踪
+    bool entitiesCreated = false;
+    
     while (running) {
+        // ==================== 渐进式加载模型（在主线程中分帧加载） ====================
+        if (!entitiesCreated && !loadState->loadComplete) {
+            // 开始加载
+            if (!loadState->loadStarted) {
+                Logger::GetInstance().Info("========================================");
+                Logger::GetInstance().Info("开始渐进式加载模型...");
+                Logger::GetInstance().Info("========================================");
+                loadState->loadStarted = true;
+                
+                // 加载模型数据（在主线程，一次性加载）
+                try {
+                    loadState->parts = MeshLoader::LoadFromFileWithMaterials(
+                        loadState->modelPath, 
+                        loadState->texturePath, 
+                        true, 
+                        loadState->shader);
+                    
+                    if (!loadState->parts.empty()) {
+                        Logger::GetInstance().InfoFormat("✓ 模型加载成功，共 %zu 个部件", loadState->parts.size());
+                        Logger::GetInstance().Info("开始创建实体...");
+                    } else {
+                        Logger::GetInstance().Error("模型加载失败");
+                        running = false;
+                    }
+                } catch (const std::exception& e) {
+                    Logger::GetInstance().ErrorFormat("加载模型异常: %s", e.what());
+                    running = false;
+                }
+            }
+            
+            // 注册资源和创建实体（在loadStarted后）
+            if (loadState->loadStarted && !loadState->parts.empty()) {
+                // 注册资源（一次性）
+                if (meshNames.empty()) {
+                    for (size_t i = 0; i < loadState->parts.size(); ++i) {
+                        auto& part = loadState->parts[i];
+                        std::string meshName = "miku_mesh_" + std::to_string(i);
+                        std::string matName = "miku_material_" + std::to_string(i);
+                        
+                        if (part.mesh) {
+                            resourceManager.RegisterMesh(meshName, part.mesh);
+                            meshNames.push_back(meshName);
+                        }
+                        if (part.material) {
+                            resourceManager.RegisterMaterial(matName, part.material);
+                            materialNames.push_back(matName);
+                        }
+                    }
+                    Logger::GetInstance().InfoFormat("✓ 资源注册完成，共 %zu 个部件", meshNames.size());
+                }
+                
+                // 渐进式创建多个Miku实例（大规模压力测试）
+                const size_t mikuCount = 100;  // 创建100个Miku！
+                const size_t partsPerFrame = 10;  // 每帧创建10个部件（加快速度）
+                size_t totalParts = loadState->parts.size() * mikuCount;
+                
+                size_t startIdx = loadState->partsLoaded;
+                size_t endIdx = std::min(startIdx + partsPerFrame, totalParts);
+                
+                // 存储每个miku的位置和旋转（避免重复计算）
+                static std::vector<Vector3> mikuPositions(mikuCount);
+                static std::vector<float> mikuRotations(mikuCount);
+                static bool positionsInitialized = false;
+                
+                if (!positionsInitialized) {
+                    for (size_t i = 0; i < mikuCount; ++i) {
+                        // 随机位置（多层圆形排列 + 随机偏移）
+                        size_t layer = i / 20;  // 每层20个
+                        size_t posInLayer = i % 20;
+                        float angle = (posInLayer * 360.0f / 20) * 3.14159f / 180.0f;
+                        float radius = 10.0f + layer * 15.0f + (rand() % 10);  // 多层，半径递增
+                        float x = radius * std::cos(angle) + (rand() % 6 - 3);
+                        float z = radius * std::sin(angle) + (rand() % 6 - 3);
+                        float y = (rand() % 5) - 2.0f;  // 轻微高度变化
+                        
+                        mikuPositions[i] = Vector3(x, y, z);
+                        mikuRotations[i] = (rand() % 360) * 3.14159f / 180.0f;
+                    }
+                    positionsInitialized = true;
+                    Logger::GetInstance().Info("✓ 已初始化100个Miku的随机位置和旋转");
+                }
+                
+                for (size_t idx = startIdx; idx < endIdx; ++idx) {
+                    size_t mikuIdx = idx / loadState->parts.size();  // 第几个Miku
+                    size_t partIdx = idx % loadState->parts.size();  // 第几个部件
+                    
+                    // 使用同一个miku的相同位置和旋转（所有部件在一起）
+                    Vector3 position = mikuPositions[mikuIdx];
+                    float rotY = mikuRotations[mikuIdx];
+                    
+                    // 创建实体
+                    std::string entityName = "Miku_" + std::to_string(mikuIdx) + "_Part_" + std::to_string(partIdx);
+                    EntityID mikuPart = world->CreateEntity({
+                        .name = entityName,
+                        .active = true,
+                        .tags = {"miku", "model"}
+                    });
+                    
+                    // 添加Transform组件（所有部件共享相同的位置和旋转）
+                    world->AddComponent<TransformComponent>(mikuPart, TransformComponent());
+                    auto& transform = world->GetComponent<TransformComponent>(mikuPart);
+                    transform.SetPosition(position);  // 相同位置
+                    transform.SetRotation(MathUtils::FromEulerDegrees(0, rotY * 180.0f / 3.14159f, 0));  // 相同旋转
+                    transform.SetScale(0.08f);  // 相同缩放
+                    
+                    // 添加MeshRender组件
+                    MeshRenderComponent meshComp;
+                    meshComp.meshName = meshNames[partIdx];
+                    meshComp.materialName = materialNames[partIdx];
+                    meshComp.mesh = resourceManager.GetMesh(meshNames[partIdx]);
+                    meshComp.material = resourceManager.GetMaterial(materialNames[partIdx]);
+                    meshComp.resourcesLoaded = true;
+                    meshComp.visible = true;
+                    meshComp.castShadows = true;
+                    meshComp.receiveShadows = true;
+                    world->AddComponent(mikuPart, meshComp);
+                    
+                    loadState->partsLoaded++;
+                }
+                
+                // 显示进度
+                Logger::GetInstance().InfoFormat("  加载进度: %zu / %zu (%.1f%%) - 创建 %zu 个Miku", 
+                    loadState->partsLoaded, totalParts,
+                    (100.0f * loadState->partsLoaded) / totalParts, mikuCount);
+                
+                // 检查是否全部加载完成
+                if (loadState->partsLoaded >= totalParts) {
+                    loadState->loadComplete = true;
+                    entitiesCreated = true;
+                    Logger::GetInstance().Info("========================================");
+                    Logger::GetInstance().InfoFormat("✓ 压力测试场景创建完成（%zu 个Miku，共 %zu 个实体）", 
+                        mikuCount, loadState->partsLoaded);
+                    
+                    // 输出调试信息
+                    auto camEntities = world->Query<CameraComponent, TransformComponent>();
+                    if (!camEntities.empty()) {
+                        auto& camTransform = world->GetComponent<TransformComponent>(camEntities[0]);
+                        Vector3 camPos = camTransform.GetPosition();
+                        Logger::GetInstance().InfoFormat("[调试] 相机位置: (%.1f, %.1f, %.1f)", 
+                            camPos.x(), camPos.y(), camPos.z());
+                    }
+                    
+                    auto lightEntities = world->Query<LightComponent, TransformComponent>();
+                    if (!lightEntities.empty()) {
+                        auto& lightTrans = world->GetComponent<TransformComponent>(lightEntities[0]);
+                        Vector3 lightPos = lightTrans.GetPosition();
+                        Logger::GetInstance().InfoFormat("[调试] 光源位置: (%.1f, %.1f, %.1f)", 
+                            lightPos.x(), lightPos.y(), lightPos.z());
+                    }
+                    
+                    Logger::GetInstance().Info("========================================");
+                }
+            }  // 结束 if (loadState->loadStarted && !loadState->parts.empty())
+        }  // 结束 if (!entitiesCreated && !loadState->loadComplete)
+        
         // ==================== 时间计算 ====================
         uint64_t currentTime = SDL_GetPerformanceCounter();
         float deltaTime = static_cast<float>(currentTime - lastTime) / static_cast<float>(frequency);
@@ -543,18 +627,20 @@ int main(int argc, char* argv[]) {
                     running = false;
                 }
                 
-                // T - 切换自动旋转/手动控制
-                if (event.key.key == SDLK_T) {
-                    try {
-                        auto* cameraControlSys = world->GetSystem<CameraControlSystem>();
-                        if (cameraControlSys) {
-                            bool newState = !cameraControlSys->IsAutoRotate();
-                            cameraControlSys->SetAutoRotate(newState);
-                            Logger::GetInstance().InfoFormat("相机模式: %s", 
-                                newState ? "自动旋转" : "手动控制 (WASD移动, QE上下, IJKL旋转)");
+                // WASD QE 移动控制
+                try {
+                    auto* fpsCameraSys = world->GetSystem<FirstPersonCameraSystem>();
+                    if (fpsCameraSys) {
+                        switch (event.key.key) {
+                            case SDLK_W: fpsCameraSys->SetMoveForward(true); break;
+                            case SDLK_S: fpsCameraSys->SetMoveBackward(true); break;
+                            case SDLK_A: fpsCameraSys->SetMoveLeft(true); break;
+                            case SDLK_D: fpsCameraSys->SetMoveRight(true); break;
+                            case SDLK_Q: fpsCameraSys->SetMoveDown(true); break;
+                            case SDLK_E: fpsCameraSys->SetMoveUp(true); break;
                         }
-                    } catch (...) {}
-                }
+                    }
+                } catch (...) {}
                 
                 // F1 - 打印统计信息（避免在 Update 中获取系统，可能死锁）
                 if (event.key.key == SDLK_F1) {
@@ -578,108 +664,53 @@ int main(int argc, char* argv[]) {
                     Logger::GetInstance().Info("========================================");
                 }
                 
-                // F2 - 手动触发资源清理（直接调用 ResourceManager，避免死锁）
-                if (event.key.key == SDLK_F2) {
-                    Logger::GetInstance().Info("手动触发资源清理...");
-                    size_t cleaned = resourceManager.CleanupUnused();
-                    Logger::GetInstance().InfoFormat("✓ 资源清理完成，清理了 %zu 个资源", cleaned);
-                }
-                
-                // F3 - 切换随机实体的可见性（测试动态显示/隐藏）
-                // 注意：在事件处理中调用是安全的（不在 Update 期间）
-                if (event.key.key == SDLK_F3) {
-                    if (!testEntities.empty()) {
-                        try {
-                            int randomIndex = rand() % testEntities.size();
-                            EntityID entity = testEntities[randomIndex];
-                            
-                            // ✅ 安全性更新：先验证实体有效性
-                            if (!world->IsValidEntity(entity)) {
-                                Logger::GetInstance().WarningFormat("实体 #%d 已失效，跳过", randomIndex);
-                                continue;
-                            }
-                            
-                            // ✅ 安全性更新：再检查组件是否存在
-                            if (world->HasComponent<MeshRenderComponent>(entity)) {
-                                auto& mesh = world->GetComponent<MeshRenderComponent>(entity);
-                                mesh.visible = !mesh.visible;
-                                Logger::GetInstance().InfoFormat("切换实体 #%d 可见性: %s", 
-                                                                randomIndex, mesh.visible ? "可见" : "隐藏");
-                            } else {
-                                Logger::GetInstance().WarningFormat("实体 #%d 没有 MeshRenderComponent", randomIndex);
-                            }
-                        } catch (const std::out_of_range& e) {
-                            Logger::GetInstance().ErrorFormat("组件访问失败: %s", e.what());
-                        } catch (const std::exception& e) {
-                            Logger::GetInstance().ErrorFormat("切换可见性失败: %s", e.what());
+                // 移除了F2和F3的功能
+            }
+            
+            // 按键释放
+            else if (event.type == SDL_EVENT_KEY_UP) {
+                try {
+                    auto* fpsCameraSys = world->GetSystem<FirstPersonCameraSystem>();
+                    if (fpsCameraSys) {
+                        switch (event.key.key) {
+                            case SDLK_W: fpsCameraSys->SetMoveForward(false); break;
+                            case SDLK_S: fpsCameraSys->SetMoveBackward(false); break;
+                            case SDLK_A: fpsCameraSys->SetMoveLeft(false); break;
+                            case SDLK_D: fpsCameraSys->SetMoveRight(false); break;
+                            case SDLK_Q: fpsCameraSys->SetMoveDown(false); break;
+                            case SDLK_E: fpsCameraSys->SetMoveUp(false); break;
                         }
                     }
+                } catch (...) {}
+            }
+            
+            // 鼠标移动控制第一人称视角
+            else if (event.type == SDL_EVENT_MOUSE_MOTION) {
+                try {
+                    auto* fpsCameraSys = world->GetSystem<FirstPersonCameraSystem>();
+                    if (fpsCameraSys) {
+                        fpsCameraSys->OnMouseMove(event.motion.xrel, event.motion.yrel);
+                    }
+                } catch (const std::exception& e) {
+                    Logger::GetInstance().ErrorFormat("鼠标控制失败: %s", e.what());
                 }
             }
         }
         
-        // ==================== 相机手动控制 ====================
+        // ==================== 显示相机位置（调试） ====================
         try {
-            auto* cameraControlSys = world->GetSystem<CameraControlSystem>();
-            if (cameraControlSys && !cameraControlSys->IsAutoRotate()) {
-                // 获取相机实体
-                auto entities = world->Query<CameraComponent, TransformComponent>();
-                if (!entities.empty()) {
-                    auto& transform = world->GetComponent<TransformComponent>(entities[0]);
-                    
-                    float moveSpeed = 10.0f * deltaTime;  // 移动速度
-                    
-                    const bool* keyState = SDL_GetKeyboardState(nullptr);
-                    
-                    // WASD 移动（世界空间）
-                    if (keyState[SDL_SCANCODE_W]) {
-                        Vector3 forward = transform.transform->GetForward();
-                        forward.y() = 0; 
-                        if (forward.norm() > 0.001f) forward.normalize();
-                        transform.transform->TranslateWorld(forward * moveSpeed);
-                    }
-                    if (keyState[SDL_SCANCODE_S]) {
-                        Vector3 forward = transform.transform->GetForward();
-                        forward.y() = 0;
-                        if (forward.norm() > 0.001f) forward.normalize();
-                        transform.transform->TranslateWorld(-forward * moveSpeed);
-                    }
-                    if (keyState[SDL_SCANCODE_A]) {
-                        Vector3 right = transform.transform->GetRight();
-                        right.y() = 0;
-                        if (right.norm() > 0.001f) right.normalize();
-                        transform.transform->TranslateWorld(-right * moveSpeed);
-                    }
-                    if (keyState[SDL_SCANCODE_D]) {
-                        Vector3 right = transform.transform->GetRight();
-                        right.y() = 0;
-                        if (right.norm() > 0.001f) right.normalize();
-                        transform.transform->TranslateWorld(right * moveSpeed);
-                    }
-                    
-                    // QE 上下移动（世界空间）
-                    if (keyState[SDL_SCANCODE_Q]) {
-                        transform.transform->TranslateWorld(Vector3(0, -moveSpeed, 0));
-                    }
-                    if (keyState[SDL_SCANCODE_E]) {
-                        transform.transform->TranslateWorld(Vector3(0, moveSpeed, 0));
-                    }
-                    
-                    // 始终看向原点（用于调试，可以看到所有对象）
-                    Vector3 lookTarget(0, 0, 0);
-                    transform.LookAt(lookTarget);
-                    
-                    // 显示相机位置（每60帧）
-                    static int frameCounter = 0;
-                    if (frameCounter++ % 60 == 0) {
-                        Vector3 pos = transform.GetPosition();
-                        Logger::GetInstance().InfoFormat("[相机] 位置: (%.1f, %.1f, %.1f)", 
-                            pos.x(), pos.y(), pos.z());
-                    }
+            static int frameCounter = 0;
+            if (frameCounter++ % 60 == 0) {
+                auto camEntities = world->Query<CameraComponent, TransformComponent>();
+                if (!camEntities.empty()) {
+                    auto& camTransform = world->GetComponent<TransformComponent>(camEntities[0]);
+                    Vector3 camPos = camTransform.GetPosition();
+                    Logger::GetInstance().InfoFormat("[相机] 位置: (%.1f, %.1f, %.1f)", 
+                        camPos.x(), camPos.y(), camPos.z());
                 }
             }
         } catch (const std::exception& e) {
-            Logger::GetInstance().ErrorFormat("Camera control error: %s", e.what());
+            Logger::GetInstance().ErrorFormat("Camera debug error: %s", e.what());
         }
         
         // ==================== 更新 World ====================
@@ -710,18 +741,11 @@ int main(int argc, char* argv[]) {
         
         // 显示 FPS 和说明（在窗口标题中）
         if (frameCount % 30 == 0) {  // 每 30 帧更新一次标题
-            std::string mode = "自动旋转";
-            try {
-                auto* cameraControlSys = world->GetSystem<CameraControlSystem>();
-                if (cameraControlSys && !cameraControlSys->IsAutoRotate()) {
-                    mode = "手动控制(WASD/QE移动)";
-                }
-            } catch (...) {}
-            
-            std::string title = "ECS综合测试 | FPS: " + 
+            size_t entityCount = world->GetEntityManager().GetActiveEntityCount();
+            std::string title = "ECS Miku压力测试(100个) | FPS: " + 
                               std::to_string(static_cast<int>(lastFPS)) + 
-                              " | 相机: " + mode +
-                              " | T=切换 ESC=退出";
+                              " | 实体: " + std::to_string(entityCount) +
+                              " | WASD移动 鼠标旋转";
             renderer->SetWindowTitle(title);
         }
         
@@ -780,7 +804,7 @@ int main(int argc, char* argv[]) {
     }
     
     Logger::GetInstance().Info("========================================");
-    Logger::GetInstance().Info("=== ECS 综合功能测试完成 ===");
+    Logger::GetInstance().Info("=== ECS Miku压力测试完成 ===");
     Logger::GetInstance().Info("========================================");
     
     return 0;

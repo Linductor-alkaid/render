@@ -49,9 +49,9 @@ void main() {
     vec3 specular = spec * uSpecularColor.rgb;
     
     // 组合所有光照分量
-    vec3 result = (ambient + diffuse + specular) * VertexColor.rgb;
+    vec3 result = ambient + diffuse + specular;
     
-    // 输出最终颜色
+    // 输出最终颜色（不乘以顶点颜色，Phong光照模型不需要）
     FragColor = vec4(result, diffuseColor.a);
 }
 

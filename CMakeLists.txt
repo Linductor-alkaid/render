@@ -6,31 +6,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 优化增量编译性能
-# 避免不必要的全局重新配置
-set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY TRUE)
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-
-# 禁用不必要的构建数据库导出
-if(NOT DEFINED CMAKE_EXPORT_BUILD_DATABASE)
-    set(CMAKE_EXPORT_BUILD_DATABASE OFF CACHE BOOL "Disable build database export")
-endif()
-
-# 设置策略：使旧的file(GLOB)行为更稳定
-if(POLICY CMP0009)
-    cmake_policy(SET CMP0009 NEW)
-endif()
-
-# MSVC并行编译PDB文件同步选项
-if(MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /FS")
-    add_compile_options(/FS)
-endif()
-
 # 编译选项（仅用于变量保存，不全局应用）
 if(MSVC)
-    set(PROJECT_COMPILE_OPTIONS /utf-8 /W4 /WX- /FS)
-    # /FS: 强制同步PDB写入，解决并行编译冲突
+    set(PROJECT_COMPILE_OPTIONS /utf-8 /W4 /WX-)
     # 启用 SIMD 优化（AVX2）以提升 Eigen 性能
     list(APPEND PROJECT_COMPILE_OPTIONS /arch:AVX2)
 else()
@@ -65,22 +43,12 @@ set(THIRD_PARTY_DIR ${CMAKE_SOURCE_DIR}/third_party)
 # ============================================================================
 set(SDL3_DIR ${THIRD_PARTY_DIR}/SDL)
 
-# 禁用 SDL3 的一些不需要的选项（仅在未设置时应用默认值）
-if(NOT DEFINED SDL_SHARED)
-    set(SDL_SHARED OFF CACHE BOOL "Build shared library")
-endif()
-if(NOT DEFINED SDL_STATIC)
-    set(SDL_STATIC ON CACHE BOOL "Build static library")
-endif()
-if(NOT DEFINED SDL_TEST_LIBRARY)
-    set(SDL_TEST_LIBRARY OFF CACHE BOOL "Build test library")
-endif()
-if(NOT DEFINED SDL_TESTS)
-    set(SDL_TESTS OFF CACHE BOOL "Build tests")
-endif()
-if(NOT DEFINED SDL_EXAMPLES)
-    set(SDL_EXAMPLES OFF CACHE BOOL "Build examples")
-endif()
+# 禁用 SDL3 的一些不需要的选项
+set(SDL_SHARED OFF CACHE BOOL "Build shared library" FORCE)
+set(SDL_STATIC ON CACHE BOOL "Build static library" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "Build test library" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "Build tests" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "Build examples" FORCE)
 
 # 添加 SDL3 子项目
 if(EXISTS ${SDL3_DIR}/CMakeLists.txt)
@@ -98,50 +66,24 @@ endif()
 # ============================================================================
 set(SDL3_IMAGE_DIR ${THIRD_PARTY_DIR}/SDL_image)
 
-# 禁用 SDL3_image 的一些不需要的选项（仅在未设置时应用默认值）
-if(NOT DEFINED BUILD_SHARED_LIBS)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library")
-endif()
-if(NOT DEFINED SDLIMAGE_INSTALL)
-    set(SDLIMAGE_INSTALL OFF CACHE BOOL "Enable SDL3_image install target")
-endif()
-if(NOT DEFINED SDLIMAGE_DEPS_SHARED)
-    set(SDLIMAGE_DEPS_SHARED OFF CACHE BOOL "Load dependencies dynamically")
-endif()
-if(NOT DEFINED SDLIMAGE_VENDORED)
-    set(SDLIMAGE_VENDORED ON CACHE BOOL "Use vendored third-party libraries")
-endif()
-if(NOT DEFINED SDLIMAGE_SAMPLES)
-    set(SDLIMAGE_SAMPLES OFF CACHE BOOL "Build SDL3_image samples")
-endif()
+# 禁用 SDL3_image 的一些不需要的选项
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library" FORCE)
+set(SDLIMAGE_INSTALL OFF CACHE BOOL "Enable SDL3_image install target" FORCE)
+set(SDLIMAGE_DEPS_SHARED OFF CACHE BOOL "Load dependencies dynamically" FORCE)
+set(SDLIMAGE_VENDORED ON CACHE BOOL "Use vendored third-party libraries" FORCE)
+set(SDLIMAGE_SAMPLES OFF CACHE BOOL "Build SDL3_image samples" FORCE)
 
 # 启用常用的图片格式支持（使用内置解码器）
-if(NOT DEFINED SDLIMAGE_PNG)
-    set(SDLIMAGE_PNG ON CACHE BOOL "Enable PNG support")
-endif()
-if(NOT DEFINED SDLIMAGE_JPG)
-    set(SDLIMAGE_JPG ON CACHE BOOL "Enable JPEG support")
-endif()
-if(NOT DEFINED SDLIMAGE_BMP)
-    set(SDLIMAGE_BMP ON CACHE BOOL "Enable BMP support")
-endif()
-if(NOT DEFINED SDLIMAGE_TGA)
-    set(SDLIMAGE_TGA ON CACHE BOOL "Enable TGA support")
-endif()
+set(SDLIMAGE_PNG ON CACHE BOOL "Enable PNG support" FORCE)
+set(SDLIMAGE_JPG ON CACHE BOOL "Enable JPEG support" FORCE)
+set(SDLIMAGE_BMP ON CACHE BOOL "Enable BMP support" FORCE)
+set(SDLIMAGE_TGA ON CACHE BOOL "Enable TGA support" FORCE)
 
 # 禁用不常用格式以加快编译
-if(NOT DEFINED SDLIMAGE_AVIF)
-    set(SDLIMAGE_AVIF OFF CACHE BOOL "Disable AVIF support")
-endif()
-if(NOT DEFINED SDLIMAGE_JXL)
-    set(SDLIMAGE_JXL OFF CACHE BOOL "Disable JXL support")
-endif()
-if(NOT DEFINED SDLIMAGE_TIF)
-    set(SDLIMAGE_TIF OFF CACHE BOOL "Disable TIFF support")
-endif()
-if(NOT DEFINED SDLIMAGE_WEBP)
-    set(SDLIMAGE_WEBP OFF CACHE BOOL "Disable WEBP support")
-endif()
+set(SDLIMAGE_AVIF OFF CACHE BOOL "Disable AVIF support" FORCE)
+set(SDLIMAGE_JXL OFF CACHE BOOL "Disable JXL support" FORCE)
+set(SDLIMAGE_TIF OFF CACHE BOOL "Disable TIFF support" FORCE)
+set(SDLIMAGE_WEBP OFF CACHE BOOL "Disable WEBP support" FORCE)
 
 # 添加 SDL3_image 子项目
 if(EXISTS ${SDL3_IMAGE_DIR}/CMakeLists.txt)
@@ -168,56 +110,26 @@ message(STATUS "Using Eigen3 from: ${EIGEN3_INCLUDE_DIR}")
 # ============================================================================
 set(ASSIMP_DIR ${THIRD_PARTY_DIR}/assimp)
 
-# 禁用 Assimp 的一些不需要的选项（仅在未设置时应用默认值）
-if(NOT DEFINED ASSIMP_BUILD_TESTS)
-    set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "Build Assimp tests")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_ASSIMP_TOOLS)
-    set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "Build Assimp tools")
-endif()
-if(NOT DEFINED ASSIMP_INSTALL)
-    set(ASSIMP_INSTALL OFF CACHE BOOL "Enable Assimp install target")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT)
-    set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "Build all importers by default")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT)
-    set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "Build all exporters by default")
-endif()
+# 禁用 Assimp 的一些不需要的选项
+set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "Build Assimp tests" FORCE)
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "Build Assimp tools" FORCE)
+set(ASSIMP_INSTALL OFF CACHE BOOL "Enable Assimp install target" FORCE)
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "Build all importers by default" FORCE)
+set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "Build all exporters by default" FORCE)
 
 # 只启用常用的模型格式
-if(NOT DEFINED ASSIMP_BUILD_OBJ_IMPORTER)
-    set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "Enable OBJ import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_FBX_IMPORTER)
-    set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "Enable FBX import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_GLTF_IMPORTER)
-    set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE BOOL "Enable GLTF import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_COLLADA_IMPORTER)
-    set(ASSIMP_BUILD_COLLADA_IMPORTER ON CACHE BOOL "Enable Collada import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_BLEND_IMPORTER)
-    set(ASSIMP_BUILD_BLEND_IMPORTER ON CACHE BOOL "Enable Blender import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_3DS_IMPORTER)
-    set(ASSIMP_BUILD_3DS_IMPORTER ON CACHE BOOL "Enable 3DS import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_PLY_IMPORTER)
-    set(ASSIMP_BUILD_PLY_IMPORTER ON CACHE BOOL "Enable PLY import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_STL_IMPORTER)
-    set(ASSIMP_BUILD_STL_IMPORTER ON CACHE BOOL "Enable STL import")
-endif()
-if(NOT DEFINED ASSIMP_BUILD_MMD_IMPORTER)
-    set(ASSIMP_BUILD_MMD_IMPORTER ON CACHE BOOL "Enable MMD (PMX/PMD/VMD) import")
-endif()
+set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "Enable OBJ import" FORCE)
+set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "Enable FBX import" FORCE)
+set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE BOOL "Enable GLTF import" FORCE)
+set(ASSIMP_BUILD_COLLADA_IMPORTER ON CACHE BOOL "Enable Collada import" FORCE)
+set(ASSIMP_BUILD_BLEND_IMPORTER ON CACHE BOOL "Enable Blender import" FORCE)
+set(ASSIMP_BUILD_3DS_IMPORTER ON CACHE BOOL "Enable 3DS import" FORCE)
+set(ASSIMP_BUILD_PLY_IMPORTER ON CACHE BOOL "Enable PLY import" FORCE)
+set(ASSIMP_BUILD_STL_IMPORTER ON CACHE BOOL "Enable STL import" FORCE)
+set(ASSIMP_BUILD_MMD_IMPORTER ON CACHE BOOL "Enable MMD (PMX/PMD/VMD) import" FORCE)
 
 # 禁用导出器（我们只需要导入）
-if(NOT DEFINED ASSIMP_NO_EXPORT)
-    set(ASSIMP_NO_EXPORT ON CACHE BOOL "Disable export functionality")
-endif()
+set(ASSIMP_NO_EXPORT ON CACHE BOOL "Disable export functionality" FORCE)
 
 # 添加 Assimp 子项目
 if(EXISTS ${ASSIMP_DIR}/CMakeLists.txt)
@@ -276,8 +188,8 @@ set(RENDER_SOURCES
     # ECS
     src/ecs/entity_manager.cpp
     src/ecs/world.cpp
-    src/ecs/components.cpp
     src/ecs/systems.cpp
+    src/ecs/components.cpp
     
     # Rendering
     src/rendering/shader.cpp
@@ -347,8 +259,7 @@ set(RENDER_HEADERS
 # ============================================================================
 # 创建库
 # ============================================================================
-# 注意：不将头文件添加到源文件列表，避免Visual Studio因头文件时间戳变化而重新配置
-add_library(RenderEngine STATIC ${RENDER_SOURCES})
+add_library(RenderEngine STATIC ${RENDER_SOURCES} ${RENDER_HEADERS})
 
 # 设置编译选项（仅对 RenderEngine）
 target_compile_options(RenderEngine PRIVATE ${PROJECT_COMPILE_OPTIONS})

@@ -156,18 +156,21 @@ void MeshRenderable::Render(RenderState* renderState) {
             // 而是直接设置shader uniform，实现每个实体有不同的外观
             if (m_materialOverride.HasAnyOverride()) {
                 if (m_materialOverride.diffuseColor.has_value()) {
-                    // 统一使用u前缀
-                    uniformMgr->SetColor("material.diffuse", m_materialOverride.diffuseColor.value());
-                    uniformMgr->SetColor("uColor", m_materialOverride.diffuseColor.value());
+                    // 支持多种着色器uniform名称
+                    uniformMgr->SetColor("uDiffuseColor", m_materialOverride.diffuseColor.value());  // material_phong.frag
+                    uniformMgr->SetColor("material.diffuse", m_materialOverride.diffuseColor.value());  // 结构体形式
+                    uniformMgr->SetColor("uColor", m_materialOverride.diffuseColor.value());  // basic.frag
                 }
                 if (m_materialOverride.specularColor.has_value()) {
-                    uniformMgr->SetColor("material.specular", m_materialOverride.specularColor.value());
+                    uniformMgr->SetColor("uSpecularColor", m_materialOverride.specularColor.value());  // material_phong.frag
+                    uniformMgr->SetColor("material.specular", m_materialOverride.specularColor.value());  // 结构体形式
                 }
                 if (m_materialOverride.emissiveColor.has_value()) {
                     uniformMgr->SetColor("material.emissive", m_materialOverride.emissiveColor.value());
                 }
                 if (m_materialOverride.shininess.has_value()) {
-                    uniformMgr->SetFloat("material.shininess", m_materialOverride.shininess.value());
+                    uniformMgr->SetFloat("uShininess", m_materialOverride.shininess.value());  // material_phong.frag
+                    uniformMgr->SetFloat("material.shininess", m_materialOverride.shininess.value());  // 结构体形式
                 }
                 if (m_materialOverride.metallic.has_value()) {
                     uniformMgr->SetFloat("material.metallic", m_materialOverride.metallic.value());

@@ -44,12 +44,18 @@
 - **[ResourceManager](ResourceManager.md)** - 统一资源管理器（纹理、网格、材质、着色器） 🔒 **线程安全**
 - **[AsyncResourceLoader](AsyncResourceLoader.md)** - 异步资源加载器 🔒 **线程安全**
 
-### ECS 系统
-- **[ECS](ECS.md)** - ECS 系统总览（Entity Component System）
-- **[Entity](Entity.md)** - 实体和实体管理器（轻量级 ID、版本号、标签系统）
-- **[Component](Component.md)** - 组件和组件注册表（Transform、MeshRender、Camera、Light 等）
+### ECS 系统 🆕 **v1.1 已更新**
+- **[ECS](ECS.md)** - ECS 系统总览（Entity Component System）🆕 **v1.1 新增安全接口**
+- **[Entity](Entity.md)** - 实体和实体管理器（轻量级 ID、版本号、标签系统）🆕 **v1.1 性能优化**
+- **[Component](Component.md)** - 组件和组件注册表（Transform、MeshRender、Camera、Light 等）🆕 **v1.1 安全接口**
 - **[System](System.md)** - 系统基类和内置系统（Camera、Transform、ResourceLoading、MeshRender、Light 等）
 - **[World](World.md)** - ECS 世界容器（统一的实体、组件、系统管理）
+
+**v1.1 重要改进**：
+- ✅ EntityManager 递归锁优化，性能提升 5-10%
+- ✅ ComponentRegistry 新增安全迭代接口（ForEachComponent 等）
+- ✅ 完全向后兼容，旧代码无需修改
+- 📖 详见：[ECS 安全性改进报告](../ECS_SAFETY_IMPROVEMENTS.md)
 
 ### Renderable 渲染对象
 - **[Renderable](Renderable.md)** - 渲染对象基类（统一的渲染接口）

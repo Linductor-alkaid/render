@@ -311,7 +311,7 @@ static void ProcessAssimpNodeWithMaterials(
     for (uint32_t i = 0; i < node->mNumMeshes; i++) {
         aiMesh* assimpMesh = scene->mMeshes[node->mMeshes[i]];
         
-        // 处理网格（材质加载始终自动上传）
+        // 处理网格（自动上传 - 假设在主线程调用）
         auto mesh = ProcessAssimpMesh(assimpMesh, scene, true);
         
         // 处理材质（如果有）

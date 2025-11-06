@@ -397,7 +397,21 @@ void Material::Bind(RenderState* renderState) {
     
     // 5. ✅ 使用异常保护设置材质属性（统一使用u前缀）
     try {
-        // 结构体形式（material_phong.frag 等高级着色器使用）
+        // Phong着色器形式（material_phong.frag使用，带u前缀）
+        if (uniformMgr->HasUniform("uAmbientColor")) {
+            uniformMgr->SetColor("uAmbientColor", ambientColor);
+        }
+        if (uniformMgr->HasUniform("uDiffuseColor")) {
+            uniformMgr->SetColor("uDiffuseColor", diffuseColor);
+        }
+        if (uniformMgr->HasUniform("uSpecularColor")) {
+            uniformMgr->SetColor("uSpecularColor", specularColor);
+        }
+        if (uniformMgr->HasUniform("uShininess")) {
+            uniformMgr->SetFloat("uShininess", shininess);
+        }
+        
+        // 结构体形式（某些高级着色器可能使用）
         if (uniformMgr->HasUniform("material.ambient")) {
             uniformMgr->SetColor("material.ambient", ambientColor);
         }
@@ -423,7 +437,7 @@ void Material::Bind(RenderState* renderState) {
             uniformMgr->SetFloat("material.roughness", roughness);
         }
         
-        // 简单形式（basic.frag 等基础着色器使用，统一u前缀）
+        // 简单形式（basic.frag使用）
         if (uniformMgr->HasUniform("uColor")) {
             uniformMgr->SetColor("uColor", diffuseColor);
         }
