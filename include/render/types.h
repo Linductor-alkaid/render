@@ -104,6 +104,7 @@ struct Plane {
     }
     
     // 计算点到平面的距离（带符号）
+    // 平面方程: normal.dot(point) = distance (点在平面上)
     float GetDistance(const Vector3& point) const {
         return normal.dot(point) - distance;
     }

@@ -13,6 +13,9 @@ namespace Render {
 void Frustum::ExtractFromMatrix(const Matrix4& viewProjection) {
     // 从视图投影矩阵提取6个裁剪平面
     // 使用 Gribb-Hartmann 方法
+    // 注意：Gribb-Hartmann提取的格式是 Ax+By+Cz+D=0
+    // 但Plane类使用 normal·point = distance 格式
+    // 所以需要对distance取负号：distance = -D
     
     // 左平面：第4列 + 第1列
     planes[0].normal = Vector3(
@@ -20,7 +23,7 @@ void Frustum::ExtractFromMatrix(const Matrix4& viewProjection) {
         viewProjection(3, 1) + viewProjection(0, 1),
         viewProjection(3, 2) + viewProjection(0, 2)
     );
-    planes[0].distance = viewProjection(3, 3) + viewProjection(0, 3);
+    planes[0].distance = -(viewProjection(3, 3) + viewProjection(0, 3));
     
     // 右平面：第4列 - 第1列
     planes[1].normal = Vector3(
@@ -28,7 +31,7 @@ void Frustum::ExtractFromMatrix(const Matrix4& viewProjection) {
         viewProjection(3, 1) - viewProjection(0, 1),
         viewProjection(3, 2) - viewProjection(0, 2)
     );
-    planes[1].distance = viewProjection(3, 3) - viewProjection(0, 3);
+    planes[1].distance = -(viewProjection(3, 3) - viewProjection(0, 3));
     
     // 下平面：第4列 + 第2列
     planes[2].normal = Vector3(
@@ -36,7 +39,7 @@ void Frustum::ExtractFromMatrix(const Matrix4& viewProjection) {
         viewProjection(3, 1) + viewProjection(1, 1),
         viewProjection(3, 2) + viewProjection(1, 2)
     );
-    planes[2].distance = viewProjection(3, 3) + viewProjection(1, 3);
+    planes[2].distance = -(viewProjection(3, 3) + viewProjection(1, 3));
     
     // 上平面：第4列 - 第2列
     planes[3].normal = Vector3(
@@ -44,7 +47,7 @@ void Frustum::ExtractFromMatrix(const Matrix4& viewProjection) {
         viewProjection(3, 1) - viewProjection(1, 1),
         viewProjection(3, 2) - viewProjection(1, 2)
     );
-    planes[3].distance = viewProjection(3, 3) - viewProjection(1, 3);
+    planes[3].distance = -(viewProjection(3, 3) - viewProjection(1, 3));
     
     // 近平面：第4列 + 第3列
     planes[4].normal = Vector3(
@@ -52,7 +55,7 @@ void Frustum::ExtractFromMatrix(const Matrix4& viewProjection) {
         viewProjection(3, 1) + viewProjection(2, 1),
         viewProjection(3, 2) + viewProjection(2, 2)
     );
-    planes[4].distance = viewProjection(3, 3) + viewProjection(2, 3);
+    planes[4].distance = -(viewProjection(3, 3) + viewProjection(2, 3));
     
     // 远平面：第4列 - 第3列
     planes[5].normal = Vector3(
@@ -60,7 +63,7 @@ void Frustum::ExtractFromMatrix(const Matrix4& viewProjection) {
         viewProjection(3, 1) - viewProjection(2, 1),
         viewProjection(3, 2) - viewProjection(2, 2)
     );
-    planes[5].distance = viewProjection(3, 3) - viewProjection(2, 3);
+    planes[5].distance = -(viewProjection(3, 3) - viewProjection(2, 3));
     
     // 归一化所有平面
     for (int i = 0; i < 6; ++i) {

@@ -1258,12 +1258,7 @@ void MeshRenderSystem::SubmitRenderables() {
 }
 
 bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
-    // ✅ 临时关闭视锥体裁剪用于调试
-    (void)position;
-    (void)radius;
-    return false;
-    
-    /* 原始剔除代码（调试后恢复）
+    // ✅ 视锥体剔除优化（带调试信息）
     if (!m_cameraSystem) {
         return false;
     }
@@ -1273,10 +1268,24 @@ bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
         return false;
     }
     
+    // 获取视锥体（这会自动触发更新）
     const Frustum& frustum = mainCamera->GetFrustum();
-    bool culled = !frustum.IntersectsSphere(position, radius);
+    
+    // 扩大包围球半径以避免过度剔除（考虑Miku模型的特殊性）
+    float expandedRadius = radius * 1.5f;  // 增加50%的安全边距
+    
+    bool culled = !frustum.IntersectsSphere(position, expandedRadius);
+    
+    // 调试：前10次剔除时输出信息
+    static int cullDebugCount = 0;
+    if (culled && cullDebugCount < 10) {
+        Logger::GetInstance().DebugFormat(
+            "[MeshRenderSystem] Culled object at (%.1f, %.1f, %.1f) with radius %.2f", 
+            position.x(), position.y(), position.z(), expandedRadius);
+        cullDebugCount++;
+    }
+    
     return culled;
-    */
 }
 
 // ============================================================
