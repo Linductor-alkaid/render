@@ -1258,7 +1258,7 @@ void MeshRenderSystem::SubmitRenderables() {
 }
 
 bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
-    // ✅ 视锥体剔除优化（带调试信息）
+    // ✅ 视锥体剔除优化（带近距离保护）
     if (!m_cameraSystem) {
         return false;
     }
@@ -1268,6 +1268,19 @@ bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
         return false;
     }
     
+    // ==================== 近距离保护：相机附近的物体永不剔除 ====================
+    Vector3 cameraPos = mainCamera->GetPosition();
+    float distanceToCamera = (position - cameraPos).norm();
+    
+    // 定义不剔除球体半径（相机周围这个范围内的物体永远可见）
+    const float noCullRadius = 5.0f;  // 5米内的物体不剔除
+    
+    if (distanceToCamera < noCullRadius + radius) {
+        // 物体在相机附近，不剔除
+        return false;
+    }
+    
+    // ==================== 视锥体剔除 ====================
     // 获取视锥体（这会自动触发更新）
     const Frustum& frustum = mainCamera->GetFrustum();
     
@@ -1280,8 +1293,8 @@ bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
     static int cullDebugCount = 0;
     if (culled && cullDebugCount < 10) {
         Logger::GetInstance().DebugFormat(
-            "[MeshRenderSystem] Culled object at (%.1f, %.1f, %.1f) with radius %.2f", 
-            position.x(), position.y(), position.z(), expandedRadius);
+            "[MeshRenderSystem] Culled object at (%.1f, %.1f, %.1f) with radius %.2f, distance %.1f", 
+            position.x(), position.y(), position.z(), expandedRadius, distanceToCamera);
         cullDebugCount++;
     }
     
