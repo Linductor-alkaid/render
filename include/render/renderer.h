@@ -3,6 +3,7 @@
 #include "render/types.h"
 #include "render/opengl_context.h"
 #include "render/render_state.h"
+#include "render/render_batching.h"
 #include <memory>
 #include <string>
 #include <mutex>
@@ -23,11 +24,27 @@ struct RenderStats {
     uint32_t vertices = 0;
     float frameTime = 0.0f;
     float fps = 0.0f;
+    uint32_t batchCount = 0;
+    uint32_t originalDrawCalls = 0;
+    uint32_t instancedDrawCalls = 0;
+    uint32_t batchedDrawCalls = 0;
+    uint32_t fallbackDrawCalls = 0;
+    uint32_t batchedTriangles = 0;
+    uint32_t batchedVertices = 0;
+    uint32_t fallbackBatches = 0;
     
     void Reset() {
         drawCalls = 0;
         triangles = 0;
         vertices = 0;
+        batchCount = 0;
+        originalDrawCalls = 0;
+        instancedDrawCalls = 0;
+        batchedDrawCalls = 0;
+        fallbackDrawCalls = 0;
+        batchedTriangles = 0;
+        batchedVertices = 0;
+        fallbackBatches = 0;
     }
 };
 
@@ -210,6 +227,16 @@ public:
      * @brief 获取渲染队列中的对象数量
      */
     [[nodiscard]] size_t GetRenderQueueSize() const;
+
+    /**
+     * @brief 设置批处理模式
+     */
+    void SetBatchingMode(BatchingMode mode);
+
+    /**
+     * @brief 获取当前批处理模式
+     */
+    [[nodiscard]] BatchingMode GetBatchingMode() const;
     
 private:
     void UpdateStats();
@@ -231,6 +258,9 @@ private:
     
     // 辅助函数
     void SortRenderQueue();
+
+    BatchManager m_batchManager;
+    BatchingMode m_batchingMode;
     
     // 线程安全
     mutable std::mutex m_mutex;  // 保护所有可变状态

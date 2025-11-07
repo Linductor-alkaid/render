@@ -2,10 +2,90 @@
 #include "render/renderable.h"
 #include "render/logger.h"
 #include "render/error.h"
+#include "render/resource_manager.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
+#include <cstdint>
 
 namespace Render {
+
+namespace {
+
+BatchableItem CreateBatchableItem(Renderable* renderable) {
+    BatchableItem item{};
+    item.renderable = renderable;
+
+    if (!renderable) {
+        return item;
+    }
+
+    item.key.layerID = renderable->GetLayerID();
+    item.key.renderableType = renderable->GetType();
+
+    switch (renderable->GetType()) {
+        case RenderableType::Mesh: {
+            item.type = BatchItemType::Mesh;
+
+            auto* meshRenderable = static_cast<MeshRenderable*>(renderable);
+            auto mesh = meshRenderable->GetMesh();
+            auto material = meshRenderable->GetMaterial();
+
+            if (!mesh || !material) {
+                item.batchable = false;
+                return item;
+            }
+
+            auto shader = material->GetShader();
+            if (!shader) {
+                item.batchable = false;
+                return item;
+            }
+
+            const bool hasIndices = mesh->GetIndexCount() > 0;
+
+            item.meshData.mesh = mesh;
+            item.meshData.material = material;
+            item.meshData.materialOverride = meshRenderable->GetMaterialOverride();
+            item.meshData.hasMaterialOverride = item.meshData.materialOverride.HasAnyOverride();
+            item.meshData.castShadows = meshRenderable->GetCastShadows();
+            item.meshData.receiveShadows = meshRenderable->GetReceiveShadows();
+            item.meshData.modelMatrix = renderable->GetWorldMatrix();
+
+            item.key.materialHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(material.get()));
+            item.key.shaderHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(shader.get()));
+            item.key.blendMode = material->GetBlendMode();
+            item.key.cullFace = material->GetCullFace();
+            item.key.depthTest = material->GetDepthTest();
+            item.key.depthWrite = material->GetDepthWrite();
+            item.key.castShadows = item.meshData.castShadows;
+            item.key.receiveShadows = item.meshData.receiveShadows;
+
+            bool isTransparent = false;
+            const auto blendMode = material->GetBlendMode();
+            if (blendMode == BlendMode::Alpha || blendMode == BlendMode::Additive) {
+                isTransparent = true;
+            }
+
+            if (material->GetOpacity() < 1.0f) {
+                isTransparent = true;
+            }
+
+            if (item.meshData.materialOverride.opacity.has_value() &&
+                item.meshData.materialOverride.opacity.value() < 1.0f) {
+                isTransparent = true;
+            }
+
+            item.isTransparent = isTransparent;
+            item.batchable = hasIndices && !item.isTransparent && !item.meshData.hasMaterialOverride;
+            return item;
+        }
+        default:
+            item.batchable = false;
+            return item;
+    }
+}
+
+} // namespace
 
 Renderer* Renderer::Create() {
     return new Renderer();
@@ -23,11 +103,13 @@ Renderer::Renderer()
     , m_deltaTime(0.0f)
     , m_lastFrameTime(0.0f)
     , m_fpsUpdateTimer(0.0f)
-    , m_frameCount(0) {
+    , m_frameCount(0)
+    , m_batchingMode(BatchingMode::Disabled) {
     
     // 注意：构造阶段尚未被其他线程访问
     m_context = std::make_shared<OpenGLContext>();
     m_renderState = std::make_shared<RenderState>();
+    m_batchManager.SetResourceManager(&ResourceManager::GetInstance());
 }
 
 Renderer::~Renderer() {
@@ -55,6 +137,7 @@ bool Renderer::Initialize(const std::string& title, int width, int height) {
         
         // 重置渲染状态
         m_renderState->Reset();
+        m_batchManager.SetMode(m_batchingMode);
         
         m_lastFrameTime = static_cast<float>(SDL_GetTicks()) * 0.001f;
         m_initialized = true;
@@ -95,6 +178,7 @@ void Renderer::BeginFrame() {
     
     // 重置帧统计
     m_stats.Reset();
+    m_batchManager.Reset();
 }
 
 void Renderer::EndFrame() {
@@ -191,14 +275,45 @@ void Renderer::FlushRenderQueue() {
     
     // 排序渲染队列
     SortRenderQueue();
-    
-    // ✅ 渲染所有对象，传递 RenderState 以应用材质渲染状态
+
+    m_stats.originalDrawCalls = static_cast<uint32_t>(m_renderQueue.size());
+
+    m_batchManager.SetMode(m_batchingMode);
+    m_batchManager.Reset();
+
     for (auto* renderable : m_renderQueue) {
-        if (renderable && renderable->IsVisible()) {
-            renderable->Render(m_renderState.get());
+        if (!renderable || !renderable->IsVisible()) {
+            continue;
         }
+
+        m_batchManager.AddItem(CreateBatchableItem(renderable));
     }
-    
+
+    auto flushResult = m_batchManager.Flush(m_renderState.get());
+    m_stats.drawCalls += flushResult.drawCalls;
+    m_stats.batchCount += flushResult.batchCount;
+    m_stats.batchedDrawCalls += flushResult.batchedDrawCalls;
+    m_stats.fallbackDrawCalls += flushResult.fallbackDrawCalls;
+    m_stats.batchedTriangles += flushResult.batchedTriangles;
+    m_stats.batchedVertices += flushResult.batchedVertices;
+    m_stats.fallbackBatches += flushResult.fallbackBatches;
+
+    if (m_batchingMode == BatchingMode::GpuInstancing) {
+        m_stats.instancedDrawCalls += flushResult.batchedDrawCalls;
+    }
+
+    if (flushResult.batchCount > 0 || flushResult.fallbackBatches > 0) {
+        Logger::GetInstance().DebugFormat(
+            "[Renderer] Batch flush: batches=%u, batchedDraw=%u, fallbackDraw=%u, fallbackBatches=%u, triangles=%u, vertices=%u",
+            flushResult.batchCount,
+            flushResult.batchedDrawCalls,
+            flushResult.fallbackDrawCalls,
+            flushResult.fallbackBatches,
+            flushResult.batchedTriangles,
+            flushResult.batchedVertices
+        );
+    }
+
     // 清空队列
     m_renderQueue.clear();
 }
@@ -206,11 +321,23 @@ void Renderer::FlushRenderQueue() {
 void Renderer::ClearRenderQueue() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_renderQueue.clear();
+    m_batchManager.Reset();
 }
 
 size_t Renderer::GetRenderQueueSize() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_renderQueue.size();
+}
+
+void Renderer::SetBatchingMode(BatchingMode mode) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_batchingMode = mode;
+    m_batchManager.SetMode(mode);
+}
+
+BatchingMode Renderer::GetBatchingMode() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_batchingMode;
 }
 
 void Renderer::SortRenderQueue() {

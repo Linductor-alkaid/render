@@ -202,6 +202,7 @@ set(RENDER_SOURCES
     src/rendering/material.cpp
     src/rendering/framebuffer.cpp
     src/rendering/renderable.cpp
+    src/rendering/render_batching.cpp
     
     # Utils
     src/utils/logger.cpp
@@ -248,6 +249,7 @@ set(RENDER_HEADERS
     include/render/material.h
     include/render/framebuffer.h
     include/render/renderable.h
+    include/render/render_batching.h
     
     # Utils
     include/render/logger.h
