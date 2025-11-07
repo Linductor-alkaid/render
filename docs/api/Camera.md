@@ -431,6 +431,8 @@ struct Frustum {
 };
 ```
 
+> ℹ️ **2025-11-07 更新**：`Plane` 现在统一使用 `normal · point = distance` 表示形式，`ExtractFromMatrix()` 会在提取时自动转换 Gribb-Hartmann 系数，避免符号错误导致的全面剔除。调用方在做距离判断时可以直接使用 `Plane::GetDistance()`。
+
 ---
 
 ### GetFrustum

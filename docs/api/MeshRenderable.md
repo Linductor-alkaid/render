@@ -200,6 +200,24 @@ auto material = renderable.GetMaterial();
 
 ---
 
+### 材质覆盖（MaterialOverride）
+
+某些系统在渲染时会临时覆盖材质（例如根据实体组件动态修改颜色）。自 2025-11-07 起，覆盖逻辑会同步设置 `material.diffuse`、`material.specular` 结构体字段 **以及** `uDiffuseColor`、`uSpecularColor`、`uShininess` 等单独 uniform，保证 `material_phong.frag` 等着色器得到完整数据。
+
+```cpp
+if (overrideComponent) {
+    auto* uniforms = shader->GetUniformManager();
+    uniforms->SetColor("material.diffuse", overrideComponent->diffuseColor);
+    uniforms->SetColor("uDiffuseColor", overrideComponent->diffuseColor);
+    uniforms->SetFloat("material.shininess", overrideComponent->shininess);
+    uniforms->SetFloat("uShininess", overrideComponent->shininess);
+}
+```
+
+> ⚠️ **注意**：请始终通过 `UniformManager` 设置覆盖 uniform，以满足项目对统一管理的要求，并避免遗漏 `u*` 前缀字段导致模型呈现黑色。
+
+---
+
 ### 阴影
 
 #### `SetCastShadows()` / `GetCastShadows()`

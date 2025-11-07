@@ -165,6 +165,31 @@ uniformMgr->SetColor("tint", Color(1.0f, 1.0f, 1.0f, 0.5f));  // 半透明白色
 
 ---
 
+### Phong 着色器统一字段（2025-11-07 新增）
+
+`material_phong.frag` 与部分 ECS 管线期望同时支持 `material.*` 结构体字段和 `uDiffuseColor` 等前缀字段。`Material::Bind()` 会自动设置两套 uniform，但如果你使用 `MaterialOverride` 或直接操作 `UniformManager`，务必补齐以下字段：
+
+```cpp
+auto* uniforms = shader->GetUniformManager();
+
+if (uniforms->HasUniform("uAmbientColor")) {
+    uniforms->SetColor("uAmbientColor", ambient);
+}
+if (uniforms->HasUniform("uDiffuseColor")) {
+    uniforms->SetColor("uDiffuseColor", diffuse);
+}
+if (uniforms->HasUniform("uSpecularColor")) {
+    uniforms->SetColor("uSpecularColor", specular);
+}
+if (uniforms->HasUniform("uShininess")) {
+    uniforms->SetFloat("uShininess", shininess);
+}
+```
+
+> 📌 **最佳实践**：在检查 `HasUniform()` 后调用 `SetXXX()`，可兼容旧版材质并确保所有 uniform 都通过 `UniformManager` 统一管理。
+
+---
+
 ## 矩阵类型
 
 ### SetMatrix3

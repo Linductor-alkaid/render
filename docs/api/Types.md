@@ -160,6 +160,10 @@ struct Plane {
 };
 ```
 
+**表示形式**：平面满足 `normal · point = distance`。`GetDistance(point)` 返回 `normal · point - distance`（带符号距离，大于0表示点在法向同侧）。
+
+> ✅ **2025-11-07 修复**：与视锥裁剪使用的 Gribb-Hartmann 系数完全对齐，避免过去因为符号不一致导致的剔除错误。
+
 **构造方法**:
 - 默认构造：XY 平面（Y = 0）
 - 法向量 + 距离

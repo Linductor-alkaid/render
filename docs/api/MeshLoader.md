@@ -6,13 +6,14 @@
 
 ## 概述
 
-`MeshLoader` 提供两大功能：
+`MeshLoader` 提供三大功能：
 1. **外部模型文件加载** - 支持 OBJ, FBX, GLTF/GLB, Collada, Blender, PMX/PMD (MMD), 3DS, PLY, STL 等格式
-2. **基本几何形状生成** - 创建立方体、球体、圆柱等基本几何形状
+2. **材质与纹理解析** - 使用 `LoadFromFileWithMaterials()` 一次性获取 `Mesh + Material` 对象
+3. **基本几何形状生成** - 创建立方体、球体、圆柱等基本几何形状
 
-默认情况下，所有生成/加载的网格都已自动上传到 GPU，可直接使用。
+默认情况下，所有生成/加载的网格都会立即上传到 GPU，调用方必须在拥有 OpenGL 上下文的线程执行。
 
-**⭐ v0.12.0 新增**: 支持延迟上传（`autoUpload=false`），可用于异步加载场景。详见 [AsyncResourceLoader API](AsyncResourceLoader.md)。
+**⭐ v0.12.0** 起支持延迟上传（`autoUpload=false`），**2025-11-07** 强化了材质和渐进式加载流程。详见 [AsyncResourceLoader API](AsyncResourceLoader.md)。
 
 **头文件**: `render/mesh_loader.h`  
 **命名空间**: `Render`  
@@ -26,12 +27,13 @@
 - 自动三角化和法线生成
 - 网格优化（顶点合并、缓存优化）
 
-**✅ 材质和纹理加载**（v0.5.0 新增）：
+**✅ 材质和纹理加载**（2025-11-07 强化）：
 - 材质属性：环境色、漫反射、镜面反射、自发光
 - 物理参数：光泽度、不透明度、金属度、粗糙度
 - 纹理贴图：漫反射、镜面反射、法线、AO、自发光
 - 自动透明材质检测和混合模式设置
-- 与 Material 和 TextureLoader 无缝集成
+- 与 Material、UniformManager、TextureLoader 无缝集成
+- 支持为 `material_phong.frag` 自动设置 `uAmbientColor`、`uDiffuseColor` 等 uniform
 - **纹理智能缓存**：使用完整路径作为纹理标识，自动去重
 - **路径兼容性**：避免 `std::filesystem` 的中文路径问题，使用简单字符串操作
 
@@ -146,6 +148,7 @@ static std::vector<Ref<Mesh>> LoadFromFile(
 **注意**: 
 - ⚠️ 当 `autoUpload=false` 时，返回的网格未上传到GPU，需要后续调用 `mesh->Upload()`（必须在主线程）
 - ✅ 用于异步加载器时，工作线程可设置 `autoUpload=false`，主线程再调用 `Upload()`
+- ℹ️ 如果需要材质/纹理信息，请改用 `LoadFromFileWithMaterials()`
 
 **返回值**:
 - 网格列表（如果加载失败返回空列表）
@@ -171,7 +174,6 @@ static std::vector<Ref<Mesh>> LoadFromFile(
 
 **当前限制**:
 - ⚠️ 仅提取几何数据（位置、法线、UV、顶点颜色）
-- ⚠️ 不加载材质和纹理（需要手动设置着色器颜色）
 - ⚠️ 不支持骨骼动画
 - ⚠️ PMX 模型的特殊效果（Toon、Sphere Map）暂不支持
 
@@ -243,6 +245,61 @@ if (mesh) {
 auto mesh = MeshLoader::LoadMeshFromFile("models/cube.obj", 0, true, false);
 if (mesh && !mesh->IsUploaded()) {
     mesh->Upload();  // 必须在主线程调用
+}
+```
+
+---
+
+### LoadFromFileWithMaterials（2025-11-07 新增）
+
+一次性加载模型中的网格、材质和纹理贴图。
+
+```cpp
+static std::vector<MeshWithMaterial> LoadFromFileWithMaterials(
+    const std::string& filepath,
+    const std::string& basePath = "",
+    bool flipUVs = true,
+    Ref<Shader> shader = nullptr
+);
+```
+
+**参数**:
+- `filepath` - 模型文件路径
+- `basePath` - 纹理搜索根目录（默认使用模型所在目录）
+- `flipUVs` - 是否翻转 UV 坐标（默认 `true`）
+- `shader` - 为每个 `Material` 绑定的着色器（可选）
+
+**返回值**: `MeshWithMaterial` 列表，其中包含：
+- `mesh`  – 已上传的 `Mesh`
+- `material` – 与网格关联的 `Material`（可能为 `nullptr`）
+- `name` – 原始网格名称，便于调试
+
+**特性**:
+- 自动提取环境光、漫反射、镜面反射、光泽度等 Phong 参数
+- 自动加载漫反射/镜面/法线贴图并注册到 `TextureLoader`
+- 通过 `UniformManager` 同步 `material.*` 与 `uDiffuseColor` 等双份 uniform
+- 纹理路径相对于 `basePath` 解析，支持项目资源管理器策略
+- 默认在调用线程（需具备 OpenGL 上下文）立即调用 `Upload()`
+
+**注意事项**:
+- ⚠️ 必须在拥有 OpenGL 上下文的线程调用，否则会触发 `GLThreadChecker`
+- ⚠️ 如果需要在后台线程解析 Assimp 数据，请先使用 `LoadFromFile(..., autoUpload=false)` 获取几何体，再在主线程上传
+- ✅ 推荐在主线程一次性加载，再通过 **渐进式实体创建**（见下文）实现流畅体验
+
+**示例**:
+```cpp
+auto parts = MeshLoader::LoadFromFileWithMaterials(
+    "models/miku/v4c5.0.pmx",
+    "models/miku/texture",
+    true,
+    shaderCache.LoadShader("material_phong", vertPath, fragPath)
+);
+
+for (size_t i = 0; i < parts.size(); ++i) {
+    std::string meshName = "miku_mesh_" + std::to_string(i);
+    std::string materialName = "miku_material_" + std::to_string(i);
+    resourceManager.RegisterMesh(meshName, parts[i].mesh);
+    resourceManager.RegisterMaterial(materialName, parts[i].material);
 }
 ```
 
@@ -836,6 +893,60 @@ RenderMesh(hat, TranslateMatrix(0, 2.2f, 0));
 
 ---
 
+### 渐进式加载大型模型（2025-11-07 新增）
+
+```cpp
+struct LoadedModelData {
+    std::vector<MeshWithMaterial> parts;
+    size_t partsCreated = 0;
+};
+
+LoadedModelData loadState;
+
+// 第一步：在主线程一次性加载网格+材质（会立即上传 GPU）
+loadState.parts = MeshLoader::LoadFromFileWithMaterials(
+    "models/miku/v4c5.0.pmx",
+    "models/miku/texture",
+    true,
+    shaderCache.LoadShader("material_phong", vertPath, fragPath)
+);
+
+// 第二步：注册到资源管理器（可选）
+for (size_t i = 0; i < loadState.parts.size(); ++i) {
+    resourceManager.RegisterMesh("miku_mesh_" + std::to_string(i), loadState.parts[i].mesh);
+    resourceManager.RegisterMaterial("miku_mat_" + std::to_string(i), loadState.parts[i].material);
+}
+
+// 第三步：在游戏循环中分批创建实体，避免单帧创建数千网格导致卡顿
+const size_t instances = 100;
+const size_t partsPerFrame = 10;
+
+while (!loadComplete) {
+    size_t end = std::min(loadState.partsCreated + partsPerFrame,
+                          loadState.parts.size() * instances);
+
+    for (size_t idx = loadState.partsCreated; idx < end; ++idx) {
+        size_t instance = idx / loadState.parts.size();
+        size_t part = idx % loadState.parts.size();
+
+        EntityID entity = world->CreateEntity({ .name = "Miku_" + std::to_string(instance) });
+        world->AddComponent(entity, TransformComponent());
+
+        MeshRenderComponent renderComponent;
+        renderComponent.mesh = loadState.parts[part].mesh;
+        renderComponent.material = loadState.parts[part].material;
+        world->AddComponent(entity, renderComponent);
+    }
+
+    loadState.partsCreated = end;
+    loadComplete = (loadState.partsCreated == loadState.parts.size() * instances);
+}
+```
+
+> ✅ **优势**：所有 OpenGL 上传仍在主线程完成，但实体创建跨多帧进行，既满足异步加载测试需求，又避免 `GLThreadChecker` 报错和首帧卡顿。
+
+---
+
 ## 性能建议
 
 1. **细分级别**: 
@@ -896,7 +1007,7 @@ auto meshes = MeshLoader::LoadFromFile("models/my_model.obj");
 // 设置着色器和渲染状态
 shader->Use();
 
-// 设置统一的材质颜色（因为暂不支持材质提取）
+// 设置统一的材质颜色（使用几何-only 接口时需要手动指定）
 auto* uniformMgr = shader->GetUniformManager();
 uniformMgr->SetColor("uColor", Color(0.8f, 0.8f, 0.9f, 1.0f));
 uniformMgr->SetVector3("uLightDir", Vector3(-0.3f, -0.8f, -0.5f).normalized());
