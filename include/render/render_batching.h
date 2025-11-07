@@ -9,7 +9,12 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <mutex>
 #include <vector>
+#include <thread>
+#include <condition_variable>
+#include <deque>
+#include <atomic>
 
 namespace Render {
 
@@ -36,6 +41,7 @@ struct RenderBatchKey {
     RenderableType renderableType = RenderableType::Mesh;
     uint64_t materialHandle = 0;
     uint64_t shaderHandle = 0;
+    uint64_t meshHandle = 0;
     BlendMode blendMode = BlendMode::None;
     CullFace cullFace = CullFace::Back;
     bool depthTest = true;
@@ -54,7 +60,8 @@ struct RenderBatchKey {
                depthWrite == other.depthWrite &&
                castShadows == other.castShadows &&
                receiveShadows == other.receiveShadows &&
-               layerID == other.layerID;
+               layerID == other.layerID &&
+               meshHandle == other.meshHandle;
     }
 };
 
@@ -73,6 +80,7 @@ struct RenderBatchKeyHasher {
         hash ^= static_cast<size_t>(key.castShadows) + (hash << 6) + (hash >> 2);
         hash ^= static_cast<size_t>(key.receiveShadows) + (hash << 6) + (hash >> 2);
         hash ^= std::hash<uint32_t>{}(key.layerID) + (hash << 6) + (hash >> 2);
+        hash ^= std::hash<uint64_t>{}(key.meshHandle) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
         return hash;
     }
 };
@@ -92,6 +100,10 @@ struct MeshBatchData {
     bool hasMaterialOverride = false;
 };
 
+struct InstancePayload {
+    float matrix[16] = {0.0f};
+};
+
 /**
  * @brief 批处理可提交条目
  */
@@ -102,6 +114,31 @@ struct BatchableItem {
     MeshBatchData meshData{};
     bool batchable = false;
     bool isTransparent = false;
+    bool instanceEligible = false;
+};
+
+struct BatchCommand {
+    enum class Type {
+        Immediate,
+        Batch
+    } type = Type::Immediate;
+
+    size_t batchIndex = 0;
+    Renderable* renderable = nullptr;
+};
+
+class BatchCommandBuffer {
+public:
+    void Clear();
+    void AddImmediate(Renderable* renderable);
+    void AddBatch(size_t batchIndex);
+    void Swap(BatchCommandBuffer& other);
+    [[nodiscard]] const std::vector<BatchCommand>& GetCommands() const noexcept { return m_commands; }
+    [[nodiscard]] size_t GetCommandCount() const noexcept { return m_commands.size(); }
+
+private:
+    std::vector<BatchCommand> m_commands;
+    mutable std::mutex m_mutex;
 };
 
 /**
@@ -123,6 +160,7 @@ public:
     [[nodiscard]] size_t GetItemCount() const noexcept { return m_items.size(); }
     [[nodiscard]] uint32_t GetTriangleCount() const noexcept { return m_cachedTriangleCount; }
     [[nodiscard]] uint32_t GetVertexCount() const noexcept { return static_cast<uint32_t>(m_cpuVertices.size()); }
+    [[nodiscard]] uint32_t GetInstanceCount() const noexcept { return m_instanceCount; }
 
 private:
     RenderBatchKey m_key{};
@@ -136,6 +174,10 @@ private:
     uint32_t m_cachedTriangleCount = 0;
     MeshHandle m_meshHandle;
     Ref<Mesh> m_batchMesh;
+    Ref<Mesh> m_sourceMesh;
+    std::vector<InstancePayload> m_instancePayloads;
+    uint32_t m_instanceBuffer = 0;
+    uint32_t m_instanceCount = 0;
     std::string m_meshResourceName;
     uint64_t m_keyHash = 0;
     ResourceManager* m_resourceManager = nullptr;
@@ -152,13 +194,19 @@ public:
         uint32_t drawCalls = 0;
         uint32_t batchCount = 0;
         uint32_t batchedDrawCalls = 0;
+        uint32_t instancedDrawCalls = 0;
+        uint32_t instancedInstances = 0;
         uint32_t fallbackDrawCalls = 0;
         uint32_t batchedTriangles = 0;
         uint32_t batchedVertices = 0;
         uint32_t fallbackBatches = 0;
+        uint32_t workerProcessed = 0;
+        uint32_t workerMaxQueueDepth = 0;
+        float workerWaitTimeMs = 0.0f;
     };
 
     BatchManager();
+    ~BatchManager();
 
     void SetMode(BatchingMode mode);
     [[nodiscard]] BatchingMode GetMode() const noexcept;
@@ -172,22 +220,43 @@ public:
     [[nodiscard]] size_t GetPendingItemCount() const noexcept;
 
 private:
-    struct ExecutionCommand {
-        enum class Type {
-            Immediate,
-            Batch
-        } type = Type::Immediate;
+    struct BatchStorage {
+        std::vector<RenderBatch> batches;
+        std::unordered_map<RenderBatchKey, size_t, RenderBatchKeyHasher> lookup;
 
-        size_t batchIndex = 0;
-        Renderable* renderable = nullptr;
+        void Clear();
+    };
+
+    struct WorkItem {
+        BatchableItem item;
+        bool shouldBatch = false;
     };
 
     BatchingMode m_mode;
-    std::vector<RenderBatch> m_batches;
-    std::unordered_map<RenderBatchKey, size_t, RenderBatchKeyHasher> m_batchLookup;
-    std::vector<ExecutionCommand> m_executionOrder;
+    BatchStorage m_executionStorage;
+    BatchStorage m_recordingStorage;
+    BatchCommandBuffer m_executionBuffer;
+    BatchCommandBuffer m_recordingBuffer;
     ResourceManager* m_resourceManager;
-    bool m_warnedFallback;
+
+    std::thread m_workerThread;
+    mutable std::mutex m_queueMutex;
+    std::condition_variable m_queueCv;
+    std::condition_variable m_idleCv;
+    std::deque<WorkItem> m_pendingItems;
+    bool m_shutdown;
+    bool m_processing;
+
+    std::mutex m_storageMutex;
+    std::atomic<uint32_t> m_workerProcessedCount;
+    std::atomic<uint32_t> m_workerQueueHighWater;
+    std::atomic<uint64_t> m_workerDrainWaitNs;
+
+    void SwapBuffers();
+    void DrainWorker();
+    void WorkerLoop();
+    void ProcessWorkItem(const WorkItem& workItem);
+    void EnqueueWork(WorkItem workItem);
 };
 
 } // namespace Render

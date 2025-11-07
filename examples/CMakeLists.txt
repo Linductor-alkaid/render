@@ -38,6 +38,7 @@ set(EXAMPLES
     34_postprocess_test
     35_ecs_comprehensive_test
     36_ecs_transform_safety_test
+    37_batching_benchmark
 )
 
 # 批量创建示例程序

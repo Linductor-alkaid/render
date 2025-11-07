@@ -27,11 +27,15 @@ struct RenderStats {
     uint32_t batchCount = 0;
     uint32_t originalDrawCalls = 0;
     uint32_t instancedDrawCalls = 0;
+    uint32_t instancedInstances = 0;
     uint32_t batchedDrawCalls = 0;
     uint32_t fallbackDrawCalls = 0;
     uint32_t batchedTriangles = 0;
     uint32_t batchedVertices = 0;
     uint32_t fallbackBatches = 0;
+    uint32_t workerProcessed = 0;
+    uint32_t workerMaxQueueDepth = 0;
+    float workerWaitTimeMs = 0.0f;
     
     void Reset() {
         drawCalls = 0;
@@ -40,11 +44,15 @@ struct RenderStats {
         batchCount = 0;
         originalDrawCalls = 0;
         instancedDrawCalls = 0;
+        instancedInstances = 0;
         batchedDrawCalls = 0;
         fallbackDrawCalls = 0;
         batchedTriangles = 0;
         batchedVertices = 0;
         fallbackBatches = 0;
+        workerProcessed = 0;
+        workerMaxQueueDepth = 0;
+        workerWaitTimeMs = 0.0f;
     }
 };
 

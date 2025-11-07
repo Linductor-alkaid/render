@@ -150,6 +150,9 @@ void MeshRenderable::Render(RenderState* renderState) {
             Matrix4 modelMatrix = m_transform->GetWorldMatrix();
             // 统一使用u前缀
             uniformMgr->SetMatrix4("uModel", modelMatrix);
+            if (uniformMgr->HasUniform("uHasInstanceData")) {
+                uniformMgr->SetBool("uHasInstanceData", false);
+            }
             
             // ==================== ✅ 应用 MaterialOverride ====================
             // 在Material::Bind()之后应用覆盖，这样不会修改共享的Material对象

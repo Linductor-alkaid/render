@@ -156,6 +156,11 @@ public:
      * @param mode 绘制模式（默认为三角形）
      */
     void DrawInstanced(uint32_t instanceCount, DrawMode mode = DrawMode::Triangles) const;
+
+    /**
+     * @brief 获取底层 VAO 标识（供高级渲染流程使用）
+     */
+    uint32_t GetVertexArrayID() const;
     
     /**
      * @brief 释放 GPU 资源

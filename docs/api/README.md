@@ -11,6 +11,7 @@
 - **[OpenGLContext](OpenGLContext.md)** - OpenGL 上下文管理
 - **[RenderState](RenderState.md)** - 渲染状态管理（包含 OpenGL 状态封装：纹理/缓冲区/着色器程序管理） 🔒 **线程安全**
 - **[RenderBatchingPlan](RenderBatchingPlan.md)** - 渲染批处理方案规划与阶段落地指南
+- **[RenderBatching](RenderBatching.md)** - 渲染批处理实现与使用指南（模式、流程、调试）
 - **[GLThreadChecker](GLThreadChecker.md)** - OpenGL 线程安全检查器 🔒 **线程安全** 
   - 确保所有 OpenGL 调用在正确的线程中执行
   - 自动检测和报告线程错误

@@ -132,6 +132,10 @@ struct RenderBatchKey {
 
 每个阶段完成后需要更新 `RenderStats`、文档与示例，确保 API 使用者了解变更。
 
+> **阶段进展（2025-11-07）**：已实现线程安全、双缓冲的 `BatchCommandBuffer` 与后台批次准备线程，GPU 实例化路径输出 `instancedDrawCalls`、`instancedInstances`，并新增后台任务统计（`workerProcessed`、`workerMaxQueueDepth`、`workerWaitTimeMs`）同步到 `RenderStats` 与调试日志；新增示例程序 `examples/37_batching_benchmark.cpp` 用于对比各批处理模式的性能表现。
+>
+> **阶段进展（2025-11-08）**：完善了实例化着色器管线与 `UniformManager` 协作，批处理日志支持节流输出，`37_batching_benchmark` 在三种模式下保持稳定阵列结果；新增文档 **RenderBatching** 记录落地实现、使用步骤与调试建议。
+
 ## 依赖与风险管控
 
 - **依赖**：

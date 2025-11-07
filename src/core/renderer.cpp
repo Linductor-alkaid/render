@@ -77,6 +77,7 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
 
             item.isTransparent = isTransparent;
             item.batchable = hasIndices && !item.isTransparent && !item.meshData.hasMaterialOverride;
+            item.instanceEligible = hasIndices && !item.meshData.hasMaterialOverride && !item.isTransparent;
             return item;
         }
         default:
@@ -297,21 +298,44 @@ void Renderer::FlushRenderQueue() {
     m_stats.batchedTriangles += flushResult.batchedTriangles;
     m_stats.batchedVertices += flushResult.batchedVertices;
     m_stats.fallbackBatches += flushResult.fallbackBatches;
+    m_stats.instancedInstances += flushResult.instancedInstances;
+    m_stats.workerProcessed += flushResult.workerProcessed;
+    m_stats.workerMaxQueueDepth = std::max(m_stats.workerMaxQueueDepth, flushResult.workerMaxQueueDepth);
+    m_stats.workerWaitTimeMs += flushResult.workerWaitTimeMs;
 
     if (m_batchingMode == BatchingMode::GpuInstancing) {
-        m_stats.instancedDrawCalls += flushResult.batchedDrawCalls;
+        m_stats.instancedDrawCalls += flushResult.instancedDrawCalls;
     }
 
     if (flushResult.batchCount > 0 || flushResult.fallbackBatches > 0) {
-        Logger::GetInstance().DebugFormat(
-            "[Renderer] Batch flush: batches=%u, batchedDraw=%u, fallbackDraw=%u, fallbackBatches=%u, triangles=%u, vertices=%u",
-            flushResult.batchCount,
-            flushResult.batchedDrawCalls,
-            flushResult.fallbackDrawCalls,
-            flushResult.fallbackBatches,
-            flushResult.batchedTriangles,
-            flushResult.batchedVertices
-        );
+        static uint32_t s_batchFlushLogCounter = 0;
+        constexpr uint32_t kBatchLogInterval = 120;
+        ++s_batchFlushLogCounter;
+
+        const bool hasFallback = (flushResult.fallbackDrawCalls > 0 || flushResult.fallbackBatches > 0);
+        const bool intervalReached = (s_batchFlushLogCounter >= kBatchLogInterval);
+        const bool shouldLog = hasFallback || intervalReached;
+
+        if (shouldLog) {
+            Logger::GetInstance().DebugFormat(
+                "[Renderer] Batch flush: batches=%u, batchedDraw=%u, instancedDraw=%u, instances=%u, fallbackDraw=%u, fallbackBatches=%u, triangles=%u, vertices=%u, workerProcessed=%u, workerMaxQueue=%u, workerWaitMs=%.3f",
+                flushResult.batchCount,
+                flushResult.batchedDrawCalls,
+                flushResult.instancedDrawCalls,
+                flushResult.instancedInstances,
+                flushResult.fallbackDrawCalls,
+                flushResult.fallbackBatches,
+                flushResult.batchedTriangles,
+                flushResult.batchedVertices,
+                flushResult.workerProcessed,
+                flushResult.workerMaxQueueDepth,
+                flushResult.workerWaitTimeMs
+            );
+
+            if (intervalReached) {
+                s_batchFlushLogCounter = 0;
+            }
+        }
     }
 
     // 清空队列

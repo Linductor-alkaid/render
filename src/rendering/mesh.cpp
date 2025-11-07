@@ -445,6 +445,11 @@ void Mesh::DrawInstanced(uint32_t instanceCount, DrawMode mode) const {
     glBindVertexArray(0);
 }
 
+uint32_t Mesh::GetVertexArrayID() const {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    return m_VAO;
+}
+
 void Mesh::Clear() {
     std::lock_guard<std::mutex> lock(m_Mutex);
     
