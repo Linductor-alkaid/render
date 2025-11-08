@@ -6,6 +6,7 @@
 #include "render/resource_manager.h"
 #include "render/shader_cache.h"
 #include "render/material_sort_key.h"
+#include "render/lighting/light_manager.h"
 // ✅ 修复：移除 TextureLoader 头文件，统一使用 ResourceManager [[memory:7392268]]
 #include "render/error.h"
 #include "render/mesh_loader.h"
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <limits>
 #include <functional>
+#include <unordered_set>
 
 namespace Render {
 namespace ECS {
@@ -56,19 +58,19 @@ uint32_t ComputeMaterialOverrideHash(const Render::MaterialOverride& overrideDat
     if (overrideData.specularColor) {
         seed = HashCombine(seed, HashColor(*overrideData.specularColor));
     }
-    if (overrideData.emissiveColor) {
+    if (overrideData.emissiveColor.has_value()) {
         seed = HashCombine(seed, HashColor(*overrideData.emissiveColor));
     }
-    if (overrideData.shininess) {
+    if (overrideData.shininess.has_value()) {
         seed = HashCombine(seed, HashFloat(*overrideData.shininess));
     }
-    if (overrideData.metallic) {
+    if (overrideData.metallic.has_value()) {
         seed = HashCombine(seed, HashFloat(*overrideData.metallic));
     }
-    if (overrideData.roughness) {
+    if (overrideData.roughness.has_value()) {
         seed = HashCombine(seed, HashFloat(*overrideData.roughness));
     }
-    if (overrideData.opacity) {
+    if (overrideData.opacity.has_value()) {
         seed = HashCombine(seed, HashFloat(*overrideData.opacity));
     }
 
@@ -2471,37 +2473,148 @@ size_t LightSystem::GetLightCount() const {
 }
 
 void LightSystem::UpdateLightUniforms() {
-    // 收集所有可见光源的数据
-    // 注意：实际的uniform设置应该在渲染时进行，这里只是准备数据
-    
-    if (!m_world) {
+    if (!m_world || !m_renderer) {
         return;
     }
-    
+
+    auto& lightManager = m_renderer->GetLightManager();
     auto visibleLights = GetVisibleLights();
-    
+
     if (visibleLights.empty()) {
+        for (auto& entry : m_lightHandles) {
+            if (entry.second != Lighting::InvalidLightHandle) {
+                lightManager.RemoveLight(entry.second);
+            }
+        }
+        m_lightHandles.clear();
+        m_primaryLightPosition = Vector3::Zero();
+        m_primaryLightColor = Color::Black();
+        m_primaryLightIntensity = 0.0f;
         return;
     }
-    
-    // 对于简单的Phong模型，我们只需要第一个光源
-    // 更复杂的系统可以支持多光源
-    EntityID firstLight = visibleLights[0];
-    
-    if (!m_world->HasComponent<TransformComponent>(firstLight)) {
-        return;
+
+    std::unordered_set<EntityID, EntityID::Hash> activeLights;
+    activeLights.reserve(visibleLights.size());
+
+    auto convertType = [](LightType type) {
+        switch (type) {
+            case LightType::Directional:
+                return Lighting::LightType::Directional;
+            case LightType::Point:
+                return Lighting::LightType::Point;
+            case LightType::Spot:
+                return Lighting::LightType::Spot;
+            default:
+                return Lighting::LightType::Unknown;
+        }
+    };
+
+    bool primaryAssigned = false;
+
+    for (const auto& entity : visibleLights) {
+        activeLights.insert(entity);
+
+        if (!m_world->HasComponent<TransformComponent>(entity)) {
+            continue;
+        }
+
+        const auto& transformComp = m_world->GetComponent<TransformComponent>(entity);
+        const auto& lightComp = m_world->GetComponent<LightComponent>(entity);
+
+        Lighting::LightParameters params{};
+        params.type = convertType(lightComp.type);
+        if (params.type == Lighting::LightType::Unknown) {
+            continue;
+        }
+
+        params.common.color = lightComp.color;
+        params.common.intensity = lightComp.intensity;
+        params.common.castsShadows = lightComp.castShadows;
+        params.common.shadowBias = lightComp.shadowBias;
+        params.common.enabled = lightComp.enabled;
+
+        const Vector3 position = transformComp.GetPosition();
+        const float attenuationBase = std::max(0.0001f, lightComp.attenuation);
+        Vector3 attenuationVector(1.0f, attenuationBase, attenuationBase * attenuationBase);
+
+        switch (params.type) {
+            case Lighting::LightType::Directional: {
+                Vector3 direction = transformComp.transform ? transformComp.transform->GetForward() : Vector3(0.0f, -1.0f, 0.0f);
+                if (direction.squaredNorm() <= 1e-6f) {
+                    direction = Vector3(0.0f, -1.0f, 0.0f);
+                }
+                direction.normalize();
+                params.directional.direction = direction;
+                break;
+            }
+            case Lighting::LightType::Point: {
+                params.point.position = position;
+                params.point.range = lightComp.range;
+                params.point.attenuation = attenuationVector;
+                break;
+            }
+            case Lighting::LightType::Spot: {
+                Vector3 direction = transformComp.transform ? transformComp.transform->GetForward() : Vector3(0.0f, -1.0f, 0.0f);
+                if (direction.squaredNorm() <= 1e-6f) {
+                    direction = Vector3(0.0f, -1.0f, 0.0f);
+                }
+                direction.normalize();
+                params.spot.position = position;
+                params.spot.direction = direction;
+                params.spot.range = lightComp.range;
+                params.spot.attenuation = attenuationVector;
+                params.spot.innerCutoff = lightComp.innerConeAngle;
+                params.spot.outerCutoff = lightComp.outerConeAngle;
+                break;
+            }
+            default:
+                break;
+        }
+
+        auto handleIt = m_lightHandles.find(entity);
+        Lighting::LightHandle handle = Lighting::InvalidLightHandle;
+
+        if (handleIt == m_lightHandles.end()) {
+            handle = lightManager.RegisterLight(params);
+            if (handle != Lighting::InvalidLightHandle) {
+                m_lightHandles.emplace(entity, handle);
+            }
+        } else {
+            handle = handleIt->second;
+            if (handle != Lighting::InvalidLightHandle) {
+                if (!params.common.enabled) {
+                    lightManager.SetLightEnabled(handle, false);
+                } else {
+                    lightManager.UpdateLight(handle, params);
+                    lightManager.SetLightEnabled(handle, true);
+                }
+            }
+        }
+
+        if (!primaryAssigned && params.common.enabled) {
+            m_primaryLightPosition = position;
+            m_primaryLightColor = lightComp.color;
+            m_primaryLightIntensity = lightComp.intensity;
+            primaryAssigned = true;
+        }
     }
-    
-    const auto& transform = m_world->GetComponent<TransformComponent>(firstLight);
-    const auto& lightComp = m_world->GetComponent<LightComponent>(firstLight);
-    
-    // 缓存光源数据供渲染使用
-    m_primaryLightPosition = transform.GetPosition();
-    m_primaryLightColor = lightComp.color;
-    m_primaryLightIntensity = lightComp.intensity;
-    
-    // ✅ 这些光源数据会由 UniformSystem 自动设置到所有着色器的 uniform
-    // UniformSystem::SetLightUniforms() 会读取这些缓存的数据并设置到 shader uniform
+
+    for (auto it = m_lightHandles.begin(); it != m_lightHandles.end(); ) {
+        if (activeLights.find(it->first) == activeLights.end()) {
+            if (it->second != Lighting::InvalidLightHandle) {
+                lightManager.RemoveLight(it->second);
+            }
+            it = m_lightHandles.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (!primaryAssigned) {
+        m_primaryLightPosition = Vector3::Zero();
+        m_primaryLightColor = Color::Black();
+        m_primaryLightIntensity = 0.0f;
+    }
 }
 
 // ============================================================
@@ -2580,6 +2693,7 @@ void UniformSystem::SetCameraUniforms() {
     Matrix4 viewMatrix = camera->GetViewMatrix();
     Matrix4 projectionMatrix = camera->GetProjectionMatrix();
     Vector3 cameraPos = camera->GetPosition();
+    m_lastCameraPosition = cameraPos;
     
     // 遍历所有 MeshRenderComponent，为每个材质的着色器设置 uniform
     auto entities = m_world->Query<MeshRenderComponent>();
@@ -2656,83 +2770,222 @@ void UniformSystem::SetCameraUniforms() {
 }
 
 void UniformSystem::SetLightUniforms() {
-    if (!m_lightSystem) {
+    if (!m_renderer) {
         return;
     }
-    
-    // 获取主光源数据
-    Vector3 lightPos = m_lightSystem->GetPrimaryLightPosition();
-    Color lightColor = m_lightSystem->GetPrimaryLightColor();
-    float lightIntensity = m_lightSystem->GetPrimaryLightIntensity();
-    
-    // 遍历所有材质，设置光源 uniform
+
+    Vector3 cameraPos = m_lastCameraPosition;
+    if (m_cameraSystem) {
+        if (Camera* camera = m_cameraSystem->GetMainCameraObject()) {
+            cameraPos = camera->GetPosition();
+            m_lastCameraPosition = cameraPos;
+        }
+    }
+
+    auto& lightManager = m_renderer->GetLightManager();
+    Lighting::LightingFrameSnapshot snapshot = lightManager.BuildFrameSnapshot(cameraPos);
+
+    const uint32_t directionalCount = static_cast<uint32_t>(snapshot.directionalLights.size());
+    const uint32_t pointCount = static_cast<uint32_t>(snapshot.pointLights.size());
+    const uint32_t spotCount = static_cast<uint32_t>(snapshot.spotLights.size());
+    const uint32_t ambientCount = static_cast<uint32_t>(snapshot.ambientLights.size());
+
+    const bool hasAdvancedLights = (directionalCount + pointCount + spotCount + ambientCount) > 0;
+
+    std::vector<Vector4> directionalDirections;
+    std::vector<Vector4> directionalColors;
+    directionalDirections.reserve(directionalCount);
+    directionalColors.reserve(directionalCount);
+    for (const auto& light : snapshot.directionalLights) {
+        Vector3 direction = light.directional.direction;
+        if (direction.squaredNorm() <= 1e-6f) {
+            direction = Vector3(0.0f, -1.0f, 0.0f);
+        }
+        direction.normalize();
+        directionalDirections.emplace_back(direction.x(), direction.y(), direction.z(), 0.0f);
+        directionalColors.emplace_back(light.common.color.r, light.common.color.g, light.common.color.b, light.common.intensity);
+    }
+
+    std::vector<Vector4> pointPositions;
+    std::vector<Vector4> pointColors;
+    std::vector<Vector3> pointAttenuations;
+    pointPositions.reserve(pointCount);
+    pointColors.reserve(pointCount);
+    pointAttenuations.reserve(pointCount);
+    for (const auto& light : snapshot.pointLights) {
+        pointPositions.emplace_back(light.point.position.x(), light.point.position.y(), light.point.position.z(), light.point.range);
+        pointColors.emplace_back(light.common.color.r, light.common.color.g, light.common.color.b, light.common.intensity);
+        pointAttenuations.push_back(light.point.attenuation);
+    }
+
+    std::vector<Vector4> spotPositions;
+    std::vector<Vector4> spotColors;
+    std::vector<Vector4> spotDirections;
+    std::vector<Vector3> spotAttenuations;
+    std::vector<float> spotInnerCos;
+    spotPositions.reserve(spotCount);
+    spotColors.reserve(spotCount);
+    spotDirections.reserve(spotCount);
+    spotAttenuations.reserve(spotCount);
+    spotInnerCos.reserve(spotCount);
+    for (const auto& light : snapshot.spotLights) {
+        spotPositions.emplace_back(light.spot.position.x(), light.spot.position.y(), light.spot.position.z(), light.spot.range);
+        spotColors.emplace_back(light.common.color.r, light.common.color.g, light.common.color.b, light.common.intensity);
+        Vector3 direction = light.spot.direction;
+        if (direction.squaredNorm() <= 1e-6f) {
+            direction = Vector3(0.0f, -1.0f, 0.0f);
+        }
+        direction.normalize();
+        spotDirections.emplace_back(direction.x(), direction.y(), direction.z(), light.spot.outerCutoff);
+        spotAttenuations.push_back(light.spot.attenuation);
+        spotInnerCos.push_back(light.spot.innerCutoff);
+    }
+
+    std::vector<Vector4> ambientColors;
+    ambientColors.reserve(ambientCount);
+    for (const auto& light : snapshot.ambientLights) {
+        ambientColors.emplace_back(light.common.color.r, light.common.color.g, light.common.color.b, light.common.intensity * light.ambient.ambience);
+    }
+
+    Vector3 legacyLightPos = Vector3::Zero();
+    Color legacyLightColor = Color::Black();
+    float legacyLightIntensity = 0.0f;
+    if (m_lightSystem) {
+        legacyLightPos = m_lightSystem->GetPrimaryLightPosition();
+        legacyLightColor = m_lightSystem->GetPrimaryLightColor();
+        legacyLightIntensity = m_lightSystem->GetPrimaryLightIntensity();
+    }
+
     auto entities = m_world->Query<MeshRenderComponent>();
     std::unordered_set<Shader*> processedShaders;
-    
+
     for (const auto& entity : entities) {
         const auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
-        
-        // ✅ 检查材质是否有效（完整检查）
         if (!meshComp.material) {
             continue;
         }
-        
         if (!meshComp.material->IsValid()) {
-            continue;  // 无效材质，跳过
+            continue;
         }
-        
+
         auto shader = meshComp.material->GetShader();
         if (!shader) {
-            continue;  // 没有着色器，跳过
+            continue;
         }
-        
+
         Shader* shaderPtr = shader.get();
-        
         if (processedShaders.count(shaderPtr)) {
             continue;
         }
-        
-        // ✅ 检查着色器是否有效
+
         if (!shader->IsValid()) {
             Logger::GetInstance().WarningFormat("[UniformSystem] Shader is invalid, skipping light uniforms");
             continue;
         }
-        
+
         try {
             shader->Use();
             auto uniformMgr = shader->GetUniformManager();
-            
-            // ✅ 检查 uniformMgr 是否有效
             if (!uniformMgr) {
-                Logger::GetInstance().WarningFormat("[UniformSystem] Shader '%s' has null UniformManager", 
-                                                   shader->GetName().c_str());
+                Logger::GetInstance().WarningFormat("[UniformSystem] Shader '%s' has null UniformManager", shader->GetName().c_str());
                 continue;
             }
-            
-            // 设置光源数据
+
+            if (uniformMgr->HasUniform("uLighting.cameraPosition")) {
+                uniformMgr->SetVector3("uLighting.cameraPosition", cameraPos);
+            }
+
+            if (uniformMgr->HasUniform("uLighting.directionalCount")) {
+                uniformMgr->SetInt("uLighting.directionalCount", static_cast<int>(directionalCount));
+            }
+            if (uniformMgr->HasUniform("uLighting.pointCount")) {
+                uniformMgr->SetInt("uLighting.pointCount", static_cast<int>(pointCount));
+            }
+            if (uniformMgr->HasUniform("uLighting.spotCount")) {
+                uniformMgr->SetInt("uLighting.spotCount", static_cast<int>(spotCount));
+            }
+            if (uniformMgr->HasUniform("uLighting.ambientCount")) {
+                uniformMgr->SetInt("uLighting.ambientCount", static_cast<int>(ambientCount));
+            }
+            if (uniformMgr->HasUniform("uLighting.hasLights")) {
+                uniformMgr->SetBool("uLighting.hasLights", hasAdvancedLights);
+            }
+
+            if (directionalCount > 0) {
+                if (uniformMgr->HasUniform("uLighting.directionalDirections")) {
+                    uniformMgr->SetVector4Array("uLighting.directionalDirections", directionalDirections.data(), directionalCount);
+                }
+                if (uniformMgr->HasUniform("uLighting.directionalColors")) {
+                    uniformMgr->SetVector4Array("uLighting.directionalColors", directionalColors.data(), directionalCount);
+                }
+            }
+
+            if (pointCount > 0) {
+                if (uniformMgr->HasUniform("uLighting.pointPositions")) {
+                    uniformMgr->SetVector4Array("uLighting.pointPositions", pointPositions.data(), pointCount);
+                }
+                if (uniformMgr->HasUniform("uLighting.pointColors")) {
+                    uniformMgr->SetVector4Array("uLighting.pointColors", pointColors.data(), pointCount);
+                }
+                if (uniformMgr->HasUniform("uLighting.pointAttenuation")) {
+                    uniformMgr->SetVector3Array("uLighting.pointAttenuation", pointAttenuations.data(), pointCount);
+                }
+            }
+
+            if (spotCount > 0) {
+                if (uniformMgr->HasUniform("uLighting.spotPositions")) {
+                    uniformMgr->SetVector4Array("uLighting.spotPositions", spotPositions.data(), spotCount);
+                }
+                if (uniformMgr->HasUniform("uLighting.spotColors")) {
+                    uniformMgr->SetVector4Array("uLighting.spotColors", spotColors.data(), spotCount);
+                }
+                if (uniformMgr->HasUniform("uLighting.spotDirections")) {
+                    uniformMgr->SetVector4Array("uLighting.spotDirections", spotDirections.data(), spotCount);
+                }
+                if (uniformMgr->HasUniform("uLighting.spotAttenuation")) {
+                    uniformMgr->SetVector3Array("uLighting.spotAttenuation", spotAttenuations.data(), spotCount);
+                }
+                if (!spotInnerCos.empty() && uniformMgr->HasUniform("uLighting.spotInnerCos")) {
+                    uniformMgr->SetFloatArray("uLighting.spotInnerCos", spotInnerCos.data(), static_cast<uint32_t>(spotInnerCos.size()));
+                }
+            }
+
+            if (ambientCount > 0 && uniformMgr->HasUniform("uLighting.ambientColors")) {
+                uniformMgr->SetVector4Array("uLighting.ambientColors", ambientColors.data(), ambientCount);
+            }
+
+            if (uniformMgr->HasUniform("uLighting.culledDirectional")) {
+                uniformMgr->SetInt("uLighting.culledDirectional", static_cast<int>(snapshot.culledDirectional));
+            }
+            if (uniformMgr->HasUniform("uLighting.culledPoint")) {
+                uniformMgr->SetInt("uLighting.culledPoint", static_cast<int>(snapshot.culledPoint));
+            }
+            if (uniformMgr->HasUniform("uLighting.culledSpot")) {
+                uniformMgr->SetInt("uLighting.culledSpot", static_cast<int>(snapshot.culledSpot));
+            }
+            if (uniformMgr->HasUniform("uLighting.culledAmbient")) {
+                uniformMgr->SetInt("uLighting.culledAmbient", static_cast<int>(snapshot.culledAmbient));
+            }
+
+            // Legacy single-light uniforms for backward compatibility
             if (uniformMgr->HasUniform("uLightPos")) {
-                uniformMgr->SetVector3("uLightPos", lightPos);
+                uniformMgr->SetVector3("uLightPos", legacyLightPos);
             }
-            
             if (uniformMgr->HasUniform("uLightColor")) {
-                uniformMgr->SetColor("uLightColor", lightColor);
+                uniformMgr->SetColor("uLightColor", legacyLightColor);
             }
-            
             if (uniformMgr->HasUniform("uLightIntensity")) {
-                uniformMgr->SetFloat("uLightIntensity", lightIntensity);
+                uniformMgr->SetFloat("uLightIntensity", legacyLightIntensity);
             }
-            
-            // 环境光颜色（通常是光源颜色的较暗版本）
-            if (uniformMgr->HasUniform("uAmbientColor")) {
-                Color ambientColor = lightColor;
+            if (uniformMgr->HasUniform("uAmbientColor") && !hasAdvancedLights) {
+                Color ambientColor = legacyLightColor;
                 ambientColor.r *= 0.2f;
                 ambientColor.g *= 0.2f;
                 ambientColor.b *= 0.2f;
                 uniformMgr->SetColor("uAmbientColor", ambientColor);
             }
-            
+
             processedShaders.insert(shaderPtr);
-            
         } catch (const std::exception& e) {
             Logger::GetInstance().ErrorFormat("[UniformSystem] Exception setting light uniforms: %s", e.what());
         }

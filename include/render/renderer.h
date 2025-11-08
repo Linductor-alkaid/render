@@ -3,6 +3,7 @@
 #include "render/types.h"
 #include "render/opengl_context.h"
 #include "render/render_state.h"
+#include "render/lighting/light_manager.h"
 #include "render/render_batching.h"
 #include <memory>
 #include <string>
@@ -206,6 +207,22 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_renderState; 
     }
+
+    /**
+     * @brief 获取光照管理器
+     */
+    Lighting::LightManager& GetLightManager() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_lightManager;
+    }
+
+    /**
+     * @brief 获取光照管理器（常量）
+     */
+    const Lighting::LightManager& GetLightManager() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_lightManager;
+    }
     
     /**
      * @brief 检查是否已初始化
@@ -277,6 +294,7 @@ private:
 
     BatchManager m_batchManager;
     BatchingMode m_batchingMode;
+    Lighting::LightManager m_lightManager;
     
     // 线程安全
     mutable std::mutex m_mutex;  // 保护所有可变状态

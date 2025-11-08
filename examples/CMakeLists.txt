@@ -46,6 +46,7 @@ set(EXAMPLES
     42_sprite_state_machine_test
     43_sprite_batch_validation_test
     44_text_render_test
+    45_lighting_test
 )
 
 # 批量创建示例程序

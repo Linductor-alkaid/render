@@ -10,6 +10,7 @@
 #include "render/types.h"
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 namespace Render {
 
@@ -381,6 +382,8 @@ private:
     Vector3 m_primaryLightPosition;
     Color m_primaryLightColor;
     float m_primaryLightIntensity = 1.0f;
+
+    std::unordered_map<EntityID, Lighting::LightHandle, EntityID::Hash> m_lightHandles;
     
 public:
     // 获取主光源数据的接口（供渲染系统使用）
@@ -432,6 +435,7 @@ private:
     
     bool m_enabled = true;                   ///< 是否启用自动管理
     float m_time = 0.0f;                     ///< 累计时间
+    Vector3 m_lastCameraPosition = Vector3::Zero(); ///< 最近一次相机位置缓存
 };
 
 // ============================================================

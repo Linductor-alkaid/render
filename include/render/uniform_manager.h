@@ -83,6 +83,11 @@ public:
      * @brief 设置 Matrix4 数组
      */
     void SetMatrix4Array(const std::string& name, const Matrix4* values, uint32_t count);
+
+    /**
+     * @brief 设置 Vector4 数组
+     */
+    void SetVector4Array(const std::string& name, const Vector4* values, uint32_t count);
     
     /**
      * @brief 检查 uniform 是否存在

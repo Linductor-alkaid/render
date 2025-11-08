@@ -47,6 +47,7 @@ docs/
 - [3D网格渲染](API_REFERENCE.md#网格渲染)
 - [2D精灵渲染](API_REFERENCE.md#精灵渲染)
 - [相机控制](API_REFERENCE.md#相机控制)
+- [光照阶段设计](guides/LightingSystem_PhaseA.md)
 - [光照系统](API_REFERENCE.md#光照系统)
 
 ### 开发资源

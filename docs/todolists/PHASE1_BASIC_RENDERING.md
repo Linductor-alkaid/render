@@ -235,17 +235,17 @@
    - ✅ `SpriteRenderable` 与 `TextRenderable` 复用共享资源后可直接提交队列，仍保持 UI 层屏幕空间标记与颜色/纹理哈希覆盖
    - ➕ 后续新增渲染类型时，继续通过 UniformManager/ResourceManager 生成稳定键，避免退化到指针哈希；透明管线材质分组与 `MaterialStateCache` 待纳入下一阶段优化
    
-2. **光源系统未集成**
-   - LightSystem 只缓存主光源数据
-   - 光源 uniform 需在应用层手动设置
-   - 不支持多光源
+2. **光照系统后续扩展**
+   - 计划加入多光源阴影与环境光探针
+   - 统一点光/聚光阴影贴图与 `LightManager` 集成
+   - 评估 `LightComponent` 事件回调、优先级配置可视化工具
 
 #### 🎯 下一步工作
 1. **透明排序与材质缓存** ✅ 2025-11-08  
    - Renderer 内对透明段应用 “层级 → 深度提示 → 材质键 → RenderPriority → 原序” 稳定排序  
    - 新增 `MaterialStateCache` 缓存最近一次 `Material::Bind()`，Mesh/Text/Sprite 共享缓存逻辑  
    - `43_sprite_batch_validation_test`、`44_text_render_test`、`37_batching_benchmark` 均验证 `materialSortKeyMissing == 0`
-2. **集成光源系统** - 自动设置光源 uniform
+2. **渲染层级系统设计** - 引入 RenderLayer/RenderQueue，实现层级调度与属性配置
 
 ---
 
@@ -308,29 +308,29 @@
 ## 光照系统（基础）
 
 ### 光源类型
-- [ ] Light 基类
-  - [ ] 光源颜色
-  - [ ] 光源强度
-- [ ] DirectionalLight（定向光）
-  - [ ] 方向设置
-  - [ ] 光照计算
-- [ ] PointLight（点光源）
-  - [ ] 位置设置
-  - [ ] 范围设置
-  - [ ] 衰减计算
-- [ ] SpotLight（聚光灯）
-  - [ ] 位置和方向
-  - [ ] 内角和外角
-  - [ ] 衰减计算
-- [ ] AmbientLight（环境光）
-  - [ ] 环境光颜色和强度
+- [x] Light 基类
+  - [x] 光源颜色
+  - [x] 光源强度
+- [x] DirectionalLight（定向光）
+  - [x] 方向设置
+  - [x] 光照计算
+- [x] PointLight（点光源）
+  - [x] 位置设置
+  - [x] 范围设置
+  - [x] 衰减计算
+- [x] SpotLight（聚光灯）
+  - [x] 位置和方向
+  - [x] 内角和外角
+  - [x] 衰减计算
+- [x] AmbientLight（环境光）
+  - [x] 环境光颜色和强度
 
 ### 光照管理器
-- [ ] LightManager 类
-  - [ ] 光源注册
-  - [ ] 最大光源数限制（建议4-8个）
-  - [ ] 光照数据上传到着色器
-  - [ ] 光源排序（按重要性）
+- [x] LightManager 类
+  - [x] 光源注册
+  - [x] 最大光源数限制（建议4-8个）
+  - [x] 光照数据上传到着色器
+  - [x] 光源排序（按重要性）
 
 ---
 
@@ -425,7 +425,7 @@
 - [x] 数学库性能基准测试 (19_math_benchmark) - 性能测试和优化验证 ✅ 已完成
 - [x] 相机系统测试 (20_camera_test) - 三种相机控制模式、投影切换、miku模型渲染 ✅ 已完成
 - [x] 精灵渲染测试 (38_sprite_render_test) - SpriteRenderSystem + UV 裁剪 + Tint ✅ 新增
-- [ ] 光照测试
+- [x] 光照测试 (45_lighting_test)
 
 ### 综合示例
 - [ ] Simple Scene - 基础3D场景
@@ -519,7 +519,7 @@
 - [x] 纹理渲染
 - [x] 材质系统 ✅ 已完成
 - [x] 相机系统 ✅ 已完成
-- [ ] 光照系统
+- [x] 光照系统 ✅ 已完成
 
 ### Milestone 3: 2D 和层级
 - [x] 精灵渲染 ✅ （SpriteRenderable + SpriteRenderSystem 完成）
@@ -539,7 +539,7 @@
 
 ### 优先级排序
 1. **高优先级**: 项目结构、OpenGL抽象、基础渲染 ✅ **已完成**
-2. **中优先级**: 资源管理 ✅ **已完成**、相机系统 ✅ **已完成**、光照系统、2D渲染
+2. **中优先级**: 资源管理 ✅ **已完成**、相机系统 ✅ **已完成**、光照系统 ✅ **已完成**、2D渲染深化（文本/层级）
 3. **低优先级**: 高级特性、优化、工具
 
 ### 开发顺序
@@ -548,7 +548,7 @@
 3. ✅ 实现着色器系统
 4. ✅ 实现基础 Mesh 渲染
 5. ✅ 实现相机系统 ✅ **已完成**
-6. 实现光照系统 ⬅️ **下一步**
+6. ✅ 实现光照系统 ✅ **已完成**
 7. 实现 2D 渲染（Sprite ✅，文本/层级待完成）
 8. 实现渲染层级
 9. 编写示例和测试

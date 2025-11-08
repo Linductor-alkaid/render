@@ -170,6 +170,26 @@ void UniformManager::SetMatrix4Array(const std::string& name, const Matrix4* val
     }
 }
 
+void UniformManager::SetVector4Array(const std::string& name, const Vector4* values, uint32_t count) {
+    if (!values) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                                   "UniformManager::SetVector4Array: values pointer is null"));
+        return;
+    }
+
+    if (count == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                                   "UniformManager::SetVector4Array: count is zero"));
+        return;
+    }
+
+    int location = GetOrFindUniformLocation(name);
+    if (location != -1) {
+        GL_THREAD_CHECK();
+        glUniform4fv(location, count, reinterpret_cast<const float*>(values));
+    }
+}
+
 bool UniformManager::HasUniform(const std::string& name) const {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
     
