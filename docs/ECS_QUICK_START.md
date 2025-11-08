@@ -1,6 +1,6 @@
 # ECS 系统快速入门指南
 
-[返回文档首页](README.md) | [查看完整改进总结](ECS_IMPROVEMENTS_SUMMARY.md)
+[返回文档首页](README.md) | [查看安全性改进](ECS_SAFETY_IMPROVEMENTS.md)
 
 ---
 
@@ -564,9 +564,8 @@ mesh2.meshName = "./models/cube.obj";  // ❌ 会重复加载
 
 ## 📚 相关文档
 
-- [ECS 完整改进总结](ECS_IMPROVEMENTS_SUMMARY.md)
+- [ECS 安全性改进](ECS_SAFETY_IMPROVEMENTS.md)
 - [ECS 核心功能利用分析](todolists/ECS_CORE_FEATURE_UTILIZATION.md)
-- [ECS 渲染器集成分析](ECS_RENDERER_INTEGRATION_ANALYSIS.md)
 - [Material API](api/Material.md)
 - [UniformManager API](api/UniformManager.md)
 - [RenderState API](api/RenderState.md)
@@ -588,5 +587,5 @@ ECS 系统现已完整集成所有核心渲染功能：
 
 ---
 
-[上一篇: ECS 改进总结](ECS_IMPROVEMENTS_SUMMARY.md) | [返回文档首页](README.md)
+[下一篇: ECS 安全性改进](ECS_SAFETY_IMPROVEMENTS.md) | [返回文档首页](README.md)
 

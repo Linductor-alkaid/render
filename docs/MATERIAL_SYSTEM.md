@@ -400,7 +400,7 @@ cd build/bin/Release
 
 ## 相关文档
 
-- [着色器系统](SHADER_SYSTEM_COMPLETION.md)
+- [着色器缓存指南](SHADER_CACHE_GUIDE.md)
 - [纹理系统](TEXTURE_SYSTEM.md)
 - [渲染状态管理](api/RenderState.md)
 - [开发指南](DEVELOPMENT_GUIDE.md)

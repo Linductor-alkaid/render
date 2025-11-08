@@ -272,7 +272,7 @@ int main() {
 ## 相关文档
 
 - [RenderState 线程安全](THREAD_SAFETY.md) - RenderState 类的线程安全文档
-- [线程安全总结](THREAD_SAFETY_SUMMARY.md) - 整体线程安全架构
+- [RenderState 线程安全](THREAD_SAFETY.md) - RenderState 线程安全架构
 - [API 文档](api/Renderer.md) - Renderer 类的 API 参考
 
 ## 更新历史

@@ -19,7 +19,7 @@
 6. `docs/api/MeshLoader.md` - 更新 API 文档添加线程安全说明
 7. `docs/MESH_THREAD_SAFETY.md` - 新增完整的线程安全指南
 8. `docs/INDEX.md` - 更新文档索引
-9. `docs/THREAD_SAFETY_SUMMARY.md` - 更新整体线程安全总结
+9. `docs/THREAD_SAFETY.md` - 更新 RenderState 线程安全指南
 
 #### 关键代码更改
 
@@ -240,7 +240,7 @@ std::thread t3(AnalysisThread, mesh);
 1. **`docs/api/Mesh.md`** - 添加线程安全说明
 2. **`docs/api/MeshLoader.md`** - 添加线程安全说明
 3. **`docs/INDEX.md`** - 添加新文档链接
-4. **`docs/THREAD_SAFETY_SUMMARY.md`** - 更新整体线程安全状态
+4. **`docs/THREAD_SAFETY.md`** - 更新 RenderState 线程安全说明
 
 ---
 

@@ -404,7 +404,7 @@ if (refCount > expected) {
 
 ## 相关文档
 
-- [着色器系统完成报告](SHADER_SYSTEM_COMPLETION.md)
+- [材质系统指南](MATERIAL_SYSTEM.md)
 - [开发指南](DEVELOPMENT_GUIDE.md)
 - [API 参考](API_REFERENCE.md)
 

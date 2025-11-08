@@ -700,7 +700,7 @@ void AddNewResource(const std::string& name) {
 ## 📚 相关文档
 
 - [资源所有权指南](./RESOURCE_OWNERSHIP_GUIDE.md)
-- [安全性修复总结](./SECURITY_FIXES_COMPLETED.md)
+- [ECS 安全性改进](./ECS_SAFETY_IMPROVEMENTS.md)
 - [线程安全指南](./THREAD_SAFETY.md)
 
 ---

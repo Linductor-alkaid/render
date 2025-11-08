@@ -16,7 +16,6 @@ docs/
 ├── FEATURE_LIST.md              - 功能特性列表
 ├── CONTRIBUTING.md              - 贡献指南
 ├── THREAD_SAFETY.md             - RenderState 线程安全
-├── THREAD_SAFETY_SUMMARY.md     - 整体线程安全总结
 └── RENDERER_THREAD_SAFETY.md    - Renderer 线程安全（新）
 ```
 
@@ -60,7 +59,6 @@ docs/
 - [Renderer 线程安全](RENDERER_THREAD_SAFETY.md) - Renderer 类多线程使用指南
 - [RenderState 线程安全](THREAD_SAFETY.md) - RenderState 类线程安全实现
 - [网格系统线程安全](MESH_THREAD_SAFETY.md) - Mesh 和 MeshLoader 线程安全指南
-- [线程安全总结](THREAD_SAFETY_SUMMARY.md) - 整体架构的线程安全概述
 
 ## 文档维护
 

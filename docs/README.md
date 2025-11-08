@@ -53,23 +53,15 @@
 
 #### ECS 系统 🏗️ **已完善** ⭐⭐⭐⭐⭐
 - **[ECS 快速入门](ECS_QUICK_START.md)** - 快速开始使用 ECS 系统 ⭐ **推荐新手阅读**
-- **[ECS 最终实施报告](ECS_FINAL_IMPLEMENTATION_REPORT.md)** - 完整实施报告和验证结果 ⭐ **新增**
 - **[ECS 安全性分析](ECS_SECURITY_ANALYSIS.md)** - 全面的安全性审查报告 🆕 **v1.1**
 - **[ECS 安全性改进](ECS_SAFETY_IMPROVEMENTS.md)** - v1.1 安全性和性能改进详解 🆕
-- [ECS 改进总结](ECS_IMPROVEMENTS_SUMMARY.md) - 详细的改进说明和使用指南
-- [ECS 剩余功能评估](ECS_REMAINING_FEATURES_ASSESSMENT.md) - 未来扩展参考
 - [ECS 与 Renderable API](api/ECS.md) - ECS 系统 API 文档（v1.1 已更新）
-- [ECS 与渲染器集成分析](ECS_RENDERER_INTEGRATION_ANALYSIS.md) - 集成情况分析
 - [ECS 核心功能利用分析](todolists/ECS_CORE_FEATURE_UTILIZATION.md) - 功能利用率分析
 
 #### 线程安全 🔒
-- [线程安全总结](THREAD_SAFETY_SUMMARY.md) - 整体线程安全设计
 - [Renderer 线程安全](RENDERER_THREAD_SAFETY.md)
 - [RenderState 线程安全](THREAD_SAFETY.md)
 - [网格系统线程安全](MESH_THREAD_SAFETY.md)
-
-#### 性能优化 ⚡
-- [数学库性能优化](MATH_FINAL_OPTIMIZATION_REPORT.md) ⭐ **新增**
 
 ### 项目管理
 - [Phase 1 进度列表](todolists/PHASE1_BASIC_RENDERING.md)

@@ -2273,7 +2273,7 @@ asyncLoader->LoadAsync(path, [world, entity](const Result& result) {
 
 - [← 返回文档首页](README.md)
 - [Transform 安全性分析](TRANSFORM_SECURITY_ANALYSIS.md)
-- [Renderable 分析报告](RENDERABLE_ANALYSIS_REPORT.md)
+- [Renderable API 文档](api/Renderable.md)
 - [ECS API 文档](api/ECS.md)
 - [World API 文档](api/World.md)
 
