@@ -7,8 +7,11 @@
 #include <utility>
 #include <map>
 #include <unordered_map>
+#include <atomic>
 
 namespace Render {
+
+std::atomic<uint32_t> Material::s_nextStableID{1};
 
 // ============================================================================
 // 构造和析构
@@ -29,6 +32,7 @@ Material::Material()
     , m_cullFace(CullFace::Back)
     , m_depthTest(true)
     , m_depthWrite(true)
+    , m_stableID(s_nextStableID.fetch_add(1u, std::memory_order_relaxed))
 {
 }
 
@@ -59,6 +63,8 @@ Material::Material(Material&& other) noexcept {
     m_cullFace = other.m_cullFace;
     m_depthTest = other.m_depthTest;
     m_depthWrite = other.m_depthWrite;
+    m_stableID = other.m_stableID;
+    other.m_stableID = 0;
 }
 
 Material& Material::operator=(Material&& other) noexcept {
@@ -85,6 +91,8 @@ Material& Material::operator=(Material&& other) noexcept {
         m_cullFace = other.m_cullFace;
         m_depthTest = other.m_depthTest;
         m_depthWrite = other.m_depthWrite;
+        m_stableID = other.m_stableID;
+        other.m_stableID = 0;
     }
     return *this;
 }

@@ -340,6 +340,7 @@ std::string ResourceDependencyTracker::GenerateDOTGraph() const {
             case ResourceType::Mesh:     color = "lightgreen"; break;
             case ResourceType::Material: color = "lightyellow"; break;
             case ResourceType::Shader:   color = "lightpink"; break;
+            case ResourceType::SpriteAtlas: color = "lightgray"; break;
             default:                     color = "white"; break;
         }
         
@@ -419,7 +420,7 @@ void ResourceDependencyTracker::PrintTreeInternal(const std::string& resourceNam
 std::string ResourceDependencyTracker::GetStatistics() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    size_t textureCount = 0, meshCount = 0, materialCount = 0, shaderCount = 0;
+    size_t textureCount = 0, meshCount = 0, materialCount = 0, shaderCount = 0, atlasCount = 0;
     size_t totalDeps = 0;
     size_t isolatedCount = 0;
     
@@ -429,6 +430,7 @@ std::string ResourceDependencyTracker::GetStatistics() const {
             case ResourceType::Mesh:     meshCount++; break;
             case ResourceType::Material: materialCount++; break;
             case ResourceType::Shader:   shaderCount++; break;
+            case ResourceType::SpriteAtlas: atlasCount++; break;
             default: break;
         }
         
@@ -445,6 +447,7 @@ std::string ResourceDependencyTracker::GetStatistics() const {
     oss << "  - Meshes:    " << meshCount << "\n";
     oss << "  - Materials: " << materialCount << "\n";
     oss << "  - Shaders:   " << shaderCount << "\n";
+    oss << "  - Atlases:   " << atlasCount << "\n";
     oss << "Total Dependencies: " << totalDeps << "\n";
     oss << "Isolated Resources: " << isolatedCount << "\n";
     oss << "Average Dependencies per Resource: " 
@@ -487,6 +490,7 @@ std::string ResourceDependencyTracker::ResourceTypeToString(ResourceType type) c
         case ResourceType::Mesh:     return "Mesh";
         case ResourceType::Material: return "Material";
         case ResourceType::Shader:   return "Shader";
+        case ResourceType::SpriteAtlas: return "SpriteAtlas";
         default:                     return "Unknown";
     }
 }

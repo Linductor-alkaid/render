@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "name": "test_sprite_atlas",
+    "texture": "textures/test.jpg",
+    "textureName": "sprite_animation_demo",
+    "size": { "w": 700, "h": 701 },
+    "defaultFrameDuration": 0.2,
+    "defaultAnimation": "pulse",
+    "autoPlay": true
+  },
+  "frames": {
+    "tile_0": {
+      "frame": { "x": 0, "y": 0, "w": 350, "h": 350 },
+      "pivot": { "x": 0.5, "y": 0.5 }
+    },
+    "tile_1": {
+      "frame": { "x": 350, "y": 0, "w": 350, "h": 350 },
+      "pivot": { "x": 0.5, "y": 0.5 }
+    },
+    "tile_2": {
+      "frame": { "x": 0, "y": 350, "w": 350, "h": 351 },
+      "pivot": { "x": 0.5, "y": 0.5 }
+    },
+    "tile_3": {
+      "frame": { "x": 350, "y": 350, "w": 350, "h": 351 },
+      "pivot": { "x": 0.5, "y": 0.5 }
+    }
+  },
+  "animations": {
+    "pulse": {
+      "frames": ["tile_0", "tile_1", "tile_2", "tile_3"],
+      "frameDuration": 0.2,
+      "playback": "pingpong"
+    },
+    "rotate": {
+      "frames": ["tile_0", "tile_1", "tile_2", "tile_3"],
+      "frameDuration": 0.15,
+      "playback": "loop"
+    }
+  }
+}
+

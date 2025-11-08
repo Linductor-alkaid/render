@@ -200,9 +200,24 @@ set(RENDER_SOURCES
     src/rendering/mesh.cpp
     src/rendering/mesh_loader.cpp
     src/rendering/material.cpp
+    src/rendering/material_sort_key.cpp
     src/rendering/framebuffer.cpp
     src/rendering/renderable.cpp
     src/rendering/render_batching.cpp
+
+    # Sprite
+    src/sprite/sprite.cpp
+    src/sprite/sprite_sheet.cpp
+    src/sprite/sprite_atlas.cpp
+    src/sprite/sprite_atlas_importer.cpp
+    src/sprite/sprite_batcher.cpp
+    src/sprite/sprite_animator.cpp
+    src/sprite/sprite_renderer.cpp
+    src/sprite/sprite_layer.cpp
+
+    # Shaders
+    shaders/sprite.vert
+    shaders/sprite.frag
     
     # Utils
     src/utils/logger.cpp
@@ -247,9 +262,20 @@ set(RENDER_HEADERS
     include/render/mesh.h
     include/render/mesh_loader.h
     include/render/material.h
+    include/render/material_sort_key.h
     include/render/framebuffer.h
     include/render/renderable.h
     include/render/render_batching.h
+
+    # Sprite
+    include/render/sprite/sprite.h
+    include/render/sprite/sprite_sheet.h
+    include/render/sprite/sprite_atlas.h
+    include/render/sprite/sprite_atlas_importer.h
+    include/render/sprite/sprite_batcher.h
+    include/render/sprite/sprite_animator.h
+    include/render/sprite/sprite_renderer.h
+    include/render/sprite/sprite_layer.h
     
     # Utils
     include/render/logger.h
@@ -262,6 +288,12 @@ set(RENDER_HEADERS
 # 创建库
 # ============================================================================
 add_library(RenderEngine STATIC ${RENDER_SOURCES} ${RENDER_HEADERS})
+
+# 头文件搜索路径
+target_include_directories(RenderEngine
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/single_include
+)
 
 # 设置编译选项（仅对 RenderEngine）
 target_compile_options(RenderEngine PRIVATE ${PROJECT_COMPILE_OPTIONS})

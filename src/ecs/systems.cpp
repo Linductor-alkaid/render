@@ -5,12 +5,74 @@
 #include "render/logger.h"
 #include "render/resource_manager.h"
 #include "render/shader_cache.h"
+#include "render/material_sort_key.h"
 // ✅ 修复：移除 TextureLoader 头文件，统一使用 ResourceManager [[memory:7392268]]
 #include "render/error.h"
 #include "render/mesh_loader.h"
+#include "render/math_utils.h"
+#include "render/sprite/sprite_layer.h"
+
+#include <utility>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <functional>
 
 namespace Render {
 namespace ECS {
+
+namespace {
+
+uint32_t HashCombine(uint32_t seed, uint32_t value) {
+    seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+    return seed;
+}
+
+uint32_t HashFloat(float value) {
+    return static_cast<uint32_t>(std::hash<float>{}(value));
+}
+
+uint32_t HashColor(const Color& color) {
+    uint32_t seed = 0;
+    seed = HashCombine(seed, HashFloat(color.r));
+    seed = HashCombine(seed, HashFloat(color.g));
+    seed = HashCombine(seed, HashFloat(color.b));
+    seed = HashCombine(seed, HashFloat(color.a));
+    return seed;
+}
+
+uint32_t ComputeMaterialOverrideHash(const Render::MaterialOverride& overrideData) {
+    if (!overrideData.HasAnyOverride()) {
+        return 0;
+    }
+
+    uint32_t seed = 0;
+    if (overrideData.diffuseColor) {
+        seed = HashCombine(seed, HashColor(*overrideData.diffuseColor));
+    }
+    if (overrideData.specularColor) {
+        seed = HashCombine(seed, HashColor(*overrideData.specularColor));
+    }
+    if (overrideData.emissiveColor) {
+        seed = HashCombine(seed, HashColor(*overrideData.emissiveColor));
+    }
+    if (overrideData.shininess) {
+        seed = HashCombine(seed, HashFloat(*overrideData.shininess));
+    }
+    if (overrideData.metallic) {
+        seed = HashCombine(seed, HashFloat(*overrideData.metallic));
+    }
+    if (overrideData.roughness) {
+        seed = HashCombine(seed, HashFloat(*overrideData.roughness));
+    }
+    if (overrideData.opacity) {
+        seed = HashCombine(seed, HashFloat(*overrideData.opacity));
+    }
+
+    return seed == 0 ? 1u : seed;
+}
+
+} // namespace
 
 // ============================================================
 // TransformSystem 实现（方案B - 批量更新和实体ID管理）
@@ -1156,6 +1218,32 @@ void MeshRenderSystem::SubmitRenderables() {
             if (renderableOverride.HasAnyOverride()) {
                 renderable.SetMaterialOverride(renderableOverride);
             }
+
+            const uint32_t overrideHash = ComputeMaterialOverrideHash(renderableOverride);
+            uint32_t pipelineFlags = MaterialPipelineFlags_None;
+            if (meshComp.castShadows) {
+                pipelineFlags |= MaterialPipelineFlags_CastShadow;
+            }
+            if (meshComp.receiveShadows) {
+                pipelineFlags |= MaterialPipelineFlags_ReceiveShadow;
+            }
+            if (meshComp.useInstancing && meshComp.instanceCount > 1) {
+                pipelineFlags |= MaterialPipelineFlags_Instanced;
+            }
+
+            renderable.SetMaterialSortKey(
+                BuildMaterialSortKey(meshComp.material.get(), overrideHash, pipelineFlags)
+            );
+
+            bool transparentHint = false;
+            if (meshComp.material && meshComp.material->IsValid()) {
+                const auto blendMode = meshComp.material->GetBlendMode();
+                transparentHint = (blendMode == BlendMode::Alpha || blendMode == BlendMode::Additive);
+            }
+            if (!transparentHint && meshComp.materialOverride.opacity.has_value()) {
+                transparentHint = meshComp.materialOverride.opacity.value() < 1.0f;
+            }
+            renderable.SetTransparentHint(transparentHint);
             
             m_renderables.push_back(std::move(renderable));
             
@@ -1172,29 +1260,28 @@ void MeshRenderSystem::SubmitRenderables() {
         
         for (size_t i = 0; i < m_renderables.size(); i++) {
             auto& renderable = m_renderables[i];
-            auto material = renderable.GetMaterial();
-            
-            // ✅ 判断是否透明（需要考虑Material的BlendMode和MaterialOverride的opacity）
-            bool isTransparent = false;
-            if (material && material->IsValid()) {
-                // 检查材质的混合模式
-                auto blendMode = material->GetBlendMode();
-                isTransparent = (blendMode == BlendMode::Alpha || blendMode == BlendMode::Additive);
+            bool isTransparent = renderable.GetTransparentHint();
+
+            if (!isTransparent) {
+                auto material = renderable.GetMaterial();
                 
-                // ✅ 检查对应实体的MaterialOverride中的opacity
-                // 注意：这里假设renderables和entities的顺序一致（在同一次Query中生成的）
-                if (i < entities.size()) {
-                    const auto& entity = entities[i];
-                    const auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
+                if (material && material->IsValid()) {
+                    auto blendMode = material->GetBlendMode();
+                    isTransparent = (blendMode == BlendMode::Alpha || blendMode == BlendMode::Additive);
                     
-                    // 如果MaterialOverride设置了opacity < 1.0，也视为透明物体
-                    if (meshComp.materialOverride.opacity.has_value() && 
-                        meshComp.materialOverride.opacity.value() < 1.0f) {
-                        isTransparent = true;
+                    if (!isTransparent && i < entities.size()) {
+                        const auto& entity = entities[i];
+                        const auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
+                        
+                        if (meshComp.materialOverride.opacity.has_value() && 
+                            meshComp.materialOverride.opacity.value() < 1.0f) {
+                            isTransparent = true;
+                        }
                     }
                 }
+                renderable.SetTransparentHint(isTransparent);
             }
-            
+
             if (isTransparent) {
                 transparentIndices.push_back(i);
             } else {
@@ -1302,6 +1389,201 @@ bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
 }
 
 // ============================================================
+// SpriteAnimationSystem 实现
+// ============================================================
+
+void SpriteAnimationSystem::Update(float deltaTime) {
+    if (!m_world) {
+        return;
+    }
+
+    auto entities = m_world->Query<SpriteRenderComponent, SpriteAnimationComponent>();
+    if (entities.empty()) {
+        return;
+    }
+
+    for (const auto& entity : entities) {
+        auto& animComp = m_world->GetComponent<SpriteAnimationComponent>(entity);
+        auto& spriteComp = m_world->GetComponent<SpriteRenderComponent>(entity);
+
+        // 为常见默认值自动应用命名层，便于 UI 与世界层级管理
+        if (spriteComp.screenSpace) {
+            if (spriteComp.layerID == 800 && spriteComp.sortOrder == 0) {
+                SpriteRenderLayer::ApplyLayer("ui.default", spriteComp, 0);
+            }
+        } else {
+            if (spriteComp.layerID == 300 && spriteComp.sortOrder == 0) {
+                SpriteRenderLayer::ApplyLayer("world.midground", spriteComp, 0);
+            }
+        }
+
+        animComp.ClearEvents();
+        bool needsFrameUpdate = animComp.dirty;
+
+        if (animComp.currentClip.empty()) {
+            animComp.dirty = false;
+            continue;
+        }
+
+        auto clipIt = animComp.clips.find(animComp.currentClip);
+        if (clipIt == animComp.clips.end()) {
+            continue;
+        }
+
+        auto& clip = clipIt->second;
+        if (clip.frames.empty()) {
+            continue;
+        }
+
+        SpritePlaybackMode playbackMode = clip.playbackMode;
+        if (playbackMode == SpritePlaybackMode::Loop && !clip.loop) {
+            playbackMode = SpritePlaybackMode::Once;
+        }
+
+        const int frameCount = static_cast<int>(clip.frames.size());
+        if (frameCount == 0) {
+            continue;
+        }
+
+        auto pushEvent = [&](SpriteAnimationEvent::Type type) {
+            animComp.events.push_back(SpriteAnimationEvent{
+                type,
+                animComp.currentClip,
+                std::clamp(animComp.currentFrame, 0, frameCount - 1)
+            });
+        };
+
+        if (animComp.currentFrame < 0 || animComp.currentFrame >= frameCount) {
+            animComp.currentFrame = std::clamp(animComp.currentFrame, 0, frameCount - 1);
+            animComp.timeInFrame = 0.0f;
+            needsFrameUpdate = true;
+        }
+
+        if (animComp.clipJustChanged) {
+            animComp.playbackDirection = animComp.playbackSpeed < 0.0f ? -1 : 1;
+            animComp.currentFrame = animComp.playbackDirection < 0
+                                        ? frameCount - 1
+                                        : std::clamp(animComp.currentFrame, 0, frameCount - 1);
+            animComp.timeInFrame = 0.0f;
+            pushEvent(SpriteAnimationEvent::Type::ClipStarted);
+            animComp.clipJustChanged = false;
+            needsFrameUpdate = true;
+        }
+
+        if (animComp.playing && deltaTime > 0.0f) {
+            float frameDuration = clip.frameDuration > 0.0f ? clip.frameDuration : 0.016f;
+            float speedAbs = std::abs(animComp.playbackSpeed);
+
+            if (speedAbs > std::numeric_limits<float>::epsilon()) {
+                animComp.timeInFrame += deltaTime * speedAbs;
+                int direction = (animComp.playbackSpeed < 0.0f)
+                                    ? -1
+                                    : (animComp.playbackDirection == 0 ? 1 : animComp.playbackDirection);
+
+                while (animComp.timeInFrame >= frameDuration && animComp.playing) {
+                    animComp.timeInFrame -= frameDuration;
+                    int previousFrame = animComp.currentFrame;
+                    animComp.currentFrame += direction;
+
+                    switch (playbackMode) {
+                    case SpritePlaybackMode::Loop:
+                        if (direction > 0 && animComp.currentFrame >= frameCount) {
+                            animComp.currentFrame = 0;
+                        } else if (direction < 0 && animComp.currentFrame < 0) {
+                            animComp.currentFrame = frameCount - 1;
+                        }
+                        break;
+                    case SpritePlaybackMode::Once:
+                        if (direction > 0 && animComp.currentFrame >= frameCount) {
+                            animComp.currentFrame = frameCount - 1;
+                            animComp.playing = false;
+                            animComp.timeInFrame = 0.0f;
+                            pushEvent(SpriteAnimationEvent::Type::ClipCompleted);
+                        } else if (direction < 0 && animComp.currentFrame < 0) {
+                            animComp.currentFrame = 0;
+                            animComp.playing = false;
+                            animComp.timeInFrame = 0.0f;
+                            pushEvent(SpriteAnimationEvent::Type::ClipCompleted);
+                        }
+                        break;
+                    case SpritePlaybackMode::PingPong:
+                        if (frameCount > 1) {
+                            if (direction > 0 && animComp.currentFrame >= frameCount) {
+                                animComp.currentFrame = frameCount - 2;
+                                direction = -1;
+                            } else if (direction < 0 && animComp.currentFrame < 0) {
+                                animComp.currentFrame = frameCount > 1 ? 1 : 0;
+                                direction = 1;
+                            }
+                        } else {
+                            animComp.currentFrame = 0;
+                            direction = 0;
+                        }
+                        break;
+                    }
+
+                    animComp.currentFrame = std::clamp(animComp.currentFrame, 0, frameCount - 1);
+
+                    if (animComp.currentFrame != previousFrame) {
+                        pushEvent(SpriteAnimationEvent::Type::FrameChanged);
+                        needsFrameUpdate = true;
+                    }
+
+                    if (!animComp.playing || direction == 0) {
+                        break;
+                    }
+
+                    animComp.playbackDirection = direction;
+                }
+
+                if (direction == 0) {
+                    animComp.playbackDirection = animComp.playbackDirection == 0 ? 1 : animComp.playbackDirection;
+                } else {
+                    animComp.playbackDirection = direction;
+                }
+            }
+        }
+
+        if (needsFrameUpdate) {
+            animComp.currentFrame = std::clamp(animComp.currentFrame, 0, frameCount - 1);
+            spriteComp.sourceRect = clip.frames[animComp.currentFrame];
+            animComp.dirty = false;
+
+            Logger::GetInstance().DebugFormat(
+                "[SpriteAnimationSystem] entity %u clip='%s' frame=%d rect=(%.3f, %.3f, %.3f, %.3f)",
+                entity.index,
+                animComp.currentClip.c_str(),
+                animComp.currentFrame,
+                spriteComp.sourceRect.x,
+                spriteComp.sourceRect.y,
+                spriteComp.sourceRect.width,
+                spriteComp.sourceRect.height);
+
+            bool hasFrameEvent = std::any_of(animComp.events.begin(), animComp.events.end(),
+                [&](const SpriteAnimationEvent& evt) {
+                    return evt.type == SpriteAnimationEvent::Type::FrameChanged &&
+                           evt.frameIndex == animComp.currentFrame &&
+                           evt.clip == animComp.currentClip;
+                });
+
+            if (!hasFrameEvent) {
+                pushEvent(SpriteAnimationEvent::Type::FrameChanged);
+            }
+        }
+
+        if (!animComp.eventListeners.empty() && !animComp.events.empty()) {
+            for (const auto& evt : animComp.events) {
+                for (const auto& listener : animComp.eventListeners) {
+                    if (listener) {
+                        listener(entity, evt);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
 // SpriteRenderSystem 实现
 // ============================================================
 
@@ -1312,6 +1594,18 @@ SpriteRenderSystem::SpriteRenderSystem(Renderer* renderer)
         Logger::GetInstance().ErrorFormat("[SpriteRenderSystem] Renderer is null");
     }
     // 注意：当前实现暂未使用Renderer，保留用于未来2D渲染扩展
+}
+
+void SpriteRenderSystem::OnCreate(World* world) {
+    System::OnCreate(world);
+    // ⚠️ 注意：不要在此处调用 world->GetSystem()，因为 RegisterSystem 内部已经持有写锁，
+    // 再次请求读锁会导致死锁。改为在 Update 中按需获取（使用 GetSystemNoLock）。
+    m_cameraSystem = nullptr;
+}
+
+void SpriteRenderSystem::OnDestroy() {
+    m_cameraSystem = nullptr;
+    System::OnDestroy();
 }
 
 void SpriteRenderSystem::Update(float deltaTime) {
@@ -1327,28 +1621,199 @@ void SpriteRenderSystem::Update(float deltaTime) {
         return;
     }
     
-    // 查询所有具有 TransformComponent 和 SpriteRenderComponent 的实体
-    auto entities = m_world->Query<TransformComponent, SpriteRenderComponent>();
+    // 延迟获取 CameraSystem，避免在 OnCreate 中读取导致死锁
+    if (!m_cameraSystem) {
+        m_cameraSystem = m_world->GetSystemNoLock<CameraSystem>();
+        if (m_cameraSystem) {
+            Logger::GetInstance().Info("[SpriteRenderSystem] CameraSystem acquired");
+        }
+    }
     
+    auto entities = m_world->Query<TransformComponent, SpriteRenderComponent>();
+    if (entities.empty()) {
+        return;
+    }
+
+    m_batcher.Clear();
+
+    float width = static_cast<float>(m_renderer->GetWidth());
+    float height = static_cast<float>(m_renderer->GetHeight());
+    if (width <= 0.0f) {
+        width = 1.0f;
+    }
+    if (height <= 0.0f) {
+        height = 1.0f;
+    }
+
+    Matrix4 screenView = Matrix4::Identity();
+    Matrix4 screenProjection = MathUtils::Orthographic(0.0f, width, height, 0.0f, -1.0f, 1.0f);
+    SpriteRenderable::SetViewProjection(screenView, screenProjection);
+
+    Matrix4 worldView = Matrix4::Identity();
+    Matrix4 worldProjection = Matrix4::Identity();
+    bool worldMatricesReady = false;
+
+    if (m_cameraSystem) {
+        if (auto camera = m_cameraSystem->GetMainCameraSharedPtr()) {
+            worldView = camera->GetViewMatrix();
+            worldProjection = camera->GetProjectionMatrix();
+            worldMatricesReady = true;
+        }
+    }
+
+    static bool loggedCameraWarning = false;
+
+    size_t submittedSprites = 0;
+
     for (const auto& entity : entities) {
         auto& transform = m_world->GetComponent<TransformComponent>(entity);
         auto& spriteComp = m_world->GetComponent<SpriteRenderComponent>(entity);
-        
-        // 检查可见性
+
         if (!spriteComp.visible) {
             continue;
         }
-        
-        // 检查资源是否已加载
+
+        // 若保持默认层配置，则自动映射到命名层，保证排序一致性
+        if (spriteComp.screenSpace) {
+            if (spriteComp.layerID == 800u && spriteComp.sortOrder == 0) {
+                SpriteRenderLayer::ApplyLayer("ui.default", spriteComp, 0);
+            }
+        } else {
+            const bool hasWorldDefaultLayer =
+                (spriteComp.layerID == 800u || spriteComp.layerID == 300u || spriteComp.layerID == 0u);
+            if (hasWorldDefaultLayer && spriteComp.sortOrder == 0) {
+                SpriteRenderLayer::ApplyLayer("world.midground", spriteComp, 0);
+            }
+        }
+
+        static int s_debugged = 0;
+        if (s_debugged < 4) {
+            Logger::GetInstance().InfoFormat(
+                "[SpriteRenderSystem] entity %u sourceRect=(%.3f, %.3f, %.3f, %.3f)",
+                entity.index,
+                spriteComp.sourceRect.x,
+                spriteComp.sourceRect.y,
+                spriteComp.sourceRect.width,
+                spriteComp.sourceRect.height);
+            ++s_debugged;
+        }
+
         if (!spriteComp.resourcesLoaded || !spriteComp.texture) {
+            Logger::GetInstance().DebugFormat("[SpriteRenderSystem] Entity %u sprite texture not ready", entity.index);
             continue;
         }
-        
-        // TODO: 实现 2D 精灵渲染
-        // 未来需要使用 m_renderer->SubmitRenderable() 提交SpriteRenderable
-        // 这将在后续阶段实现
-        (void)transform;
+
+        if (!transform.transform) {
+            Logger::GetInstance().WarningFormat("[SpriteRenderSystem] Entity %u has null transform", entity.index);
+            continue;
+        }
+
+        Vector2 effectiveSize = spriteComp.size;
+        float texWidth = static_cast<float>(spriteComp.texture->GetWidth());
+        float texHeight = static_cast<float>(spriteComp.texture->GetHeight());
+        if (effectiveSize.x() <= 0.0f) {
+            effectiveSize.x() = texWidth > 0.0f ? texWidth : 1.0f;
+        }
+        if (effectiveSize.y() <= 0.0f) {
+            effectiveSize.y() = texHeight > 0.0f ? texHeight : 1.0f;
+        }
+        Matrix4 modelMatrix = transform.transform->GetWorldMatrix();
+        modelMatrix *= MathUtils::Scale(Vector3(effectiveSize.x(), effectiveSize.y(), 1.0f));
+
+        Matrix4 viewForSprite = screenView;
+        Matrix4 projForSprite = screenProjection;
+        if (spriteComp.screenSpace) {
+            viewForSprite = screenView;
+            projForSprite = screenProjection;
+        } else {
+            if (worldMatricesReady) {
+                viewForSprite = worldView;
+                projForSprite = worldProjection;
+            } else {
+                if (!loggedCameraWarning) {
+                    Logger::GetInstance().Warning("[SpriteRenderSystem] No active camera found for world-space sprites, using screen-space projection as fallback");
+                    loggedCameraWarning = true;
+                }
+                viewForSprite = screenView;
+                projForSprite = screenProjection;
+            }
+        }
+
+        m_batcher.AddSprite(spriteComp.texture,
+                            spriteComp.sourceRect,
+                            effectiveSize,
+                            spriteComp.tintColor,
+                            modelMatrix,
+                            viewForSprite,
+                            projForSprite,
+                            spriteComp.screenSpace,
+                            spriteComp.layerID,
+                            spriteComp.sortOrder);
+        submittedSprites++;
     }
+
+    static bool loggedOnce = false;
+    if (submittedSprites > 0 && !loggedOnce) {
+        Logger::GetInstance().InfoFormat("[SpriteRenderSystem] Collected %zu sprites for batching", submittedSprites);
+        loggedOnce = true;
+    }
+
+    m_batcher.BuildBatches();
+    size_t batchCount = m_batcher.GetBatchCount();
+    if (batchCount > m_batchRenderables.size()) {
+        size_t oldSize = m_batchRenderables.size();
+        m_batchRenderables.resize(batchCount);
+        for (size_t i = oldSize; i < batchCount; ++i) {
+            m_batchRenderables[i] = std::make_unique<SpriteBatchRenderable>();
+        }
+    }
+
+    for (size_t i = 0; i < batchCount; ++i) {
+        auto& renderable = m_batchRenderables[i];
+        if (!renderable) {
+            renderable = std::make_unique<SpriteBatchRenderable>();
+        }
+        renderable->SetBatch(&m_batcher, i);
+        renderable->SetLayerID(m_batcher.GetBatchLayer(i));
+        renderable->SetRenderPriority(m_batcher.GetBatchSortOrder(i));
+        SpriteBatcher::SpriteBatchInfo batchInfo{};
+        if (m_batcher.GetBatchInfo(i, batchInfo)) {
+            uint32_t overrideHash = 0;
+            overrideHash = HashCombine(overrideHash, batchInfo.viewHash);
+            overrideHash = HashCombine(overrideHash, batchInfo.projectionHash);
+            if (batchInfo.texture) {
+                const uintptr_t ptrValue = reinterpret_cast<uintptr_t>(batchInfo.texture.get());
+                overrideHash = HashCombine(overrideHash, static_cast<uint32_t>(ptrValue & 0xFFFFFFFFu));
+                overrideHash = HashCombine(overrideHash, static_cast<uint32_t>((ptrValue >> 32) & 0xFFFFFFFFu));
+            }
+
+            uint32_t pipelineFlags = MaterialPipelineFlags_None;
+            if (batchInfo.screenSpace) {
+                pipelineFlags |= MaterialPipelineFlags_ScreenSpace;
+            }
+            if (batchInfo.instanceCount > 1) {
+                pipelineFlags |= MaterialPipelineFlags_Instanced;
+            }
+
+            MaterialSortKey sortKey = BuildMaterialSortKey(nullptr, overrideHash, pipelineFlags);
+            sortKey.blendMode = batchInfo.blendMode;
+            sortKey.depthWrite = false;
+            sortKey.depthTest = !batchInfo.screenSpace;
+
+            renderable->SetMaterialSortKey(sortKey);
+
+            const bool transparentHint =
+                (batchInfo.blendMode == BlendMode::Alpha ||
+                 batchInfo.blendMode == BlendMode::Additive ||
+                 batchInfo.blendMode == BlendMode::Multiply);
+            renderable->SetTransparentHint(transparentHint);
+        } else {
+            renderable->MarkMaterialSortKeyDirty();
+        }
+        renderable->SetVisible(true);
+        renderable->SubmitToRenderer(m_renderer);
+    }
+    m_lastBatchCount = batchCount;
 }
 
 // ============================================================

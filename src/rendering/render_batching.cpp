@@ -5,6 +5,7 @@
 #include "render/mesh.h"
 #include "render/resource_manager.h"
 #include "render/renderable.h"
+#include "render/sprite/sprite_batcher.h"
 #include "render/shader.h"
 #include "render/gl_thread_checker.h"
 #include <glad/glad.h>
@@ -116,6 +117,17 @@ void RenderBatch::UploadResources(ResourceManager* resourceManager, BatchingMode
 
     if (m_items.empty()) {
         ReleaseGpuResources();
+        return;
+    }
+
+    if (m_items.front().type == BatchItemType::Sprite) {
+        m_gpuResourcesReady = true;
+        m_instanceCount = 0;
+        for (const auto& item : m_items) {
+            m_instanceCount += item.spriteData.instanceCount;
+        }
+        m_cachedTriangleCount = 2;
+        m_drawVertexCount = 4;
         return;
     }
 
@@ -308,6 +320,19 @@ bool RenderBatch::Draw(RenderState* renderState, uint32_t& drawCallCounter, Batc
         }
     };
 
+    if (!m_items.empty() && m_items.front().type == BatchItemType::Sprite) {
+        bool anyDrawn = false;
+        for (auto& item : m_items) {
+            if (!item.spriteData.batcher) {
+                continue;
+            }
+            item.spriteData.batcher->DrawBatch(item.spriteData.batchIndex, renderState);
+            ++drawCallCounter;
+            anyDrawn = true;
+        }
+        return anyDrawn;
+    }
+
     if (mode == BatchingMode::GpuInstancing) {
         if (!m_gpuResourcesReady || m_items.empty() || !m_sourceMesh || m_instanceCount == 0) {
             drawFallback();
@@ -479,7 +504,7 @@ void BatchManager::AddItem(const BatchableItem& item) {
     BatchableItem localItem = item;
 
     if (m_mode == BatchingMode::GpuInstancing) {
-        if (localItem.meshData.mesh) {
+        if (localItem.type == BatchItemType::Mesh && localItem.meshData.mesh) {
             localItem.key.meshHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(localItem.meshData.mesh.get()));
         }
     } else {

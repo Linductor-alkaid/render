@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <optional>  // C++17 std::optional
 #include <unordered_map>
+#include <functional>
 #include <sstream>  // std::ostringstream
 
 namespace Render {
@@ -378,11 +379,102 @@ struct SpriteRenderComponent {
     
     bool visible = true;
     uint32_t layerID = 800;        ///< UI_LAYER
+    uint32_t sortOrder = 0;        ///< 渲染优先级（同层内排序）
+    bool screenSpace = true;       ///< 是否使用屏幕空间坐标（正交投影）
     
     bool resourcesLoaded = false;
     bool asyncLoading = false;
     
     SpriteRenderComponent() = default;
+};
+
+// ============================================================
+// Sprite 动画组件
+// ============================================================
+
+struct SpriteAnimationClip {
+    std::vector<Rect> frames;             ///< 帧列表（UV 数据）
+    float frameDuration = 0.1f;           ///< 单帧持续时间（秒）
+    bool loop = true;                     ///< 是否循环（兼容老字段）
+    SpritePlaybackMode playbackMode = SpritePlaybackMode::Loop; ///< 播放模式
+};
+
+struct SpriteAnimationEvent {
+    enum class Type {
+        ClipStarted,
+        ClipCompleted,
+        FrameChanged
+    };
+
+    Type type = Type::FrameChanged;
+    std::string clip;
+    int frameIndex = 0;
+};
+
+struct SpriteAnimationComponent {
+    std::unordered_map<std::string, SpriteAnimationClip> clips; ///< 动画剪辑集合
+    std::string currentClip;        ///< 当前播放的剪辑名称
+    int currentFrame = 0;           ///< 当前帧索引
+    float timeInFrame = 0.0f;       ///< 当前帧已播放时间
+    float playbackSpeed = 1.0f;     ///< 播放速度倍率
+    bool playing = false;           ///< 是否正在播放
+    bool dirty = false;             ///< 是否需要立即刷新显示帧
+    int playbackDirection = 1;      ///< 当前播放方向（1 正向，-1 反向）
+    bool clipJustChanged = false;   ///< 本帧是否刚刚切换动画
+    std::vector<SpriteAnimationEvent> events; ///< 帧事件（本帧生成）
+    using EventListener = std::function<void(EntityID, const SpriteAnimationEvent&)>;
+    std::vector<EventListener> eventListeners; ///< 事件监听器
+
+    SpriteAnimationComponent() = default;
+
+    void Play(const std::string& clipName, bool restart = true) {
+        if (!restart && playing && clipName == currentClip) {
+            return;
+        }
+        currentClip = clipName;
+        currentFrame = 0;
+        timeInFrame = 0.0f;
+        playing = true;
+        dirty = true;
+        clipJustChanged = true;
+        playbackDirection = playbackSpeed < 0.0f ? -1 : 1;
+    }
+
+    void Stop(bool resetFrame = false) {
+        playing = false;
+        if (resetFrame) {
+            currentFrame = 0;
+            timeInFrame = 0.0f;
+            dirty = true;
+        }
+    }
+
+    void SetPlaybackSpeed(float speed) {
+        playbackSpeed = speed;
+        if (speed < 0.0f) {
+            playbackDirection = -1;
+        } else if (playbackDirection == 0) {
+            playbackDirection = 1;
+        }
+    }
+
+    [[nodiscard]] bool HasClip(const std::string& clipName) const {
+        return clips.find(clipName) != clips.end();
+    }
+
+    void ClearEvents() {
+        events.clear();
+    }
+
+    void AddEventListener(const EventListener& listener) {
+        if (listener) {
+            eventListeners.push_back(listener);
+        }
+    }
+
+    void ClearEventListeners() {
+        eventListeners.clear();
+    }
 };
 
 // ============================================================

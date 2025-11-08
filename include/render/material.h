@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <mutex>
+#include <atomic>
 
 namespace Render {
 
@@ -401,6 +402,13 @@ public:
      * @return 有效返回 true
      */
     bool IsValid() const;
+
+    /**
+     * @brief 获取材质的稳定唯一 ID
+     *
+     * 该 ID 在材质生命周期内保持不变，可用于排序和批处理键。
+     */
+    uint32_t GetStableID() const noexcept { return m_stableID; }
     
 private:
     std::string m_name;                     ///< 材质名称
@@ -434,6 +442,10 @@ private:
     CullFace m_cullFace;                    ///< 面剔除模式
     bool m_depthTest;                       ///< 深度测试
     bool m_depthWrite;                      ///< 深度写入
+
+    uint32_t m_stableID;                    ///< 稳定唯一 ID（用于排序/批处理）
+
+    static std::atomic<uint32_t> s_nextStableID;
     
     mutable std::mutex m_mutex;             ///< 互斥锁，保护所有成员变量
 };

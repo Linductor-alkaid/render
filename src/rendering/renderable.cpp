@@ -3,8 +3,82 @@
 #include "render/shader.h"
 #include "render/logger.h"
 #include "render/render_state.h"
+#include "render/resource_manager.h"
+#include "render/mesh_loader.h"
+#include "render/shader_cache.h"
+#include "render/math_utils.h"
+
+#include <algorithm>
+#include <mutex>
 
 namespace Render {
+
+namespace {
+
+constexpr const char* kSpriteMeshResourceName = "__engine_sprite_quad";
+constexpr const char* kSpriteShaderResourceName = "__engine_sprite_shader";
+constexpr const char* kSpriteShaderVertPath = "shaders/sprite.vert";
+constexpr const char* kSpriteShaderFragPath = "shaders/sprite.frag";
+
+struct SpriteSharedResources {
+    std::mutex mutex;
+    Ref<Mesh> quadMesh;
+    Ref<Shader> shader;
+    Matrix4 viewMatrix = Matrix4::Identity();
+    Matrix4 projectionMatrix = Matrix4::Identity();
+    bool matricesInitialized = false;
+};
+
+SpriteSharedResources& GetSpriteSharedResources() {
+    static SpriteSharedResources resources;
+    return resources;
+}
+
+bool EnsureSpriteResources(SpriteSharedResources& resources) {
+    auto& resMgr = ResourceManager::GetInstance();
+
+    if (!resources.quadMesh) {
+        if (resMgr.HasMesh(kSpriteMeshResourceName)) {
+            resources.quadMesh = resMgr.GetMesh(kSpriteMeshResourceName);
+        } else {
+            auto mesh = MeshLoader::CreateQuad(1.0f, 1.0f, Color::White());
+            if (mesh) {
+                if (!resMgr.HasMesh(kSpriteMeshResourceName)) {
+                    resMgr.RegisterMesh(kSpriteMeshResourceName, mesh);
+                }
+                resources.quadMesh = mesh;
+            }
+        }
+    }
+
+    if (!resources.shader) {
+        if (resMgr.HasShader(kSpriteShaderResourceName)) {
+            resources.shader = resMgr.GetShader(kSpriteShaderResourceName);
+        } else {
+            auto shader = ShaderCache::GetInstance().LoadShader(
+                kSpriteShaderResourceName,
+                kSpriteShaderVertPath,
+                kSpriteShaderFragPath
+            );
+
+            if (shader && shader->IsValid()) {
+                if (!resMgr.HasShader(kSpriteShaderResourceName)) {
+                    resMgr.RegisterShader(kSpriteShaderResourceName, shader);
+                }
+                resources.shader = shader;
+            } else if (shader && !shader->IsValid()) {
+                Logger::GetInstance().WarningFormat(
+                    "[SpriteRenderable] Shader '%s' is invalid",
+                    kSpriteShaderResourceName
+                );
+            }
+        }
+    }
+
+    return resources.quadMesh != nullptr && resources.shader != nullptr;
+}
+
+} // namespace
 
 // ============================================================
 // Renderable 基类实现
@@ -19,7 +93,11 @@ Renderable::Renderable(Renderable&& other) noexcept
       m_transform(std::move(other.m_transform)),
       m_visible(other.m_visible),
       m_layerID(other.m_layerID),
-      m_renderPriority(other.m_renderPriority) {
+      m_renderPriority(other.m_renderPriority),
+      m_materialSortKey(other.m_materialSortKey),
+      m_materialSortDirty(other.m_materialSortDirty),
+      m_hasMaterialSortKey(other.m_hasMaterialSortKey),
+      m_transparentHint(other.m_transparentHint) {
     // m_mutex 不可移动，使用默认构造
 }
 
@@ -30,6 +108,10 @@ Renderable& Renderable::operator=(Renderable&& other) noexcept {
         m_visible = other.m_visible;
         m_layerID = other.m_layerID;
         m_renderPriority = other.m_renderPriority;
+        m_materialSortKey = other.m_materialSortKey;
+        m_materialSortDirty = other.m_materialSortDirty;
+        m_hasMaterialSortKey = other.m_hasMaterialSortKey;
+        m_transparentHint = other.m_transparentHint;
         // m_mutex 不可移动，保持原有状态
     }
     return *this;
@@ -81,6 +163,43 @@ void Renderable::SetRenderPriority(uint32_t priority) {
 uint32_t Renderable::GetRenderPriority() const {
     std::shared_lock lock(m_mutex);
     return m_renderPriority;
+}
+
+void Renderable::SetMaterialSortKey(const MaterialSortKey& key) {
+    std::unique_lock lock(m_mutex);
+    m_materialSortKey = key;
+    m_hasMaterialSortKey = true;
+    m_materialSortDirty = false;
+}
+
+MaterialSortKey Renderable::GetMaterialSortKey() const {
+    std::shared_lock lock(m_mutex);
+    return m_materialSortKey;
+}
+
+bool Renderable::HasMaterialSortKey() const {
+    std::shared_lock lock(m_mutex);
+    return m_hasMaterialSortKey;
+}
+
+void Renderable::MarkMaterialSortKeyDirty() {
+    std::unique_lock lock(m_mutex);
+    m_materialSortDirty = true;
+}
+
+bool Renderable::IsMaterialSortKeyDirty() const {
+    std::shared_lock lock(m_mutex);
+    return m_materialSortDirty;
+}
+
+void Renderable::SetTransparentHint(bool transparent) {
+    std::unique_lock lock(m_mutex);
+    m_transparentHint = transparent;
+}
+
+bool Renderable::GetTransparentHint() const {
+    std::shared_lock lock(m_mutex);
+    return m_transparentHint;
 }
 
 // ============================================================
@@ -231,6 +350,8 @@ Ref<Mesh> MeshRenderable::GetMesh() const {
 void MeshRenderable::SetMaterial(const Ref<Material>& material) {
     std::unique_lock lock(m_mutex);
     m_material = material;
+    m_materialSortDirty = true;
+    m_hasMaterialSortKey = false;
 }
 
 Ref<Material> MeshRenderable::GetMaterial() const {
@@ -241,6 +362,7 @@ Ref<Material> MeshRenderable::GetMaterial() const {
 void MeshRenderable::SetMaterialOverride(const MaterialOverride& override) {
     std::unique_lock lock(m_mutex);
     m_materialOverride = override;
+    m_materialSortDirty = true;
 }
 
 MaterialOverride MeshRenderable::GetMaterialOverride() const {
@@ -256,11 +378,13 @@ bool MeshRenderable::HasMaterialOverride() const {
 void MeshRenderable::ClearMaterialOverride() {
     std::unique_lock lock(m_mutex);
     m_materialOverride.Clear();
+    m_materialSortDirty = true;
 }
 
 void MeshRenderable::SetCastShadows(bool cast) {
     std::unique_lock lock(m_mutex);
     m_castShadows = cast;
+    m_materialSortDirty = true;
 }
 
 bool MeshRenderable::GetCastShadows() const {
@@ -271,6 +395,7 @@ bool MeshRenderable::GetCastShadows() const {
 void MeshRenderable::SetReceiveShadows(bool receive) {
     std::unique_lock lock(m_mutex);
     m_receiveShadows = receive;
+    m_materialSortDirty = true;
 }
 
 bool MeshRenderable::GetReceiveShadows() const {
@@ -357,7 +482,11 @@ SpriteRenderable::SpriteRenderable(SpriteRenderable&& other) noexcept
       m_texture(std::move(other.m_texture)),
       m_sourceRect(other.m_sourceRect),
       m_size(other.m_size),
-      m_tintColor(other.m_tintColor) {
+      m_tintColor(other.m_tintColor),
+      m_viewMatrixOverride(other.m_viewMatrixOverride),
+      m_projectionMatrixOverride(other.m_projectionMatrixOverride),
+      m_useViewProjectionOverride(other.m_useViewProjectionOverride) {
+    other.m_useViewProjectionOverride = false;
 }
 
 SpriteRenderable& SpriteRenderable::operator=(SpriteRenderable&& other) noexcept {
@@ -367,21 +496,190 @@ SpriteRenderable& SpriteRenderable::operator=(SpriteRenderable&& other) noexcept
         m_sourceRect = other.m_sourceRect;
         m_size = other.m_size;
         m_tintColor = other.m_tintColor;
+        m_viewMatrixOverride = other.m_viewMatrixOverride;
+        m_projectionMatrixOverride = other.m_projectionMatrixOverride;
+        m_useViewProjectionOverride = other.m_useViewProjectionOverride;
+        other.m_useViewProjectionOverride = false;
     }
     return *this;
 }
 
 void SpriteRenderable::Render(RenderState* renderState) {
-    std::shared_lock lock(m_mutex);
-    
-    if (!m_visible || !m_texture) {
+    Ref<Texture> texture;
+    Rect sourceRect;
+    Vector2 size;
+    Color tintColor;
+    Ref<Transform> transform;
+    bool useOverride = false;
+    Matrix4 overrideView = Matrix4::Identity();
+    Matrix4 overrideProjection = Matrix4::Identity();
+
+    {
+        std::shared_lock lock(m_mutex);
+        if (!m_visible || !m_texture) {
+            return;
+        }
+        texture = m_texture;
+        sourceRect = m_sourceRect;
+        size = m_size;
+        tintColor = m_tintColor;
+        transform = m_transform;
+        useOverride = m_useViewProjectionOverride;
+        if (useOverride) {
+            overrideView = m_viewMatrixOverride;
+            overrideProjection = m_projectionMatrixOverride;
+        }
+    }
+
+    Ref<Mesh> quadMesh;
+    Ref<Shader> shader;
+    Matrix4 viewMatrix = Matrix4::Identity();
+    Matrix4 projectionMatrix = Matrix4::Identity();
+    bool matricesReady = false;
+
+    {
+        auto& shared = GetSpriteSharedResources();
+        std::lock_guard<std::mutex> sharedLock(shared.mutex);
+        if (!EnsureSpriteResources(shared)) {
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                Logger::GetInstance().Warning("[SpriteRenderable] Unable to initialize sprite rendering resources");
+                loggedOnce = true;
+            }
+            return;
+        }
+
+        quadMesh = shared.quadMesh;
+        shader = shared.shader;
+        viewMatrix = shared.viewMatrix;
+        projectionMatrix = shared.projectionMatrix;
+        matricesReady = shared.matricesInitialized;
+    }
+
+    if (useOverride) {
+        viewMatrix = overrideView;
+        projectionMatrix = overrideProjection;
+    } else if (!matricesReady) {
+        viewMatrix = Matrix4::Identity();
+        projectionMatrix = Matrix4::Identity();
+    }
+
+    if (!quadMesh || !shader) {
         return;
     }
-    
-    // ✅ 应用渲染状态（如果提供）
-    // TODO: 实现 2D 精灵渲染
-    // 这将在后续阶段实现
-    (void)renderState;  // 标记参数已使用
+
+    if (!shader->IsValid()) {
+        Logger::GetInstance().Warning("[SpriteRenderable] Sprite shader is invalid, skip render");
+        return;
+    }
+
+    if (renderState) {
+        renderState->SetBlendMode(BlendMode::Alpha);
+        renderState->SetDepthTest(false);
+        renderState->SetDepthWrite(false);
+        renderState->SetCullFace(CullFace::None);
+    }
+
+    if (size.x() <= 0.0f) {
+        float width = static_cast<float>(texture->GetWidth());
+        size.x() = width > 0.0f ? width : 1.0f;
+    }
+    if (size.y() <= 0.0f) {
+        float height = static_cast<float>(texture->GetHeight());
+        size.y() = height > 0.0f ? height : 1.0f;
+    }
+
+    Matrix4 model = Matrix4::Identity();
+    if (transform) {
+        model = transform->GetWorldMatrix();
+    }
+    Vector3 scaleVec(size.x(), size.y(), 1.0f);
+    model *= MathUtils::Scale(scaleVec);
+
+    auto clamp01 = [](float value) { return std::clamp(value, 0.0f, 1.0f); };
+
+    float texWidth = static_cast<float>(texture->GetWidth());
+    float texHeight = static_cast<float>(texture->GetHeight());
+
+    float uMinRaw = sourceRect.x;
+    float uMaxRaw = sourceRect.x + sourceRect.width;
+    float vMinRaw = sourceRect.y;
+    float vMaxRaw = sourceRect.y + sourceRect.height;
+
+    bool usePixelUV = (uMinRaw > 1.0f || uMaxRaw > 1.0f || vMinRaw > 1.0f || vMaxRaw > 1.0f);
+    if (usePixelUV) {
+        if (texWidth > 0.0f) {
+            uMinRaw /= texWidth;
+            uMaxRaw /= texWidth;
+        }
+        if (texHeight > 0.0f) {
+            vMinRaw /= texHeight;
+            vMaxRaw /= texHeight;
+        }
+    }
+
+    float uMin = clamp01(uMinRaw);
+    float uMax = clamp01(uMaxRaw);
+    float vMin = clamp01(vMinRaw);
+    float vMax = clamp01(vMaxRaw);
+
+    float uvWidth = std::max(uMax - uMin, 0.0f);
+    float uvHeight = std::max(vMax - vMin, 0.0f);
+    if (uvWidth <= 0.0f) {
+        uMin = 0.0f;
+        uvWidth = 1.0f;
+    }
+    if (uvHeight <= 0.0f) {
+        vMin = 0.0f;
+        uvHeight = 1.0f;
+    }
+    Vector4 uvRect(uMin, vMin, uvWidth, uvHeight);
+
+    static bool loggedPixelUV = false;
+    if (usePixelUV && !loggedPixelUV) {
+        Logger::GetInstance().Info("[SpriteRenderable] Detected pixel-based UV, auto-normalized by texture size");
+        loggedPixelUV = true;
+    }
+
+    shader->Use();
+    auto* uniformMgr = shader->GetUniformManager();
+    if (!uniformMgr) {
+        Logger::GetInstance().Warning("[SpriteRenderable] UniformManager is null");
+        shader->Unuse();
+        return;
+    }
+
+    if (uniformMgr->HasUniform("uModel")) {
+        uniformMgr->SetMatrix4("uModel", model);
+    }
+    if (uniformMgr->HasUniform("uView")) {
+        uniformMgr->SetMatrix4("uView", viewMatrix);
+    }
+    if (uniformMgr->HasUniform("uProjection")) {
+        uniformMgr->SetMatrix4("uProjection", projectionMatrix);
+    }
+    if (uniformMgr->HasUniform("uTintColor")) {
+        uniformMgr->SetColor("uTintColor", tintColor);
+    }
+    if (uniformMgr->HasUniform("uUVRect")) {
+        uniformMgr->SetVector4("uUVRect", uvRect);
+    }
+    if (uniformMgr->HasUniform("uUseTexture")) {
+        uniformMgr->SetBool("uUseTexture", true);
+    }
+    if (uniformMgr->HasUniform("uUseInstancing")) {
+        uniformMgr->SetBool("uUseInstancing", false);
+    }
+    if (uniformMgr->HasUniform("uTexture")) {
+        uniformMgr->SetInt("uTexture", 0);
+    } else if (uniformMgr->HasUniform("uTexture0")) {
+        uniformMgr->SetInt("uTexture0", 0);
+    }
+
+    texture->Bind(0);
+    quadMesh->Draw();
+
+    shader->Unuse();
 }
 
 void SpriteRenderable::SubmitToRenderer(Renderer* renderer) {
@@ -395,6 +693,8 @@ void SpriteRenderable::SubmitToRenderer(Renderer* renderer) {
 void SpriteRenderable::SetTexture(const Ref<Texture>& texture) {
     std::unique_lock lock(m_mutex);
     m_texture = texture;
+    m_materialSortDirty = true;
+    m_hasMaterialSortKey = false;
 }
 
 Ref<Texture> SpriteRenderable::GetTexture() const {
@@ -435,8 +735,19 @@ Color SpriteRenderable::GetTintColor() const {
 AABB SpriteRenderable::GetBoundingBox() const {
     std::shared_lock lock(m_mutex);
     
-    // 2D 精灵的包围盒（Z=0）
-    Vector3 halfSize(m_size.x() * 0.5f, m_size.y() * 0.5f, 0.0f);
+    Vector2 size = m_size;
+    if (m_texture) {
+        if (size.x() <= 0.0f) {
+            float width = static_cast<float>(m_texture->GetWidth());
+            size.x() = width > 0.0f ? width : 1.0f;
+        }
+        if (size.y() <= 0.0f) {
+            float height = static_cast<float>(m_texture->GetHeight());
+            size.y() = height > 0.0f ? height : 1.0f;
+        }
+    }
+    
+    Vector3 halfSize(size.x() * 0.5f, size.y() * 0.5f, 0.0f);
     Vector3 center = Vector3::Zero();
     
     if (m_transform) {
@@ -444,6 +755,37 @@ AABB SpriteRenderable::GetBoundingBox() const {
     }
     
     return AABB(center - halfSize, center + halfSize);
+}
+
+void SpriteRenderable::SetViewProjectionOverride(const Matrix4& view, const Matrix4& projection) {
+    std::unique_lock lock(m_mutex);
+    m_viewMatrixOverride = view;
+    m_projectionMatrixOverride = projection;
+    m_useViewProjectionOverride = true;
+}
+
+void SpriteRenderable::ClearViewProjectionOverride() {
+    std::unique_lock lock(m_mutex);
+    m_useViewProjectionOverride = false;
+}
+
+void SpriteRenderable::SetViewProjection(const Matrix4& view, const Matrix4& projection) {
+    auto& shared = GetSpriteSharedResources();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    shared.viewMatrix = view;
+    shared.projectionMatrix = projection;
+    shared.matricesInitialized = true;
+}
+
+bool SpriteRenderable::AcquireSharedResources(Ref<Mesh>& outMesh, Ref<Shader>& outShader) {
+    auto& shared = GetSpriteSharedResources();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    if (!EnsureSpriteResources(shared)) {
+        return false;
+    }
+    outMesh = shared.quadMesh;
+    outShader = shared.shader;
+    return true;
 }
 
 } // namespace Render

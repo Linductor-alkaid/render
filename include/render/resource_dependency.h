@@ -18,6 +18,7 @@ enum class ResourceType {
     Mesh,
     Material,
     Shader,
+    SpriteAtlas,
     Unknown
 };
 

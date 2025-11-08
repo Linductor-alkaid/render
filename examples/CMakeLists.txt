@@ -39,6 +39,10 @@ set(EXAMPLES
     35_ecs_comprehensive_test
     36_ecs_transform_safety_test
     37_batching_benchmark
+    38_sprite_render_test
+    39_sprite_api_test
+    40_sprite_animation_test
+        41_sprite_batch_test
 )
 
 # 批量创建示例程序

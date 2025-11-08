@@ -22,6 +22,8 @@ class ResourceManager;
 class Shader;
 class Mesh;
 class Material;
+class Texture;
+class SpriteBatcher;
 
 /**
  * @brief 批处理模式
@@ -49,6 +51,10 @@ struct RenderBatchKey {
     bool castShadows = true;
     bool receiveShadows = true;
     uint32_t layerID = 0;
+    uint64_t textureHandle = 0;
+    uint32_t viewHash = 0;
+    uint32_t projectionHash = 0;
+    bool screenSpace = true;
 
     bool operator==(const RenderBatchKey& other) const noexcept {
         return renderableType == other.renderableType &&
@@ -61,7 +67,11 @@ struct RenderBatchKey {
                castShadows == other.castShadows &&
                receiveShadows == other.receiveShadows &&
                layerID == other.layerID &&
-               meshHandle == other.meshHandle;
+               meshHandle == other.meshHandle &&
+               textureHandle == other.textureHandle &&
+               viewHash == other.viewHash &&
+               projectionHash == other.projectionHash &&
+               screenSpace == other.screenSpace;
     }
 };
 
@@ -81,13 +91,18 @@ struct RenderBatchKeyHasher {
         hash ^= static_cast<size_t>(key.receiveShadows) + (hash << 6) + (hash >> 2);
         hash ^= std::hash<uint32_t>{}(key.layerID) + (hash << 6) + (hash >> 2);
         hash ^= std::hash<uint64_t>{}(key.meshHandle) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+        hash ^= std::hash<uint64_t>{}(key.textureHandle) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+        hash ^= std::hash<uint32_t>{}(key.viewHash) + (hash << 6) + (hash >> 2);
+        hash ^= std::hash<uint32_t>{}(key.projectionHash) + (hash << 6) + (hash >> 2);
+        hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(key.screenSpace)) + (hash << 6) + (hash >> 2);
         return hash;
     }
 };
 
 enum class BatchItemType {
     Unsupported,
-    Mesh
+    Mesh,
+    Sprite
 };
 
 struct MeshBatchData {
@@ -104,6 +119,15 @@ struct InstancePayload {
     float matrix[16] = {0.0f};
 };
 
+struct SpriteBatchData {
+    SpriteBatcher* batcher = nullptr;
+    size_t batchIndex = 0;
+    uint32_t instanceCount = 0;
+    BlendMode blendMode = BlendMode::Alpha;
+    bool screenSpace = true;
+    Ref<Texture> texture;
+};
+
 /**
  * @brief 批处理可提交条目
  */
@@ -112,6 +136,7 @@ struct BatchableItem {
     BatchItemType type = BatchItemType::Unsupported;
     RenderBatchKey key{};
     MeshBatchData meshData{};
+    SpriteBatchData spriteData{};
     bool batchable = false;
     bool isTransparent = false;
     bool instanceEligible = false;

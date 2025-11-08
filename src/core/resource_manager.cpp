@@ -261,6 +261,63 @@ bool ResourceManager::HasShader(const std::string& name) const {
 }
 
 // ============================================================================
+// SpriteAtlas 管理
+// ============================================================================
+
+bool ResourceManager::RegisterSpriteAtlas(const std::string& name, SpriteAtlasPtr atlas) {
+    if (!atlas) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer,
+                     "ResourceManager: 尝试注册空的 SpriteAtlas: " + name));
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (m_spriteAtlases.find(name) != m_spriteAtlases.end()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists,
+                   "ResourceManager: SpriteAtlas 已存在: " + name));
+        return false;
+    }
+
+    m_spriteAtlases[name] = ResourceEntry<SpriteAtlas>(atlas, m_currentFrame);
+    m_dependencyTracker.RegisterResource(name, ResourceType::SpriteAtlas);
+
+    if (!atlas->GetTextureName().empty()) {
+        m_dependencyTracker.SetDependencies(name, { atlas->GetTextureName() });
+    }
+
+    Logger::GetInstance().Debug("ResourceManager: 注册 SpriteAtlas: " + name);
+    return true;
+}
+
+SpriteAtlasPtr ResourceManager::GetSpriteAtlas(const std::string& name) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_spriteAtlases.find(name);
+    if (it != m_spriteAtlases.end()) {
+        it->second.lastAccessFrame = m_currentFrame;
+        return it->second.resource;
+    }
+    return nullptr;
+}
+
+bool ResourceManager::RemoveSpriteAtlas(const std::string& name) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_spriteAtlases.find(name);
+    if (it != m_spriteAtlases.end()) {
+        m_spriteAtlases.erase(it);
+        m_dependencyTracker.UnregisterResource(name);
+        Logger::GetInstance().Debug("ResourceManager: 移除 SpriteAtlas: " + name);
+        return true;
+    }
+    return false;
+}
+
+bool ResourceManager::HasSpriteAtlas(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_spriteAtlases.find(name) != m_spriteAtlases.end();
+}
+
+// ============================================================================
 // 批量操作
 // ============================================================================
 
@@ -274,6 +331,7 @@ void ResourceManager::Clear() {
     m_meshes.clear();
     m_materials.clear();
     m_shaders.clear();
+    m_spriteAtlases.clear();
     
     // 清理句柄系统
     m_textureSlots.Clear();
@@ -310,6 +368,12 @@ void ResourceManager::ClearType(ResourceType type) {
             m_shaders.clear();
             Logger::GetInstance().Info("ResourceManager: 清空所有着色器");
             break;
+        case ResourceType::SpriteAtlas:
+            m_spriteAtlases.clear();
+            Logger::GetInstance().Info("ResourceManager: 清空所有 SpriteAtlas");
+            break;
+        case ResourceType::Unknown:
+            break;
     }
 }
 
@@ -323,6 +387,7 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
     std::vector<std::string> meshesToDelete;
     std::vector<std::string> materialsToDelete;
     std::vector<std::string> shadersToDelete;
+    std::vector<std::string> atlasesToDelete;
     
     // 标记纹理
     for (auto& [name, entry] : m_textures) {
@@ -364,6 +429,17 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
         
         if (unused && onlyManagerRef) {
             shadersToDelete.push_back(name);
+            entry.markedForDeletion = true;
+        }
+    }
+
+    // 标记图集
+    for (auto& [name, entry] : m_spriteAtlases) {
+        bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+        bool onlyManagerRef = entry.resource.use_count() == 1;
+
+        if (unused && onlyManagerRef) {
+            atlasesToDelete.push_back(name);
             entry.markedForDeletion = true;
         }
     }
@@ -409,6 +485,17 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
             Logger::GetInstance().Debug("ResourceManager: 清理未使用着色器: " + name + 
                 " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
             m_shaders.erase(it);
+            ++cleanedCount;
+        }
+    }
+
+    // 删除图集
+    for (const auto& name : atlasesToDelete) {
+        auto it = m_spriteAtlases.find(name);
+        if (it != m_spriteAtlases.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+            Logger::GetInstance().Debug("ResourceManager: 清理未使用 SpriteAtlas: " + name +
+                " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
+            m_spriteAtlases.erase(it);
             ++cleanedCount;
         }
     }
@@ -519,6 +606,29 @@ size_t ResourceManager::CleanupUnusedType(ResourceType type, uint32_t unusedFram
             }
             break;
         }
+
+        case ResourceType::SpriteAtlas: {
+            std::vector<std::string> toDelete;
+            for (auto& [name, entry] : m_spriteAtlases) {
+                bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+                bool onlyManagerRef = entry.resource.use_count() == 1;
+
+                if (unused && onlyManagerRef) {
+                    toDelete.push_back(name);
+                    entry.markedForDeletion = true;
+                }
+            }
+
+            for (const auto& name : toDelete) {
+                auto it = m_spriteAtlases.find(name);
+                if (it != m_spriteAtlases.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+                    Logger::GetInstance().Debug("ResourceManager: 清理未使用 SpriteAtlas: " + name);
+                    m_spriteAtlases.erase(it);
+                    ++cleanedCount;
+                }
+            }
+            break;
+        }
     }
     
     if (cleanedCount > 0) {
@@ -540,7 +650,9 @@ ResourceStats ResourceManager::GetStats() const {
     stats.meshCount = m_meshes.size();
     stats.materialCount = m_materials.size();
     stats.shaderCount = m_shaders.size();
-    stats.totalCount = stats.textureCount + stats.meshCount + stats.materialCount + stats.shaderCount;
+    stats.spriteAtlasCount = m_spriteAtlases.size();
+    stats.totalCount = stats.textureCount + stats.meshCount + stats.materialCount +
+                       stats.shaderCount + stats.spriteAtlasCount;
     
     // 计算纹理内存
     for (const auto& [name, entry] : m_textures) {
@@ -564,6 +676,10 @@ long ResourceManager::GetReferenceCount(ResourceType type, const std::string& na
         case ResourceType::Texture: {
             auto it = m_textures.find(name);
             return (it != m_textures.end()) ? it->second.resource.use_count() : 0;
+        }
+        case ResourceType::SpriteAtlas: {
+            auto it = m_spriteAtlases.find(name);
+            return (it != m_spriteAtlases.end()) ? it->second.resource.use_count() : 0;
         }
         case ResourceType::Mesh: {
             auto it = m_meshes.find(name);
@@ -592,6 +708,7 @@ void ResourceManager::PrintStatistics() const {
     Logger::GetInstance().Info("网格数量: " + std::to_string(stats.meshCount));
     Logger::GetInstance().Info("材质数量: " + std::to_string(stats.materialCount));
     Logger::GetInstance().Info("着色器数量: " + std::to_string(stats.shaderCount));
+    Logger::GetInstance().Info("图集数量: " + std::to_string(stats.spriteAtlasCount));
     Logger::GetInstance().Info("总资源数量: " + std::to_string(stats.totalCount));
     Logger::GetInstance().Info("----------------------------------------");
     Logger::GetInstance().Info("纹理内存: " + std::to_string(stats.textureMemory / 1024) + " KB");
@@ -639,6 +756,17 @@ std::vector<std::string> ResourceManager::ListShaders() const {
     std::vector<std::string> names;
     names.reserve(m_shaders.size());
     for (const auto& [name, _] : m_shaders) {
+        names.push_back(name);
+    }
+    return names;
+}
+
+std::vector<std::string> ResourceManager::ListSpriteAtlases() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    std::vector<std::string> names;
+    names.reserve(m_spriteAtlases.size());
+    for (const auto& [name, _] : m_spriteAtlases) {
         names.push_back(name);
     }
     return names;

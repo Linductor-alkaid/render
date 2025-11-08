@@ -783,11 +783,52 @@ public:
 ```
 
 **功能**：
-- 遍历所有 SpriteRenderComponent
-- 创建 SpriteRenderable 对象
-- 提交到渲染队列
+- 遍历所有具有 `TransformComponent + SpriteRenderComponent` 的实体
+- 依据窗口大小构建屏幕空间正交矩阵并调用 `SpriteRenderable::SetViewProjection`
+- 将组件数据写入对象池中的 `SpriteRenderable`（纹理、sourceRect、size、tintColor）
+- 自动处理尺寸回退（缺省时使用纹理像素大小）与透明混合
+- 将可见精灵提交到渲染队列，参与 Renderer 的统一排序与批处理
 
----
+### SpriteAnimationSystem
+
+驱动 `SpriteAnimationComponent`，按动画剪辑更新 `SpriteRenderComponent` 的显示帧。
+
+**优先级**：180（在 `SpriteRenderSystem` 之前执行）
+
+```cpp
+class SpriteAnimationSystem : public System {
+public:
+    SpriteAnimationSystem() = default;
+    
+    void Update(float deltaTime) override;
+    int GetPriority() const override { return 180; }
+};
+```
+
+**功能**：
+- 查询具有 `SpriteRenderComponent` 与 `SpriteAnimationComponent` 的实体
+- 按剪辑帧时长推进 `currentFrame`，处理循环与停止
+- 根据 `playbackSpeed` 控制播放倍率
+- 将当前帧的 `Rect` 写回 `SpriteRenderComponent::sourceRect`
+- 支持外部通过 `dirty` 标志强制刷新帧
+
+**示例**：
+```cpp
+// 注册系统（保证动画系统在渲染系统之前）
+world->RegisterSystem<SpriteAnimationSystem>();
+world->RegisterSystem<SpriteRenderSystem>(renderer.get());
+
+// 配置动画并播放
+auto& anim = world->AddComponent<SpriteAnimationComponent>(entity);
+SpriteAnimationClip walk;
+walk.frames = {
+    Rect(0.0f, 0.0f, 0.25f, 0.25f),
+    Rect(0.25f, 0.0f, 0.25f, 0.25f),
+};
+walk.frameDuration = 0.1f;
+anim.clips["walk"] = walk;
+anim.Play("walk");
+```
 
 ### ResourceCleanupSystem
 

@@ -190,7 +190,7 @@
   - [x] UV 源矩形（sourceRect）
   - [x] 显示大小和着色（size、tintColor）
   - [x] 2D 包围盒计算
-  - [ ] 渲染实现 ❌ **未实现（仅占位代码）**
+  - [x] 渲染实现 ✅ **已完成（共享资源 + 正交矩阵 + UniformManager）**
 
 #### ✅ ECS 系统集成（部分完成）
 - [x] MeshRenderSystem ✅ **已完整实现**
@@ -200,14 +200,20 @@
   - [x] 设置所有属性（mesh、material、transform、阴影等）
   - [x] 提交到渲染队列（renderer->SubmitRenderable）
   - [x] 渲染统计（visibleMeshes、culledMeshes、drawCalls）
-  - [ ] 视锥体裁剪 ⚠️ **代码存在但被禁用**（返回 false，避免死锁）
+  - [x] 视锥体裁剪 
   
-- [ ] SpriteRenderSystem ❌ **未实现**
+- [x] SpriteRenderSystem
   - [x] 框架代码存在（构造函数、Update 接口）
   - [x] 查询 TransformComponent + SpriteRenderComponent
-  - [ ] 创建 SpriteRenderable ❌ **完全未实现**
-  - [ ] 提交到渲染队列 ❌ **完全未实现**
-  - 当前状态：仅有 TODO 注释，无实际功能
+  - [x] 创建 SpriteRenderable ✅ **对象池复用，自动填充纹理/尺寸/颜色**
+  - [x] 提交到渲染队列 ✅ **结合 Renderer 排序渲染**
+  - 当前状态：已完成核心功能（正交矩阵、alpha 混合、尺寸回退）
+
+- [ ] SpriteAnimationSystem 🚧
+  - [x] 动画组件数据结构（剪辑/播放状态）
+  - [x] 基础播放逻辑（按帧推进、循环控制、更新 sourceRect）
+  - [ ] 事件回调与高级模式（PingPong、反向播放）
+  - 当前状态：基础动画驱动已实现（示例 `40_sprite_animation_test`），等待资源/事件扩展
   
 - [x] 渲染队列管理 ✅ **已完整实现**
   - [x] Renderer::SubmitRenderable() - 提交对象到队列
@@ -216,30 +222,19 @@
   - [x] 对象池复用（MeshRenderSystem::m_renderables）
 
 #### ⚠️ 已知问题
-1. **视锥体裁剪被禁用** 
-   - 原因：在 World::Update 持有 shared_lock 时调用 GetSystem 会死锁
-   - 解决方案：需要在 PostInitialize 阶段缓存 CameraSystem 指针
-   - 影响：所有对象都被渲染，性能未优化
    
-2. **SpriteRenderable 完全未实现**
-   - 无法渲染 2D UI 元素
-   - 无法渲染 2D 游戏精灵
-   - SpriteRenderComponent 数据无法使用
-   
-3. **材质排序未优化**
+1. **材质排序未优化**
    - Renderer::SortRenderQueue 中材质排序部分为 TODO
    - 无法减少材质切换开销
    
-4. **光源系统未集成**
+2. **光源系统未集成**
    - LightSystem 只缓存主光源数据
    - 光源 uniform 需在应用层手动设置
    - 不支持多光源
 
 #### 🎯 下一步工作
-1. **修复视锥体裁剪** - 在 PostInitialize 中缓存 CameraSystem
-2. **实现 SpriteRenderable 渲染** - 完成 SpriteRenderSystem
-3. **优化材质排序** - 实现 Renderer::SortRenderQueue 的材质部分
-4. **集成光源系统** - 自动设置光源 uniform
+1. **优化材质排序** - 实现 Renderer::SortRenderQueue 的材质部分
+2. **集成光源系统** - 自动设置光源 uniform
 
 ---
 
@@ -255,6 +250,11 @@
   - [ ] 精灵批处理
   - [ ] 2D变换
   - [ ] 渲染优化
+- [x] SpriteAtlasImporter
+  - [x] 解析 JSON 图集（帧 + 动画配置）
+  - [x] 输出 SpriteSheet / SpriteAnimationComponent
+  - [x] ResourceManager 注册 & 依赖追踪
+  - [x] 示例整合（40_sprite_animation_test 使用图集）
 
 ### 文本渲染
 - [ ] Font 类
@@ -413,6 +413,7 @@
 - [x] 数学库测试 (18_math_test) - Transform、数学工具函数、Ray、Plane 测试 ✅ 已完成
 - [x] 数学库性能基准测试 (19_math_benchmark) - 性能测试和优化验证 ✅ 已完成
 - [x] 相机系统测试 (20_camera_test) - 三种相机控制模式、投影切换、miku模型渲染 ✅ 已完成
+- [x] 精灵渲染测试 (38_sprite_render_test) - SpriteRenderSystem + UV 裁剪 + Tint ✅ 新增
 - [ ] 光照测试
 
 ### 综合示例
@@ -510,7 +511,7 @@
 - [ ] 光照系统
 
 ### Milestone 3: 2D 和层级
-- [ ] 精灵渲染
+- [x] 精灵渲染 ✅ （SpriteRenderable + SpriteRenderSystem 完成）
 - [ ] 文本渲染
 - [ ] 层级系统
 - [ ] 完整示例程序
@@ -537,7 +538,7 @@
 4. ✅ 实现基础 Mesh 渲染
 5. ✅ 实现相机系统 ✅ **已完成**
 6. 实现光照系统 ⬅️ **下一步**
-7. 实现 2D 渲染
+7. 实现 2D 渲染（Sprite ✅，文本/层级待完成）
 8. 实现渲染层级
 9. 编写示例和测试
 10. 文档和优化

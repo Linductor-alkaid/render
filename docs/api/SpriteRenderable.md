@@ -99,8 +99,11 @@ void Render() override;
 ```
 
 **说明**：
-- 检查可见性和纹理是否有效
-- 实现 2D 精灵渲染（当前版本为占位实现，将在后续阶段完善）
+- 检查可见性、纹理加载状态与共享资源（网格/着色器）
+- 自动使用 UI 正交矩阵（由 `SpriteRenderSystem` 或调用方通过 `SetViewProjection` 提供）
+- 根据 `size`/纹理尺寸调整缩放，当 `size` 分量 ≤ 0 时回退到纹理像素大小
+- 支持 UV 子矩形（`sourceRect`）与颜色叠加（`tintColor`），并启用 alpha 混合
+- 通过 `UniformManager` 设置 `uModel / uView / uProjection / uTintColor / uUVRect` 等 uniform
 
 **示例**：
 ```cpp
@@ -126,6 +129,23 @@ void SubmitToRenderer(Renderer* renderer) override;
 ```cpp
 sprite.SubmitToRenderer(renderer);
 ```
+
+---
+
+### 静态工具
+
+#### `SetViewProjection()`
+
+设置全局视图与投影矩阵，用于屏幕空间渲染。
+
+```cpp
+static void SetViewProjection(const Matrix4& view, const Matrix4& projection);
+```
+
+**说明**：
+- 将矩阵缓存到精灵渲染的共享资源中
+- `SpriteRenderSystem` 会在每帧开始时调用，提供 UI 正交矩阵
+- 自定义流程（无 ECS）可手动调用，随后执行 `Render()` 即可使用最新矩阵
 
 ---
 

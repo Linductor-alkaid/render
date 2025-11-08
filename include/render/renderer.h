@@ -36,6 +36,10 @@ struct RenderStats {
     uint32_t workerProcessed = 0;
     uint32_t workerMaxQueueDepth = 0;
     float workerWaitTimeMs = 0.0f;
+    uint32_t materialSwitchesOriginal = 0;
+    uint32_t materialSwitchesSorted = 0;
+    uint32_t materialSortKeyReady = 0;
+    uint32_t materialSortKeyMissing = 0;
     
     void Reset() {
         drawCalls = 0;
@@ -53,6 +57,10 @@ struct RenderStats {
         workerProcessed = 0;
         workerMaxQueueDepth = 0;
         workerWaitTimeMs = 0.0f;
+        materialSwitchesOriginal = 0;
+        materialSwitchesSorted = 0;
+        materialSortKeyReady = 0;
+        materialSortKeyMissing = 0;
     }
 };
 

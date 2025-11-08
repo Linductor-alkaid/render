@@ -63,6 +63,15 @@
 - **[Renderable](Renderable.md)** - 渲染对象基类（统一的渲染接口）
 - **[MeshRenderable](MeshRenderable.md)** - 3D 网格渲染对象
 - **[SpriteRenderable](SpriteRenderable.md)** - 2D 精灵渲染对象
+- **[Sprite](Sprite.md)** - 精灵数据对象（纹理、帧、颜色）
+- **[SpriteSheet](SpriteSheet.md)** - 图集帧管理
+- **[SpriteAnimator](SpriteAnimator.md)** - 精灵动画播放控制
+- **[SpriteAnimation](SpriteAnimation.md)** - ECS 动画组件与系统事件
+- **[SpriteRenderer](SpriteRenderer.md)** - 即时模式 2D 渲染器
+- **[SpriteAtlas](SpriteAtlas.md)** - 带元数据的精灵图集
+- **[SpriteAtlasImporter](SpriteAtlasImporter.md)** - 精灵图集 JSON 导入器
+- **[SpriteBatcher](SpriteBatcher.md)** - 精灵实例批处理器
+- **[SpriteRenderLayer](SpriteRenderLayer.md)** - 精灵渲染层级管理器
 
 ### 数学库
 - **[Types](Types.md)** - 数学类型和基础类型定义（Vector, Matrix, Quaternion, Plane, Ray）

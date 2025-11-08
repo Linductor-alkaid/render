@@ -8,6 +8,7 @@
 #include "resource_handle.h"
 #include "resource_slot.h"
 #include "resource_dependency.h"
+#include "sprite/sprite_atlas.h"
 #include <unordered_map>
 #include <mutex>
 #include <string>
@@ -40,6 +41,7 @@ struct ResourceStats {
     size_t meshCount = 0;
     size_t materialCount = 0;
     size_t shaderCount = 0;
+    size_t spriteAtlasCount = 0;
     size_t totalCount = 0;
     
     size_t textureMemory = 0;    // 纹理内存（字节）
@@ -177,6 +179,30 @@ public:
     bool HasShader(const std::string& name) const;
     
     // ========================================================================
+    // 精灵图集管理
+    // ========================================================================
+    
+    /**
+     * @brief 注册精灵图集
+     */
+    bool RegisterSpriteAtlas(const std::string& name, SpriteAtlasPtr atlas);
+    
+    /**
+     * @brief 获取精灵图集
+     */
+    SpriteAtlasPtr GetSpriteAtlas(const std::string& name);
+    
+    /**
+     * @brief 移除精灵图集
+     */
+    bool RemoveSpriteAtlas(const std::string& name);
+    
+    /**
+     * @brief 检查精灵图集是否存在
+     */
+    bool HasSpriteAtlas(const std::string& name) const;
+    
+    // ========================================================================
     // 批量操作
     // ========================================================================
     
@@ -255,6 +281,11 @@ public:
      * @brief 列出所有着色器名称
      */
     std::vector<std::string> ListShaders() const;
+    
+    /**
+     * @brief 列出所有 SpriteAtlas 名称
+     */
+    std::vector<std::string> ListSpriteAtlases() const;
     
     // ========================================================================
     // 高级功能
@@ -530,6 +561,7 @@ private:
     std::unordered_map<std::string, ResourceEntry<Mesh>> m_meshes;
     std::unordered_map<std::string, ResourceEntry<Material>> m_materials;
     std::unordered_map<std::string, ResourceEntry<Shader>> m_shaders;
+    std::unordered_map<std::string, ResourceEntry<SpriteAtlas>> m_spriteAtlases;
     
     // 智能句柄系统 - 新方式
     ResourceSlotManager<Texture> m_textureSlots;

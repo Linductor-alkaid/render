@@ -5,6 +5,7 @@
 #include "render/mesh.h"
 #include "render/material.h"
 #include "render/texture.h"
+#include "render/material_sort_key.h"
 #include <Eigen/Dense>
 #include <shared_mutex>
 #include <optional>
@@ -126,6 +127,43 @@ public:
      * @return 优先级
      */
     [[nodiscard]] uint32_t GetRenderPriority() const;
+
+    // ==================== 材质排序 ====================
+
+    /**
+     * @brief 设置材质排序键
+     */
+    void SetMaterialSortKey(const MaterialSortKey& key);
+
+    /**
+     * @brief 获取材质排序键（若未设置返回默认键）
+     */
+    [[nodiscard]] MaterialSortKey GetMaterialSortKey() const;
+
+    /**
+     * @brief 是否已经设置过材质排序键
+     */
+    [[nodiscard]] bool HasMaterialSortKey() const;
+
+    /**
+     * @brief 将材质排序标记为需要刷新
+     */
+    void MarkMaterialSortKeyDirty();
+
+    /**
+     * @brief 材质排序键是否处于待刷新状态
+     */
+    [[nodiscard]] bool IsMaterialSortKeyDirty() const;
+
+    /**
+     * @brief 设置透明提示标记
+     */
+    void SetTransparentHint(bool transparent);
+
+    /**
+     * @brief 读取透明提示标记
+     */
+    [[nodiscard]] bool GetTransparentHint() const;
     
     // ==================== 类型 ====================
     
@@ -152,6 +190,11 @@ protected:
     bool m_visible = true;                ///< 可见性
     uint32_t m_layerID = 300;             ///< 渲染层级（WORLD_GEOMETRY）
     uint32_t m_renderPriority = 0;        ///< 渲染优先级
+
+    MaterialSortKey m_materialSortKey{};
+    bool m_materialSortDirty = true;
+    bool m_hasMaterialSortKey = false;
+    bool m_transparentHint = false;
     
     mutable std::shared_mutex m_mutex;    ///< 线程安全锁
 };
@@ -396,15 +439,45 @@ public:
      */
     [[nodiscard]] Color GetTintColor() const;
     
+    /**
+     * @brief 设置视图/投影矩阵覆盖
+     * @param view 视图矩阵
+     * @param projection 投影矩阵
+     */
+    void SetViewProjectionOverride(const Matrix4& view, const Matrix4& projection);
+
+    /**
+     * @brief 清除视图/投影矩阵覆盖
+     */
+    void ClearViewProjectionOverride();
+    
     // ==================== 包围盒 ====================
     
     [[nodiscard]] AABB GetBoundingBox() const override;
+
+    /**
+     * @brief 设置全局视图与投影矩阵
+     *
+     * 由 SpriteRenderSystem 在每帧开始时调用，用于屏幕空间渲染。
+     */
+    static void SetViewProjection(const Matrix4& view, const Matrix4& projection);
+
+    /**
+     * @brief 获取共享的精灵渲染资源（Quad Mesh 与 Shader）
+     * @param outMesh 返回的四边形网格
+     * @param outShader 返回的精灵着色器
+     * @return 当资源可用时返回 true
+     */
+    static bool AcquireSharedResources(Ref<Mesh>& outMesh, Ref<Shader>& outShader);
     
 private:
     Ref<Texture> m_texture;               ///< 纹理对象
     Rect m_sourceRect{0, 0, 1, 1};        ///< 源矩形（UV 坐标）
     Vector2 m_size{1.0f, 1.0f};           ///< 显示大小
     Color m_tintColor{1, 1, 1, 1};        ///< 着色颜色
+    Matrix4 m_viewMatrixOverride = Matrix4::Identity();
+    Matrix4 m_projectionMatrixOverride = Matrix4::Identity();
+    bool m_useViewProjectionOverride = false;
 };
 
 } // namespace Render

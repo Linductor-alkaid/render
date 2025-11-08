@@ -3,6 +3,8 @@
 #include "render/logger.h"
 #include "render/error.h"
 #include "render/resource_manager.h"
+#include "render/sprite/sprite_batcher.h"
+#include "render/material_sort_key.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstdint>
@@ -53,12 +55,16 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
 
             item.key.materialHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(material.get()));
             item.key.shaderHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(shader.get()));
+            item.key.textureHandle = 0;
             item.key.blendMode = material->GetBlendMode();
             item.key.cullFace = material->GetCullFace();
             item.key.depthTest = material->GetDepthTest();
             item.key.depthWrite = material->GetDepthWrite();
             item.key.castShadows = item.meshData.castShadows;
             item.key.receiveShadows = item.meshData.receiveShadows;
+            item.key.viewHash = 0;
+            item.key.projectionHash = 0;
+            item.key.screenSpace = false;
 
             bool isTransparent = false;
             const auto blendMode = material->GetBlendMode();
@@ -80,10 +86,106 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
             item.instanceEligible = hasIndices && !item.meshData.hasMaterialOverride && !item.isTransparent;
             return item;
         }
+        case RenderableType::Sprite: {
+            item.type = BatchItemType::Sprite;
+            auto* spriteRenderable = static_cast<SpriteBatchRenderable*>(renderable);
+            auto* batcher = spriteRenderable->GetBatcher();
+            if (!batcher) {
+                item.batchable = false;
+                return item;
+            }
+
+            SpriteBatcher::SpriteBatchInfo info{};
+            if (!batcher->GetBatchInfo(spriteRenderable->GetBatchIndex(), info)) {
+                item.batchable = false;
+                return item;
+            }
+
+            Ref<Mesh> quadMesh;
+            Ref<Shader> spriteShader;
+            if (!SpriteRenderable::AcquireSharedResources(quadMesh, spriteShader) || !spriteShader || !quadMesh) {
+                item.batchable = false;
+                return item;
+            }
+
+            item.key.shaderHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(spriteShader.get()));
+            item.key.meshHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(quadMesh.get()));
+            item.key.textureHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(info.texture.get()));
+            item.key.renderableType = RenderableType::Sprite;
+            item.key.layerID = info.layer;
+            item.key.blendMode = info.blendMode;
+            item.key.cullFace = CullFace::None;
+            item.key.depthTest = false;
+            item.key.depthWrite = false;
+            item.key.castShadows = false;
+            item.key.receiveShadows = false;
+            item.key.viewHash = info.viewHash;
+            item.key.projectionHash = info.projectionHash;
+            item.key.screenSpace = info.screenSpace;
+            item.spriteData.batcher = batcher;
+            item.spriteData.batchIndex = spriteRenderable->GetBatchIndex();
+            item.spriteData.instanceCount = info.instanceCount;
+            item.spriteData.blendMode = info.blendMode;
+            item.spriteData.screenSpace = info.screenSpace;
+            item.spriteData.texture = info.texture;
+
+            item.batchable = info.instanceCount > 0;
+            item.isTransparent = (info.blendMode == BlendMode::Alpha || info.blendMode == BlendMode::Additive);
+            item.instanceEligible = item.batchable;
+            return item;
+        }
         default:
             item.batchable = false;
             return item;
     }
+}
+
+struct MaterialSwitchMetrics {
+    uint32_t switches = 0;
+    uint32_t keyReady = 0;
+    uint32_t keyMissing = 0;
+};
+
+MaterialSortKey BuildFallbackMaterialKey(const Renderable* renderable, uint32_t salt) {
+    MaterialSortKey key{};
+    const uintptr_t ptrValue = reinterpret_cast<uintptr_t>(renderable);
+    key.materialID = static_cast<uint32_t>(ptrValue & 0xFFFFFFFFu);
+    key.shaderID = static_cast<uint32_t>((ptrValue >> 32) & 0xFFFFFFFFu);
+    key.overrideHash = key.materialID ^ key.shaderID ^ salt;
+    key.pipelineFlags = salt;
+    return key;
+}
+
+MaterialSwitchMetrics ComputeMaterialSwitchMetrics(const std::vector<Renderable*>& queue) {
+    MaterialSwitchMetrics metrics{};
+    MaterialSortKey previousKey{};
+    bool hasPrevious = false;
+    uint32_t fallbackSalt = 1;
+
+    for (const auto* renderable : queue) {
+        if (!renderable || !renderable->IsVisible()) {
+            continue;
+        }
+
+        MaterialSortKey key{};
+        bool hasKey = renderable->HasMaterialSortKey() && !renderable->IsMaterialSortKeyDirty();
+        if (hasKey) {
+            key = renderable->GetMaterialSortKey();
+            metrics.keyReady++;
+        } else {
+            metrics.keyMissing++;
+            key = BuildFallbackMaterialKey(renderable, fallbackSalt++);
+        }
+
+        if (hasPrevious && !(key == previousKey)) {
+            metrics.switches++;
+        }
+
+        previousKey = key;
+        hasPrevious = true;
+    }
+
+    return metrics;
 }
 
 } // namespace
@@ -273,10 +375,19 @@ void Renderer::FlushRenderQueue() {
     if (m_renderQueue.empty()) {
         return;
     }
+
+    const auto originalSwitchMetrics = ComputeMaterialSwitchMetrics(m_renderQueue);
     
     // 排序渲染队列
     SortRenderQueue();
 
+    const auto sortedSwitchMetrics = ComputeMaterialSwitchMetrics(m_renderQueue);
+
+    m_stats.materialSwitchesOriginal = originalSwitchMetrics.switches;
+    m_stats.materialSwitchesSorted = sortedSwitchMetrics.switches;
+    m_stats.materialSortKeyReady = std::max(originalSwitchMetrics.keyReady, sortedSwitchMetrics.keyReady);
+    m_stats.materialSortKeyMissing = std::max(originalSwitchMetrics.keyMissing, sortedSwitchMetrics.keyMissing);
+    
     m_stats.originalDrawCalls = static_cast<uint32_t>(m_renderQueue.size());
 
     m_batchManager.SetMode(m_batchingMode);
@@ -318,7 +429,7 @@ void Renderer::FlushRenderQueue() {
 
         if (shouldLog) {
             Logger::GetInstance().DebugFormat(
-                "[Renderer] Batch flush: batches=%u, batchedDraw=%u, instancedDraw=%u, instances=%u, fallbackDraw=%u, fallbackBatches=%u, triangles=%u, vertices=%u, workerProcessed=%u, workerMaxQueue=%u, workerWaitMs=%.3f",
+                "[Renderer] Batch flush: batches=%u, batchedDraw=%u, instancedDraw=%u, instances=%u, fallbackDraw=%u, fallbackBatches=%u, triangles=%u, vertices=%u, workerProcessed=%u, workerMaxQueue=%u, workerWaitMs=%.3f, matSwitchBefore=%u, matSwitchAfter=%u, matKeysReady=%u, matKeysMissing=%u",
                 flushResult.batchCount,
                 flushResult.batchedDrawCalls,
                 flushResult.instancedDrawCalls,
@@ -329,7 +440,11 @@ void Renderer::FlushRenderQueue() {
                 flushResult.batchedVertices,
                 flushResult.workerProcessed,
                 flushResult.workerMaxQueueDepth,
-                flushResult.workerWaitTimeMs
+                flushResult.workerWaitTimeMs,
+                m_stats.materialSwitchesOriginal,
+                m_stats.materialSwitchesSorted,
+                m_stats.materialSortKeyReady,
+                m_stats.materialSortKeyMissing
             );
 
             if (intervalReached) {

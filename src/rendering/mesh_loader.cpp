@@ -1011,10 +1011,10 @@ Ref<Mesh> MeshLoader::CreateQuad(float width, float height, const Color& color) 
     float hh = height * 0.5f;
     
     // 四个顶点（XY 平面，法线向 +Z）
-    vertices.push_back(Vertex(Vector3(-hw, -hh, 0), Vector2(0, 1), Vector3(0, 0, 1), color));
-    vertices.push_back(Vertex(Vector3( hw, -hh, 0), Vector2(1, 1), Vector3(0, 0, 1), color));
-    vertices.push_back(Vertex(Vector3( hw,  hh, 0), Vector2(1, 0), Vector3(0, 0, 1), color));
-    vertices.push_back(Vertex(Vector3(-hw,  hh, 0), Vector2(0, 0), Vector3(0, 0, 1), color));
+    vertices.push_back(Vertex(Vector3(-hw, -hh, 0), Vector2(0, 0), Vector3(0, 0, 1), color));
+    vertices.push_back(Vertex(Vector3( hw, -hh, 0), Vector2(1, 0), Vector3(0, 0, 1), color));
+    vertices.push_back(Vertex(Vector3( hw,  hh, 0), Vector2(1, 1), Vector3(0, 0, 1), color));
+    vertices.push_back(Vertex(Vector3(-hw,  hh, 0), Vector2(0, 1), Vector3(0, 0, 1), color));
     
     // 两个三角形
     indices = { 0, 1, 2, 0, 2, 3 };

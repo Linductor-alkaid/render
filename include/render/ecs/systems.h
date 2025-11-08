@@ -4,10 +4,12 @@
 #include "entity.h"
 #include "render/renderer.h"
 #include "render/renderable.h"
+#include "render/sprite/sprite_batcher.h"
 #include "render/async_resource_loader.h"
 #include "render/camera.h"
 #include "render/types.h"
 #include <vector>
+#include <memory>
 
 namespace Render {
 
@@ -228,15 +230,30 @@ private:
  * 遍历所有 SpriteRenderComponent，创建 SpriteRenderable 并提交渲染
  * 优先级：200（较低优先级，在 3D 之后渲染）
  */
+class SpriteAnimationSystem : public System {
+public:
+    SpriteAnimationSystem() = default;
+
+    void Update(float deltaTime) override;
+    [[nodiscard]] int GetPriority() const override { return 180; }
+};
+
 class SpriteRenderSystem : public System {
 public:
     explicit SpriteRenderSystem(Renderer* renderer);
     
     void Update(float deltaTime) override;
     [[nodiscard]] int GetPriority() const override { return 200; }
-    
+    void OnCreate(World* world) override;
+    void OnDestroy() override;
+    [[nodiscard]] size_t GetLastBatchCount() const { return m_lastBatchCount; }
+
 private:
     Renderer* m_renderer;            ///< 渲染器指针
+    CameraSystem* m_cameraSystem = nullptr; ///< 相机系统引用（用于世界空间渲染）
+    SpriteBatcher m_batcher;         ///< 精灵批处理器
+    std::vector<std::unique_ptr<SpriteBatchRenderable>> m_batchRenderables; ///< 批次渲染代理
+    size_t m_lastBatchCount = 0;
 };
 
 // ============================================================
