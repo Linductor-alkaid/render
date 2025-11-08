@@ -42,7 +42,10 @@ set(EXAMPLES
     38_sprite_render_test
     39_sprite_api_test
     40_sprite_animation_test
-        41_sprite_batch_test
+    41_sprite_batch_test
+    42_sprite_state_machine_test
+    43_sprite_batch_validation_test
+    44_text_render_test
 )
 
 # 批量创建示例程序

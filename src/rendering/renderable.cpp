@@ -7,9 +7,14 @@
 #include "render/mesh_loader.h"
 #include "render/shader_cache.h"
 #include "render/math_utils.h"
+#include "render/material_state_cache.h"
+#include "render/text/text.h"
 
 #include <algorithm>
 #include <mutex>
+#include <cstdint>
+#include <functional>
+#include <cstring>
 
 namespace Render {
 
@@ -19,6 +24,11 @@ constexpr const char* kSpriteMeshResourceName = "__engine_sprite_quad";
 constexpr const char* kSpriteShaderResourceName = "__engine_sprite_shader";
 constexpr const char* kSpriteShaderVertPath = "shaders/sprite.vert";
 constexpr const char* kSpriteShaderFragPath = "shaders/sprite.frag";
+
+constexpr const char* kTextMeshResourceName = "__engine_text_quad";
+constexpr const char* kTextShaderResourceName = "__engine_text_shader";
+constexpr const char* kTextShaderVertPath = "shaders/text.vert";
+constexpr const char* kTextShaderFragPath = "shaders/text.frag";
 
 struct SpriteSharedResources {
     std::mutex mutex;
@@ -32,6 +42,50 @@ struct SpriteSharedResources {
 SpriteSharedResources& GetSpriteSharedResources() {
     static SpriteSharedResources resources;
     return resources;
+}
+
+struct TextSharedResources {
+    std::mutex mutex;
+    Ref<Mesh> quadMesh;
+    Ref<Shader> shader;
+    Matrix4 viewMatrix = Matrix4::Identity();
+    Matrix4 projectionMatrix = Matrix4::Identity();
+    bool matricesInitialized = false;
+};
+
+TextSharedResources& GetTextSharedResources() {
+    static TextSharedResources resources;
+    return resources;
+}
+
+uint32_t HashCombine(uint32_t seed, uint32_t value) {
+    seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+    return seed;
+}
+
+uint32_t HashFloat(float value) {
+    return static_cast<uint32_t>(std::hash<float>{}(value));
+}
+
+uint32_t HashColor(const Color& color) {
+    uint32_t seed = 0;
+    seed = HashCombine(seed, HashFloat(color.r));
+    seed = HashCombine(seed, HashFloat(color.g));
+    seed = HashCombine(seed, HashFloat(color.b));
+    seed = HashCombine(seed, HashFloat(color.a));
+    return seed;
+}
+
+uint32_t HashMatrix(const Matrix4& matrix) {
+    const float* values = matrix.data();
+    uint32_t hash = 2166136261u;
+    for (int i = 0; i < 16; ++i) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &values[i], sizeof(uint32_t));
+        hash ^= bits;
+        hash *= 16777619u;
+    }
+    return hash;
 }
 
 bool EnsureSpriteResources(SpriteSharedResources& resources) {
@@ -78,7 +132,88 @@ bool EnsureSpriteResources(SpriteSharedResources& resources) {
     return resources.quadMesh != nullptr && resources.shader != nullptr;
 }
 
+bool EnsureTextResources(TextSharedResources& resources) {
+    auto& resMgr = ResourceManager::GetInstance();
+
+    if (!resources.quadMesh) {
+        if (resMgr.HasMesh(kTextMeshResourceName)) {
+            resources.quadMesh = resMgr.GetMesh(kTextMeshResourceName);
+        } else {
+            auto mesh = MeshLoader::CreateQuad(1.0f, 1.0f, Color::White());
+            if (mesh) {
+                if (!resMgr.HasMesh(kTextMeshResourceName)) {
+                    resMgr.RegisterMesh(kTextMeshResourceName, mesh);
+                }
+                resources.quadMesh = mesh;
+            }
+        }
+    }
+
+    if (!resources.shader) {
+        if (resMgr.HasShader(kTextShaderResourceName)) {
+            resources.shader = resMgr.GetShader(kTextShaderResourceName);
+        } else {
+            auto shader = ShaderCache::GetInstance().LoadShader(
+                kTextShaderResourceName,
+                kTextShaderVertPath,
+                kTextShaderFragPath
+            );
+
+            if (shader && shader->IsValid()) {
+                if (!resMgr.HasShader(kTextShaderResourceName)) {
+                    resMgr.RegisterShader(kTextShaderResourceName, shader);
+                }
+                resources.shader = shader;
+            } else if (shader && !shader->IsValid()) {
+                Logger::GetInstance().WarningFormat(
+                    "[TextRenderable] Shader '%s' is invalid",
+                    kTextShaderResourceName
+                );
+            }
+        }
+    }
+
+    return resources.quadMesh != nullptr && resources.shader != nullptr;
+}
+
+void GetTextMatrices(TextSharedResources& resources, Matrix4& outView, Matrix4& outProjection, bool& initialized) {
+    outView = resources.viewMatrix;
+    outProjection = resources.projectionMatrix;
+    initialized = resources.matricesInitialized;
+}
+
 } // namespace
+
+uint32_t MaterialOverride::ComputeHash() const {
+    if (!HasAnyOverride()) {
+        return 0u;
+    }
+
+    uint32_t seed = 0;
+    if (diffuseColor) {
+        seed = HashCombine(seed, HashColor(*diffuseColor));
+    }
+    if (specularColor) {
+        seed = HashCombine(seed, HashColor(*specularColor));
+    }
+    if (emissiveColor) {
+        seed = HashCombine(seed, HashColor(*emissiveColor));
+    }
+    if (shininess) {
+        seed = HashCombine(seed, HashFloat(*shininess));
+    }
+    if (metallic) {
+        seed = HashCombine(seed, HashFloat(*metallic));
+    }
+    if (roughness) {
+        seed = HashCombine(seed, HashFloat(*roughness));
+    }
+    if (opacity) {
+        seed = HashCombine(seed, HashFloat(*opacity));
+    }
+
+    return seed == 0 ? 1u : seed;
+}
 
 // ============================================================
 // Renderable 基类实现
@@ -155,12 +290,12 @@ uint32_t Renderable::GetLayerID() const {
     return m_layerID;
 }
 
-void Renderable::SetRenderPriority(uint32_t priority) {
+void Renderable::SetRenderPriority(int32_t priority) {
     std::unique_lock lock(m_mutex);
     m_renderPriority = priority;
 }
 
-uint32_t Renderable::GetRenderPriority() const {
+int32_t Renderable::GetRenderPriority() const {
     std::shared_lock lock(m_mutex);
     return m_renderPriority;
 }
@@ -190,6 +325,28 @@ void Renderable::MarkMaterialSortKeyDirty() {
 bool Renderable::IsMaterialSortKeyDirty() const {
     std::shared_lock lock(m_mutex);
     return m_materialSortDirty;
+}
+
+void Renderable::SetDepthHint(float depth) {
+    std::unique_lock lock(m_mutex);
+    m_depthHint = depth;
+    m_hasDepthHint = true;
+}
+
+bool Renderable::HasDepthHint() const {
+    std::shared_lock lock(m_mutex);
+    return m_hasDepthHint;
+}
+
+float Renderable::GetDepthHint() const {
+    std::shared_lock lock(m_mutex);
+    return m_depthHint;
+}
+
+void Renderable::ClearDepthHint() {
+    std::unique_lock lock(m_mutex);
+    m_depthHint = 0.0f;
+    m_hasDepthHint = false;
 }
 
 void Renderable::SetTransparentHint(bool transparent) {
@@ -240,8 +397,12 @@ void MeshRenderable::Render(RenderState* renderState) {
         return;
     }
     
-    // ✅ 绑定材质并应用渲染状态
-    m_material->Bind(renderState);
+    // ✅ 绑定材质并应用渲染状态（带缓存）
+    auto& stateCache = MaterialStateCache::Get();
+    if (stateCache.ShouldBind(m_material.get(), renderState)) {
+        m_material->Bind(renderState);
+        stateCache.OnBind(m_material.get(), renderState);
+    }
     
     // 获取着色器并设置模型矩阵
     auto shader = m_material->GetShader();
@@ -788,5 +949,285 @@ bool SpriteRenderable::AcquireSharedResources(Ref<Mesh>& outMesh, Ref<Shader>& o
     return true;
 }
 
-} // namespace Render
+// ============================================================
+// TextRenderable 实现
+// ============================================================
 
+TextRenderable::TextRenderable()
+    : Renderable(RenderableType::Text) {
+    m_layerID = 800;  // UI_LAYER
+    m_transparentHint = true;
+}
+
+TextRenderable::TextRenderable(TextRenderable&& other) noexcept
+    : Renderable(std::move(other)),
+      m_text(std::move(other.m_text)),
+      m_viewMatrixOverride(other.m_viewMatrixOverride),
+      m_projectionMatrixOverride(other.m_projectionMatrixOverride),
+      m_useViewProjectionOverride(other.m_useViewProjectionOverride),
+      m_cachedSize(other.m_cachedSize) {
+    other.m_useViewProjectionOverride = false;
+    other.m_cachedSize = Vector2::Zero();
+}
+
+TextRenderable& TextRenderable::operator=(TextRenderable&& other) noexcept {
+    if (this != &other) {
+        Renderable::operator=(std::move(other));
+        m_text = std::move(other.m_text);
+        m_viewMatrixOverride = other.m_viewMatrixOverride;
+        m_projectionMatrixOverride = other.m_projectionMatrixOverride;
+        m_useViewProjectionOverride = other.m_useViewProjectionOverride;
+        m_cachedSize = other.m_cachedSize;
+
+        other.m_useViewProjectionOverride = false;
+        other.m_cachedSize = Vector2::Zero();
+    }
+    return *this;
+}
+
+bool TextRenderable::GatherBatchData(TextRenderBatchData& outData) {
+    outData = {};
+
+    Ref<Text> text;
+    Ref<Transform> transform;
+    bool useOverride = false;
+    Matrix4 overrideView = Matrix4::Identity();
+    Matrix4 overrideProjection = Matrix4::Identity();
+
+    {
+        std::shared_lock lock(m_mutex);
+        if (!m_visible || !m_text) {
+            return false;
+        }
+        text = m_text;
+        transform = m_transform;
+        useOverride = m_useViewProjectionOverride;
+        if (useOverride) {
+            overrideView = m_viewMatrixOverride;
+            overrideProjection = m_projectionMatrixOverride;
+        }
+    }
+
+    if (!text || !text->EnsureUpdated()) {
+        return false;
+    }
+
+    Ref<Texture> texture = text->GetTexture();
+    Vector2 size = text->GetSize();
+    Color color = text->GetColor();
+
+    if (!texture) {
+        std::unique_lock lock(m_mutex);
+        m_cachedSize = size;
+        return false;
+    }
+
+    Ref<Mesh> mesh;
+    Ref<Shader> shader;
+    if (!AcquireSharedResources(mesh, shader) || !mesh || !shader || !shader->IsValid()) {
+        return false;
+    }
+
+    Matrix4 viewMatrix = Matrix4::Identity();
+    Matrix4 projectionMatrix = Matrix4::Identity();
+    bool matricesInitialized = false;
+
+    if (useOverride) {
+        viewMatrix = overrideView;
+        projectionMatrix = overrideProjection;
+    } else {
+        auto& shared = GetTextSharedResources();
+        std::lock_guard<std::mutex> lock(shared.mutex);
+        if (!EnsureTextResources(shared)) {
+            return false;
+        }
+        GetTextMatrices(shared, viewMatrix, projectionMatrix, matricesInitialized);
+        if (!matricesInitialized) {
+            viewMatrix = Matrix4::Identity();
+            projectionMatrix = Matrix4::Identity();
+        }
+    }
+
+    if (size.x() <= 0.0f) {
+        size.x() = 1.0f;
+    }
+    if (size.y() <= 0.0f) {
+        size.y() = 1.0f;
+    }
+
+    Matrix4 modelMatrix = Matrix4::Identity();
+    if (transform) {
+        modelMatrix = transform->GetWorldMatrix();
+    }
+    modelMatrix *= MathUtils::Scale(Vector3(size.x(), size.y(), 1.0f));
+
+    {
+        std::unique_lock lock(m_mutex);
+        m_cachedSize = size;
+        m_transparentHint = true;
+    }
+
+    outData.texture = texture;
+    outData.mesh = mesh;
+    outData.shader = shader;
+    outData.modelMatrix = modelMatrix;
+    outData.viewMatrix = viewMatrix;
+    outData.projectionMatrix = projectionMatrix;
+    outData.color = color;
+    outData.screenSpace = !useOverride;
+    outData.viewHash = HashMatrix(viewMatrix);
+    outData.projectionHash = HashMatrix(projectionMatrix);
+
+    MaterialSortKey key{};
+    key.materialID = static_cast<uint32_t>(std::hash<const void*>{}(texture.get()));
+    key.shaderID = static_cast<uint32_t>(std::hash<const void*>{}(shader.get()));
+    key.blendMode = BlendMode::Alpha;
+    key.cullFace = CullFace::None;
+    key.depthTest = false;
+    key.depthWrite = false;
+    key.pipelineFlags = outData.screenSpace ? MaterialPipelineFlags_ScreenSpace : MaterialPipelineFlags_None;
+    key.overrideHash = HashColor(color);
+
+    {
+        std::unique_lock lock(m_mutex);
+        m_materialSortKey = key;
+        m_materialSortDirty = false;
+        m_hasMaterialSortKey = true;
+    }
+
+    return true;
+}
+
+void TextRenderable::Render(RenderState* renderState) {
+    TextRenderBatchData data;
+    if (!GatherBatchData(data)) {
+        return;
+    }
+
+    if (renderState) {
+        renderState->SetBlendMode(BlendMode::Alpha);
+        renderState->SetDepthTest(false);
+        renderState->SetDepthWrite(false);
+        renderState->SetCullFace(CullFace::None);
+    }
+
+    auto shader = data.shader;
+    auto mesh = data.mesh;
+    auto texture = data.texture;
+    if (!shader || !mesh || !texture || !shader->IsValid()) {
+        return;
+    }
+
+    shader->Use();
+    auto* uniformMgr = shader->GetUniformManager();
+    if (!uniformMgr) {
+        shader->Unuse();
+        return;
+    }
+
+    if (uniformMgr->HasUniform("uModel")) {
+        uniformMgr->SetMatrix4("uModel", data.modelMatrix);
+    }
+    if (uniformMgr->HasUniform("uView")) {
+        uniformMgr->SetMatrix4("uView", data.viewMatrix);
+    }
+    if (uniformMgr->HasUniform("uProjection")) {
+        uniformMgr->SetMatrix4("uProjection", data.projectionMatrix);
+    }
+    if (uniformMgr->HasUniform("uTextColor")) {
+        uniformMgr->SetColor("uTextColor", data.color);
+    }
+    if (uniformMgr->HasUniform("uTexture")) {
+        uniformMgr->SetInt("uTexture", 0);
+    }
+
+    texture->Bind(0);
+    mesh->Draw();
+    shader->Unuse();
+}
+
+void TextRenderable::SubmitToRenderer(Renderer* renderer) {
+    if (renderer) {
+        renderer->SubmitRenderable(this);
+    }
+}
+
+void TextRenderable::SetText(const Ref<Text>& text) {
+    std::unique_lock lock(m_mutex);
+    m_text = text;
+    m_materialSortDirty = true;
+    m_hasMaterialSortKey = false;
+}
+
+Ref<Text> TextRenderable::GetText() const {
+    std::shared_lock lock(m_mutex);
+    return m_text;
+}
+
+void TextRenderable::SetViewProjectionOverride(const Matrix4& view, const Matrix4& projection) {
+    std::unique_lock lock(m_mutex);
+    m_viewMatrixOverride = view;
+    m_projectionMatrixOverride = projection;
+    m_useViewProjectionOverride = true;
+}
+
+void TextRenderable::ClearViewProjectionOverride() {
+    std::unique_lock lock(m_mutex);
+    m_useViewProjectionOverride = false;
+}
+
+void TextRenderable::SetViewProjection(const Matrix4& view, const Matrix4& projection) {
+    auto& shared = GetTextSharedResources();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    shared.viewMatrix = view;
+    shared.projectionMatrix = projection;
+    shared.matricesInitialized = true;
+}
+
+bool TextRenderable::AcquireSharedResources(Ref<Mesh>& outMesh, Ref<Shader>& outShader) {
+    auto& shared = GetTextSharedResources();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    if (!EnsureTextResources(shared)) {
+        return false;
+    }
+    outMesh = shared.quadMesh;
+    outShader = shared.shader;
+    return true;
+}
+
+void TextRenderable::GetSharedMatrices(Matrix4& outView, Matrix4& outProjection, bool& outInitialized) {
+    auto& shared = GetTextSharedResources();
+    std::lock_guard<std::mutex> lock(shared.mutex);
+    outView = shared.viewMatrix;
+    outProjection = shared.projectionMatrix;
+    outInitialized = shared.matricesInitialized;
+}
+
+AABB TextRenderable::GetBoundingBox() const {
+    Ref<Text> text;
+    Ref<Transform> transform;
+    Vector2 cachedSize;
+    {
+        std::shared_lock lock(m_mutex);
+        cachedSize = m_cachedSize;
+        transform = m_transform;
+        text = m_text;
+    }
+
+    Vector2 size = cachedSize;
+    if ((size.x() <= 0.0f || size.y() <= 0.0f) && text) {
+        if (text->EnsureUpdated()) {
+            size = text->GetSize();
+        }
+    }
+
+    Vector3 center = Vector3::Zero();
+    if (transform) {
+        center = transform->GetPosition();
+    }
+
+    Vector3 halfSize(size.x() * 0.5f, size.y() * 0.5f, 0.0f);
+    return AABB(center - halfSize, center + halfSize);
+}
+
+} // namespace Render

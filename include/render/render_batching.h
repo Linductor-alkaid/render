@@ -1,6 +1,7 @@
 #pragma once
 
 #include "render/render_state.h"
+#include "render/material_sort_key.h"
 #include "render/renderable.h"
 #include "render/resource_handle.h"
 #include "render/types.h"
@@ -41,6 +42,7 @@ enum class BatchingMode {
  */
 struct RenderBatchKey {
     RenderableType renderableType = RenderableType::Mesh;
+    MaterialSortKey materialKey{};
     uint64_t materialHandle = 0;
     uint64_t shaderHandle = 0;
     uint64_t meshHandle = 0;
@@ -57,7 +59,8 @@ struct RenderBatchKey {
     bool screenSpace = true;
 
     bool operator==(const RenderBatchKey& other) const noexcept {
-        return renderableType == other.renderableType &&
+        return materialKey == other.materialKey &&
+               renderableType == other.renderableType &&
                materialHandle == other.materialHandle &&
                shaderHandle == other.shaderHandle &&
                blendMode == other.blendMode &&
@@ -77,24 +80,30 @@ struct RenderBatchKey {
 
 struct RenderBatchKeyHasher {
     size_t operator()(const RenderBatchKey& key) const noexcept {
-        size_t hash = std::hash<uint64_t>{}(key.materialHandle);
-        hash ^= std::hash<uint64_t>{}(key.shaderHandle) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+        auto combine = [](size_t& seed, size_t value) {
+            constexpr size_t kMul = 0x9e3779b97f4a7c15ull;
+            seed ^= value + kMul + (seed << 6) + (seed >> 2);
+        };
+
+        size_t hash = MaterialSortKeyHasher{}(key.materialKey);
+        combine(hash, std::hash<uint64_t>{}(key.materialHandle));
+        combine(hash, std::hash<uint64_t>{}(key.shaderHandle));
         using BlendModeUnderlying = std::underlying_type_t<BlendMode>;
         using CullFaceUnderlying = std::underlying_type_t<CullFace>;
         using RenderableTypeUnderlying = std::underlying_type_t<RenderableType>;
-        hash ^= static_cast<size_t>(static_cast<BlendModeUnderlying>(key.blendMode)) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-        hash ^= static_cast<size_t>(static_cast<CullFaceUnderlying>(key.cullFace)) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-        hash ^= static_cast<size_t>(static_cast<RenderableTypeUnderlying>(key.renderableType)) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-        hash ^= static_cast<size_t>(key.depthTest) + (hash << 6) + (hash >> 2);
-        hash ^= static_cast<size_t>(key.depthWrite) + (hash << 6) + (hash >> 2);
-        hash ^= static_cast<size_t>(key.castShadows) + (hash << 6) + (hash >> 2);
-        hash ^= static_cast<size_t>(key.receiveShadows) + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<uint32_t>{}(key.layerID) + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<uint64_t>{}(key.meshHandle) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<uint64_t>{}(key.textureHandle) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<uint32_t>{}(key.viewHash) + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<uint32_t>{}(key.projectionHash) + (hash << 6) + (hash >> 2);
-        hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(key.screenSpace)) + (hash << 6) + (hash >> 2);
+        combine(hash, static_cast<size_t>(static_cast<BlendModeUnderlying>(key.blendMode)));
+        combine(hash, static_cast<size_t>(static_cast<CullFaceUnderlying>(key.cullFace)));
+        combine(hash, static_cast<size_t>(static_cast<RenderableTypeUnderlying>(key.renderableType)));
+        combine(hash, static_cast<size_t>(key.depthTest));
+        combine(hash, static_cast<size_t>(key.depthWrite));
+        combine(hash, static_cast<size_t>(key.castShadows));
+        combine(hash, static_cast<size_t>(key.receiveShadows));
+        combine(hash, std::hash<uint32_t>{}(key.layerID));
+        combine(hash, std::hash<uint64_t>{}(key.meshHandle));
+        combine(hash, std::hash<uint64_t>{}(key.textureHandle));
+        combine(hash, std::hash<uint32_t>{}(key.viewHash));
+        combine(hash, std::hash<uint32_t>{}(key.projectionHash));
+        combine(hash, std::hash<uint8_t>{}(static_cast<uint8_t>(key.screenSpace)));
         return hash;
     }
 };
@@ -102,7 +111,8 @@ struct RenderBatchKeyHasher {
 enum class BatchItemType {
     Unsupported,
     Mesh,
-    Sprite
+    Sprite,
+    Text
 };
 
 struct MeshBatchData {
@@ -137,6 +147,7 @@ struct BatchableItem {
     RenderBatchKey key{};
     MeshBatchData meshData{};
     SpriteBatchData spriteData{};
+    TextRenderBatchData textData{};
     bool batchable = false;
     bool isTransparent = false;
     bool instanceEligible = false;

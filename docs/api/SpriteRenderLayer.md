@@ -40,12 +40,13 @@ public:
 
 | 名称 | layerID | sortBias | 用途 |
 | ---- | ------- | -------- | ---- |
-| `world.background` | 700 | -100 | 世界背景元素 |
+| `world.background` | 680 | -100 | 世界背景元素 |
 | `world.midground` | 700 | 0 | 世界主体 |
-| `world.foreground` | 700 | +100 | 世界前景特效 |
-| `ui.background` | 800 | -200 | 全屏背景板 |
-| `ui.panel` | 800 | -50 | UI 面板 |
+| `world.foreground` | 720 | +100 | 世界前景特效 |
+| `ui.background` | 780 | -200 | 全屏背景板 |
+| `ui.panel` | 790 | -50 | UI 面板 |
 | `ui.default` | 800 | 0 | 一般 UI 控件 |
+| `ui.foreground` | 810 | +50 | 高亮按钮 / 前景特效 |
 | `ui.overlay` | 900 | 0 | 叠加层（弹窗、HUD） |
 | `ui.tooltip` | 910 | +50 | 提示/光标 |
 | `debug.overlay` | 999 | 0 | 调试覆盖 |

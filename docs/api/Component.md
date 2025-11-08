@@ -173,7 +173,7 @@ struct MeshRenderComponent {
     bool castShadows = true;       // 是否投射阴影
     bool receiveShadows = true;    // 是否接收阴影
     uint32_t layerID = 300;        // 渲染层级（WORLD_GEOMETRY）
-    uint32_t renderPriority = 0;   // 渲染优先级
+    int32_t renderPriority = 0;    // 渲染优先级
     
     // ==================== 材质属性覆盖 ====================
     struct MaterialOverride {

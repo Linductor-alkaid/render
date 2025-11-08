@@ -6,7 +6,7 @@
 
 ## 概述
 
-`ResourceManager` 是一个单例类，提供统一的资源管理接口，用于管理所有渲染资源（纹理、网格、材质、着色器）。它提供注册、获取、释放、统计等功能，确保资源的生命周期管理和线程安全。
+`ResourceManager` 是一个单例类，提供统一的资源管理接口，用于管理所有渲染资源（纹理、网格、材质、着色器、精灵图集、字体）。它提供注册、获取、释放、统计等功能，确保资源的生命周期管理和线程安全。
 
 **头文件**: `render/resource_manager.h`  
 **命名空间**: `Render`  
@@ -14,7 +14,7 @@
 
 ### 核心特性
 
-✅ **统一管理**: 统一管理纹理、网格、材质、着色器四种资源类型  
+✅ **统一管理**: 统一管理纹理、网格、材质、着色器、精灵图集和字体资源类型  
 ✅ **线程安全**: 所有公共方法使用互斥锁保护，支持多线程访问  
 ✅ **引用计数**: 基于 `std::shared_ptr` 的自动引用计数管理  
 ✅ **智能清理**: 基于帧追踪和两阶段清理策略，安全清理未使用资源  
@@ -56,9 +56,18 @@ public:
     bool RemoveShader(const std::string& name);
     bool HasShader(const std::string& name) const;
     
-    // 帧管理
-    void BeginFrame();
-    
+    // SpriteAtlas 管理
+    bool RegisterSpriteAtlas(const std::string& name, SpriteAtlasPtr atlas);
+    SpriteAtlasPtr GetSpriteAtlas(const std::string& name);
+    bool RemoveSpriteAtlas(const std::string& name);
+    bool HasSpriteAtlas(const std::string& name) const;
+
+    // 字体管理
+    bool RegisterFont(const std::string& name, FontPtr font);
+    FontPtr GetFont(const std::string& name);
+    bool RemoveFont(const std::string& name);
+    bool HasFont(const std::string& name) const;
+
     // 批量操作
     void Clear();
     void ClearType(ResourceType type);

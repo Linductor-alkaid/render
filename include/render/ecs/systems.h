@@ -247,6 +247,7 @@ public:
     void OnCreate(World* world) override;
     void OnDestroy() override;
     [[nodiscard]] size_t GetLastBatchCount() const { return m_lastBatchCount; }
+    [[nodiscard]] size_t GetLastSubmittedSpriteCount() const { return m_lastSubmittedSpriteCount; }
 
 private:
     Renderer* m_renderer;            ///< 渲染器指针
@@ -254,6 +255,7 @@ private:
     SpriteBatcher m_batcher;         ///< 精灵批处理器
     std::vector<std::unique_ptr<SpriteBatchRenderable>> m_batchRenderables; ///< 批次渲染代理
     size_t m_lastBatchCount = 0;
+    size_t m_lastSubmittedSpriteCount = 0;
 };
 
 // ============================================================

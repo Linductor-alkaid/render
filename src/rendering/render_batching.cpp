@@ -120,12 +120,20 @@ void RenderBatch::UploadResources(ResourceManager* resourceManager, BatchingMode
         return;
     }
 
-    if (m_items.front().type == BatchItemType::Sprite) {
+    if (!m_items.empty() && m_items.front().type == BatchItemType::Sprite) {
         m_gpuResourcesReady = true;
         m_instanceCount = 0;
         for (const auto& item : m_items) {
             m_instanceCount += item.spriteData.instanceCount;
         }
+        m_cachedTriangleCount = 2;
+        m_drawVertexCount = 4;
+        return;
+    }
+
+    if (!m_items.empty() && m_items.front().type == BatchItemType::Text) {
+        m_gpuResourcesReady = true;
+        m_instanceCount = static_cast<uint32_t>(m_items.size());
         m_cachedTriangleCount = 2;
         m_drawVertexCount = 4;
         return;
@@ -333,6 +341,89 @@ bool RenderBatch::Draw(RenderState* renderState, uint32_t& drawCallCounter, Batc
         return anyDrawn;
     }
 
+    if (!m_items.empty() && m_items.front().type == BatchItemType::Text) {
+        if (!renderState) {
+            drawFallback();
+            return false;
+        }
+
+        auto& firstItem = m_items.front();
+        if (!firstItem.textData.shader || !firstItem.textData.mesh || !firstItem.textData.texture) {
+            drawFallback();
+            return false;
+        }
+
+        renderState->SetBlendMode(firstItem.key.blendMode);
+        renderState->SetDepthTest(firstItem.key.depthTest);
+        renderState->SetDepthWrite(firstItem.key.depthWrite);
+        renderState->SetCullFace(firstItem.key.cullFace);
+
+        Shader* currentShader = nullptr;
+        Ref<Shader> activeShader;
+        bool anyDrawn = false;
+
+        for (auto& item : m_items) {
+            if (!item.renderable || !item.renderable->IsVisible()) {
+                continue;
+            }
+
+            auto& data = item.textData;
+            if (!data.shader || !data.mesh || !data.texture) {
+                continue;
+            }
+
+            Shader* shaderPtr = data.shader.get();
+            if (!shaderPtr->IsValid()) {
+                continue;
+            }
+
+            if (shaderPtr != currentShader) {
+                if (currentShader) {
+                    activeShader->Unuse();
+                }
+                activeShader = data.shader;
+                activeShader->Use();
+                currentShader = shaderPtr;
+            }
+
+            auto* uniformMgr = shaderPtr->GetUniformManager();
+            if (!uniformMgr) {
+                continue;
+            }
+
+            if (uniformMgr->HasUniform("uModel")) {
+                uniformMgr->SetMatrix4("uModel", data.modelMatrix);
+            }
+            if (uniformMgr->HasUniform("uView")) {
+                uniformMgr->SetMatrix4("uView", data.viewMatrix);
+            }
+            if (uniformMgr->HasUniform("uProjection")) {
+                uniformMgr->SetMatrix4("uProjection", data.projectionMatrix);
+            }
+            if (uniformMgr->HasUniform("uTextColor")) {
+                uniformMgr->SetColor("uTextColor", data.color);
+            }
+            if (uniformMgr->HasUniform("uTexture")) {
+                uniformMgr->SetInt("uTexture", 0);
+            }
+
+            data.texture->Bind(0);
+            data.mesh->Draw();
+            ++drawCallCounter;
+            anyDrawn = true;
+        }
+
+        if (currentShader) {
+            activeShader->Unuse();
+        }
+
+        if (!anyDrawn) {
+            drawFallback();
+        }
+
+        return anyDrawn;
+    }
+
     if (mode == BatchingMode::GpuInstancing) {
         if (!m_gpuResourcesReady || m_items.empty() || !m_sourceMesh || m_instanceCount == 0) {
             drawFallback();
@@ -514,8 +605,9 @@ void BatchManager::AddItem(const BatchableItem& item) {
     bool shouldBatch = false;
     switch (m_mode) {
         case BatchingMode::CpuMerge:
-            shouldBatch = localItem.batchable && !localItem.isTransparent &&
-                          localItem.type != BatchItemType::Unsupported;
+            shouldBatch = localItem.batchable &&
+                          localItem.type != BatchItemType::Unsupported &&
+                          (localItem.type == BatchItemType::Text || !localItem.isTransparent);
             break;
         case BatchingMode::GpuInstancing:
             shouldBatch = localItem.instanceEligible && localItem.type != BatchItemType::Unsupported;

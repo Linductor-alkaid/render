@@ -55,7 +55,7 @@ struct MeshComponent {
     
     // 层级信息
     uint32_t layerID = OPAQUE_OBJECTS;
-    uint32_t renderPriority = 0;
+    int32_t renderPriority = 0;
     
     // LOD设置
     std::vector<float> lodDistances{100.0f, 500.0f};

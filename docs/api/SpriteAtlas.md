@@ -140,5 +140,5 @@ atlas->PopulateAnimationComponent(animComp, "idle", true);
 
 ---
 
-[上一页](SpriteRenderer.md) | [下一页](SpriteAtlasImporter.md)
+[上一页](Font.md) | [下一页](SpriteAtlasImporter.md)
 

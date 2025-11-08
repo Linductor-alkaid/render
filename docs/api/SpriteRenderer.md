@@ -116,5 +116,5 @@ spriteRenderer.End();
 
 ---
 
-[上一页](SpriteAnimation.md) | [下一页](SpriteAtlas.md)
+[上一页](SpriteAnimation.md) | [下一页](TextRenderable.md)
 

@@ -17,6 +17,22 @@
 
 ---
 
+## 批处理模式
+
+批处理通过 `Renderer::SetBatchingMode()` 控制：
+
+```cpp
+renderer->SetBatchingMode(BatchingMode::CpuMerge); // 或 BatchingMode::GpuInstancing
+```
+
+- `Disabled`（默认）：所有渲染对象直接调用 `Render()`，不启用批处理。
+- `CpuMerge`：对可批处理对象（网格、精灵、文本）在 CPU 侧聚合后一次性 Draw。
+- `GpuInstancing`：对网格对象启用 GPU Instancing（当前文本使用 CpuMerge 路径）。
+
+请确保在 `Renderer::BeginFrame()` 之前设置好批处理模式，示例测试通常在初始化后立即调用。
+
+---
+
 ## 核心类型
 
 | 类型 | 说明 |
@@ -32,11 +48,19 @@
 
 ---
 
+## 当前支持的批处理对象
+
+- `MeshRenderable`：支持 CPU 合批、GPU 实例化（取决于 `BatchingMode`）
+- `SpriteRenderable`：由 `SpriteBatcher` 收集实例，使用共享四边形网格与 sprite 着色器
+- `TextRenderable`：按照字体纹理与视图/投影矩阵分组，共享四边形网格与文本着色器，一次提交即可绘制同一组文本
+
+---
+
 ## 使用指南
 
 1. **启用模式**：在运行时调用 `Renderer::SetBatchingMode(BatchingMode mode)`。默认禁用，可在每帧切换。
 2. **提交对象**：保持原有 `Renderable::SubmitToRenderer(renderer)` 流程，批处理自动生效。
-3. **材质与 Uniform**：所有 uniform 仍通过 `UniformManager` 设置；GPU 实例化时 `uModel` 固定为单位矩阵，实例化数据通过顶点属性 4~7 传入。
+3. **材质与 Uniform**：所有 uniform 仍通过 `UniformManager` 设置；GPU 实例化时 `uModel` 固定为单位矩阵，实例化数据通过顶点属性 4~7 传入。`Renderer::SubmitRenderable()` 会为 Mesh/Sprite/Text 自动补全 `MaterialSortKey`，避免回退到指针哈希。
 4. **统计查看**：通过 `Renderer::GetStats()` 读取 `RenderStats`，新增字段包括 `batchCount`、`batchedDrawCalls`、`instancedDrawCalls`、`instancedInstances`、`workerProcessed` 等。
 5. **调试日志**：调试级日志在检测到回退或达到固定帧间隔时输出批处理统计（可用于观察后台线程负载）。
 
@@ -57,7 +81,7 @@
 2. 顶点着色器通过 `uHasInstanceData` 判断是否读取实例矩阵
 3. 调用 `glDrawElementsInstanced` 提交批次
 
-若某条目不满足批处理条件（透明、材质覆盖、自定义类型等），会自动回退到原始渲染路径，统计值记录为 `fallbackDrawCalls`/`fallbackBatches`。
+若某条目不满足批处理条件（透明、材质覆盖、自定义类型等），会自动回退到原始渲染路径，统计值记录为 `fallbackDrawCalls`/`fallbackBatches`。2025-11-08 起，透明对象在 Renderer 统一做“层级 → 深度提示 → 材质键 → RenderPriority → 原序”稳定排序，减少透明材质切换。
 
 ---
 
@@ -71,10 +95,10 @@
 
 ## 调试与测试
 
-- **示例程序**：`37_batching_benchmark` 提供三种模式的对比测试，日志记录 FPS、Draw Call、批次数等
+- **示例程序**：`37_batching_benchmark` 提供三种模式的对比测试，日志记录 FPS、Draw Call、批次数等；`43_sprite_batch_validation_test`、`44_text_render_test` 验证材质键补全与透明排序后 `materialSortKeyMissing == 0`
 - **日志节流**：批处理调试日志默认每 120 次刷新打印一次，若检测到回退则立即输出，避免淹没控制台
 - **常见注意事项**：
-  - 所有材质 uniform 必须通过 `UniformManager` 设定，保持与批处理协同
+  - 所有材质 uniform 必须通过 `UniformManager` 设定，保持与批处理协同；`MaterialStateCache` 会缓存最近一次绑定的材质，避免重复 `Material::Bind()` 调用
   - 批处理资源由 `ResourceManager` 托管，新增网格需在 CMake 中注册
   - 后台线程依赖 `GLThreadChecker`，确保所有 OpenGL 调用仍在主线程执行
 

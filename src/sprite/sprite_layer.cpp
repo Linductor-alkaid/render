@@ -22,13 +22,14 @@ void SpriteRenderLayer::EnsureDefaults() {
     }
 
     s_layers.clear();
-    s_layers.emplace(NormalizeKey("world.background"), LayerInfo{700, -100});
+    s_layers.emplace(NormalizeKey("world.background"), LayerInfo{680, -100});
     s_layers.emplace(NormalizeKey("world.midground"), LayerInfo{700, 0});
-    s_layers.emplace(NormalizeKey("world.foreground"), LayerInfo{700, 100});
+    s_layers.emplace(NormalizeKey("world.foreground"), LayerInfo{720, 100});
 
-    s_layers.emplace(NormalizeKey("ui.background"), LayerInfo{800, -200});
-    s_layers.emplace(NormalizeKey("ui.panel"), LayerInfo{800, -50});
+    s_layers.emplace(NormalizeKey("ui.background"), LayerInfo{780, -200});
+    s_layers.emplace(NormalizeKey("ui.panel"), LayerInfo{790, -50});
     s_layers.emplace(NormalizeKey("ui.default"), LayerInfo{800, 0});
+    s_layers.emplace(NormalizeKey("ui.foreground"), LayerInfo{810, 50});
     s_layers.emplace(NormalizeKey("ui.overlay"), LayerInfo{900, 0});
     s_layers.emplace(NormalizeKey("ui.tooltip"), LayerInfo{910, 50});
 

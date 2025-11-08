@@ -155,7 +155,7 @@ struct MeshRenderComponent {
     bool castShadows = true;       // 是否投射阴影
     bool receiveShadows = true;    // 是否接收阴影
     uint32_t layerID = 300;        // 渲染层级（默认 WORLD_GEOMETRY）
-    uint32_t renderPriority = 0;   // 渲染优先级
+    int32_t renderPriority = 0;    // 渲染优先级
     
     // LOD 支持
     std::vector<float> lodDistances;  // LOD 距离阈值
@@ -743,7 +743,7 @@ protected:
     Ref<Transform> m_transform;    // 复用 Transform 对象
     bool m_visible = true;
     uint32_t m_layerID = 300;      // WORLD_GEOMETRY
-    uint32_t m_renderPriority = 0;
+    int32_t m_renderPriority = 0;
     
     mutable std::shared_mutex m_mutex;
 };

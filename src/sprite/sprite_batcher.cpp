@@ -92,7 +92,7 @@ void SpriteBatcher::AddSprite(const Ref<Texture>& texture,
                               const Matrix4& projectionMatrix,
                               bool screenSpace,
                               uint32_t layer,
-                              uint32_t sortOrder,
+                              int32_t sortOrder,
                               BlendMode blendMode) {
     if (!texture) {
         return;
@@ -106,6 +106,7 @@ void SpriteBatcher::AddSprite(const Ref<Texture>& texture,
     entry.key.viewHash = HashMatrix(viewMatrix);
     entry.key.projectionHash = HashMatrix(projectionMatrix);
     entry.key.blendMode = blendMode;
+    entry.key.layer = layer;
 
     entry.modelMatrix = modelMatrix;
     entry.viewMatrix = viewMatrix;
@@ -176,6 +177,10 @@ void SpriteBatcher::BuildBatches() {
             currentBatch.texture = entry.texture;
             currentBatch.layer = entry.layer;
             currentBatch.sortOrder = entry.sortOrder;
+        } else {
+            if (entry.sortOrder < currentBatch.sortOrder) {
+                currentBatch.sortOrder = entry.sortOrder;
+            }
         }
         appendInstance(currentBatch, entry);
     }
@@ -195,7 +200,7 @@ uint32_t SpriteBatcher::GetBatchLayer(size_t index) const {
     return m_batches[index].layer;
 }
 
-uint32_t SpriteBatcher::GetBatchSortOrder(size_t index) const {
+int32_t SpriteBatcher::GetBatchSortOrder(size_t index) const {
     if (index >= m_batches.size()) {
         return 0;
     }

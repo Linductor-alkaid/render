@@ -5,13 +5,181 @@
 #include "render/resource_manager.h"
 #include "render/sprite/sprite_batcher.h"
 #include "render/material_sort_key.h"
+#include "render/text/text.h"
+#include "render/material_state_cache.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <cmath>
 
 namespace Render {
 
 namespace {
+
+uint32_t HashCombine(uint32_t seed, uint32_t value) {
+    seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+    return seed;
+}
+
+uint32_t HashFloat(float value) {
+    return static_cast<uint32_t>(std::hash<float>{}(value));
+}
+
+uint32_t HashColor(const Color& color) {
+    uint32_t seed = 0;
+    seed = HashCombine(seed, HashFloat(color.r));
+    seed = HashCombine(seed, HashFloat(color.g));
+    seed = HashCombine(seed, HashFloat(color.b));
+    seed = HashCombine(seed, HashFloat(color.a));
+    return seed;
+}
+
+uint32_t HashPointer(const void* ptr) {
+    const uintptr_t value = reinterpret_cast<uintptr_t>(ptr);
+    uint32_t seed = 0;
+    seed = HashCombine(seed, static_cast<uint32_t>(value & 0xFFFFFFFFu));
+    seed = HashCombine(seed, static_cast<uint32_t>((value >> 32) & 0xFFFFFFFFu));
+    return seed;
+}
+
+MaterialSortKey BuildMeshRenderableSortKey(MeshRenderable* meshRenderable) {
+    MaterialSortKey key{};
+    if (!meshRenderable) {
+        return key;
+    }
+
+    Ref<Material> material = meshRenderable->GetMaterial();
+    const MaterialOverride overrideData = meshRenderable->GetMaterialOverride();
+    const uint32_t overrideHash = overrideData.ComputeHash();
+
+    uint32_t pipelineFlags = MaterialPipelineFlags_None;
+    if (meshRenderable->GetCastShadows()) {
+        pipelineFlags |= MaterialPipelineFlags_CastShadow;
+    }
+    if (meshRenderable->GetReceiveShadows()) {
+        pipelineFlags |= MaterialPipelineFlags_ReceiveShadow;
+    }
+
+    key = BuildMaterialSortKey(material.get(), overrideHash, pipelineFlags);
+    return key;
+}
+
+MaterialSortKey BuildSpriteRenderableSortKey(SpriteRenderable* spriteRenderable) {
+    MaterialSortKey key{};
+    if (!spriteRenderable) {
+        return key;
+    }
+
+    Ref<Texture> texture = spriteRenderable->GetTexture();
+    const Color tint = spriteRenderable->GetTintColor();
+
+    uint32_t overrideHash = 0;
+    if (texture) {
+        overrideHash = HashCombine(overrideHash, HashPointer(texture.get()));
+    }
+    overrideHash = HashCombine(overrideHash, HashColor(tint));
+
+    uint32_t pipelineFlags = MaterialPipelineFlags_None;
+    if (spriteRenderable->GetLayerID() >= 800u) {
+        pipelineFlags |= MaterialPipelineFlags_ScreenSpace;
+    }
+
+    key = BuildMaterialSortKey(nullptr, overrideHash, pipelineFlags);
+    key.blendMode = BlendMode::Alpha;
+    key.cullFace = CullFace::None;
+    key.depthTest = false;
+    key.depthWrite = false;
+
+    if (texture) {
+        key.materialID = HashPointer(texture.get());
+    }
+
+    Ref<Mesh> quadMesh;
+    Ref<Shader> shader;
+    if (SpriteRenderable::AcquireSharedResources(quadMesh, shader) && shader) {
+        key.shaderID = shader->GetProgramID();
+    }
+
+    return key;
+}
+
+MaterialSortKey BuildTextRenderableSortKey(TextRenderable* textRenderable) {
+    MaterialSortKey key{};
+    if (!textRenderable) {
+        return key;
+    }
+
+    Ref<Text> text = textRenderable->GetText();
+    if (!text) {
+        return key;
+    }
+
+    text->EnsureUpdated();
+    Ref<Texture> texture = text->GetTexture();
+    const Color color = text->GetColor();
+
+    uint32_t overrideHash = HashColor(color);
+    if (texture) {
+        overrideHash = HashCombine(overrideHash, HashPointer(texture.get()));
+    }
+
+    uint32_t pipelineFlags = MaterialPipelineFlags_ScreenSpace;
+
+    key = BuildMaterialSortKey(nullptr, overrideHash, pipelineFlags);
+    key.blendMode = BlendMode::Alpha;
+    key.cullFace = CullFace::None;
+    key.depthTest = false;
+    key.depthWrite = false;
+
+    if (texture) {
+        key.materialID = HashPointer(texture.get());
+    }
+
+    return key;
+}
+
+void EnsureMaterialSortKey(Renderable* renderable) {
+    if (!renderable) {
+        return;
+    }
+
+    if (renderable->HasMaterialSortKey() && !renderable->IsMaterialSortKeyDirty()) {
+        return;
+    }
+
+    MaterialSortKey key{};
+    bool computed = false;
+
+    switch (renderable->GetType()) {
+        case RenderableType::Mesh: {
+            auto* meshRenderable = static_cast<MeshRenderable*>(renderable);
+            key = BuildMeshRenderableSortKey(meshRenderable);
+            computed = true;
+            break;
+        }
+        case RenderableType::Sprite: {
+            auto* spriteRenderable = static_cast<SpriteRenderable*>(renderable);
+            key = BuildSpriteRenderableSortKey(spriteRenderable);
+            computed = true;
+            break;
+        }
+        case RenderableType::Text: {
+            auto* textRenderable = static_cast<TextRenderable*>(renderable);
+            key = BuildTextRenderableSortKey(textRenderable);
+            computed = true;
+            break;
+        }
+        default:
+            break;
+    }
+
+    if (computed) {
+        renderable->SetMaterialSortKey(key);
+    }
+}
+
+MaterialSortKey BuildFallbackMaterialKey(const Renderable* renderable, uint32_t salt);
 
 BatchableItem CreateBatchableItem(Renderable* renderable) {
     BatchableItem item{};
@@ -23,6 +191,11 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
 
     item.key.layerID = renderable->GetLayerID();
     item.key.renderableType = renderable->GetType();
+    if (renderable->HasMaterialSortKey() && !renderable->IsMaterialSortKeyDirty()) {
+        item.key.materialKey = renderable->GetMaterialSortKey();
+    } else {
+        item.key.materialKey = BuildFallbackMaterialKey(renderable, 0u);
+    }
 
     switch (renderable->GetType()) {
         case RenderableType::Mesh: {
@@ -134,8 +307,47 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
             item.instanceEligible = item.batchable;
             return item;
         }
+        case RenderableType::Text: {
+            item.type = BatchItemType::Text;
+            auto* textRenderable = static_cast<TextRenderable*>(renderable);
+
+            TextRenderBatchData batchData;
+            if (!textRenderable->GatherBatchData(batchData)) {
+                item.batchable = false;
+                return item;
+            }
+
+            item.textData = batchData;
+
+            if (textRenderable->HasMaterialSortKey() && !textRenderable->IsMaterialSortKeyDirty()) {
+                item.key.materialKey = textRenderable->GetMaterialSortKey();
+            }
+
+            item.key.renderableType = RenderableType::Text;
+            item.key.layerID = renderable->GetLayerID();
+            item.key.blendMode = BlendMode::Alpha;
+            item.key.cullFace = CullFace::None;
+            item.key.depthTest = false;
+            item.key.depthWrite = false;
+            item.key.castShadows = false;
+            item.key.receiveShadows = false;
+            item.key.shaderHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(batchData.shader.get()));
+            item.key.meshHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(batchData.mesh.get()));
+            item.key.textureHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(batchData.texture.get()));
+            item.key.viewHash = batchData.viewHash;
+            item.key.projectionHash = batchData.projectionHash;
+            item.key.screenSpace = batchData.screenSpace;
+            item.key.materialHandle = item.key.textureHandle;
+
+            item.batchable = (batchData.texture != nullptr);
+            item.isTransparent = true;
+            item.instanceEligible = false;
+            return item;
+        }
         default:
+            item.type = BatchItemType::Unsupported;
             item.batchable = false;
+            item.isTransparent = renderable->GetTransparentHint();
             return item;
     }
 }
@@ -282,6 +494,7 @@ void Renderer::BeginFrame() {
     // 重置帧统计
     m_stats.Reset();
     m_batchManager.Reset();
+    MaterialStateCache::Get().Reset();
 }
 
 void Renderer::EndFrame() {
@@ -365,6 +578,8 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
         return;
     }
     
+    EnsureMaterialSortKey(renderable);
+
     std::lock_guard<std::mutex> lock(m_mutex);
     m_renderQueue.push_back(renderable);
 }
@@ -480,26 +695,134 @@ BatchingMode Renderer::GetBatchingMode() const {
 }
 
 void Renderer::SortRenderQueue() {
-    // 按以下优先级排序：
-    // 1. 层级 (layerID) - 低层级先渲染
-    // 2. 渲染优先级 (renderPriority) - 低优先级先渲染
-    // 3. 类型 (为了批处理)
-    
-    std::sort(m_renderQueue.begin(), m_renderQueue.end(),
-        [](const Renderable* a, const Renderable* b) {
-            // 先按层级排序
-            if (a->GetLayerID() != b->GetLayerID()) {
-                return a->GetLayerID() < b->GetLayerID();
+    auto isOpaque = [](Renderable* renderable) {
+        return renderable && !renderable->GetTransparentHint();
+    };
+
+    auto partitionIt = std::stable_partition(m_renderQueue.begin(), m_renderQueue.end(), isOpaque);
+
+    auto resolveKey = [](const Renderable* renderable) {
+        if (!renderable) {
+            return MaterialSortKey{};
+        }
+        if (renderable->HasMaterialSortKey() && !renderable->IsMaterialSortKeyDirty()) {
+            return renderable->GetMaterialSortKey();
+        }
+        return BuildFallbackMaterialKey(renderable, 0u);
+    };
+
+    std::stable_sort(m_renderQueue.begin(), partitionIt,
+        [&](Renderable* a, Renderable* b) {
+            if (a == b) {
+                return false;
             }
-            
-            // 再按渲染优先级排序
-            if (a->GetRenderPriority() != b->GetRenderPriority()) {
-                return a->GetRenderPriority() < b->GetRenderPriority();
+            if (!a) {
+                return false;
             }
-            
-            // 最后按类型排序（相同类型一起渲染，提高批处理效率）
+            if (!b) {
+                return true;
+            }
+
+            const uint32_t layerA = a->GetLayerID();
+            const uint32_t layerB = b->GetLayerID();
+            if (layerA != layerB) {
+                return layerA < layerB;
+            }
+
+            const MaterialSortKey keyA = resolveKey(a);
+            const MaterialSortKey keyB = resolveKey(b);
+            if (keyA != keyB) {
+                return MaterialSortKeyLess{}(keyA, keyB);
+            }
+
+            const int32_t priorityA = a->GetRenderPriority();
+            const int32_t priorityB = b->GetRenderPriority();
+            if (priorityA != priorityB) {
+                return priorityA < priorityB;
+            }
+
             return static_cast<int>(a->GetType()) < static_cast<int>(b->GetType());
         });
+
+    if (partitionIt == m_renderQueue.end()) {
+        return;
+    }
+
+    struct TransparentEntry {
+        Renderable* renderable = nullptr;
+        MaterialSortKey materialKey{};
+        float depth = 0.0f;
+        size_t originalIndex = 0;
+        uint32_t layer = 0;
+        int32_t priority = 0;
+    };
+
+    auto computeDepthHint = [](Renderable* renderable) -> float {
+        if (!renderable) {
+            return 0.0f;
+        }
+        if (renderable->HasDepthHint()) {
+            return renderable->GetDepthHint();
+        }
+        Matrix4 world = renderable->GetWorldMatrix();
+        Vector3 position = world.block<3,1>(0, 3);
+        return position.squaredNorm();
+    };
+
+    std::vector<TransparentEntry> transparentEntries;
+    transparentEntries.reserve(static_cast<size_t>(std::distance(partitionIt, m_renderQueue.end())));
+
+    size_t originalIndex = 0;
+    for (auto it = partitionIt; it != m_renderQueue.end(); ++it, ++originalIndex) {
+        Renderable* renderable = *it;
+        TransparentEntry entry{};
+        entry.renderable = renderable;
+        entry.originalIndex = originalIndex;
+        entry.layer = renderable ? renderable->GetLayerID() : 0u;
+        entry.priority = renderable ? renderable->GetRenderPriority() : 0;
+        entry.materialKey = resolveKey(renderable);
+        entry.depth = renderable ? computeDepthHint(renderable) : 0.0f;
+        transparentEntries.push_back(entry);
+    }
+
+    if (transparentEntries.empty()) {
+        return;
+    }
+
+    auto nearlyEqual = [](float a, float b) {
+        return std::fabs(a - b) <= 1e-6f * std::max(1.0f, std::max(std::fabs(a), std::fabs(b)));
+    };
+
+    std::stable_sort(transparentEntries.begin(), transparentEntries.end(),
+        [&](const TransparentEntry& a, const TransparentEntry& b) {
+            if (a.renderable == b.renderable) {
+                return false;
+            }
+
+            if (a.layer != b.layer) {
+                return a.layer < b.layer;
+            }
+
+            if (!nearlyEqual(a.depth, b.depth)) {
+                return a.depth > b.depth;
+            }
+
+            if (a.materialKey != b.materialKey) {
+                return MaterialSortKeyLess{}(a.materialKey, b.materialKey);
+            }
+
+            if (a.priority != b.priority) {
+                return a.priority < b.priority;
+            }
+
+            return a.originalIndex < b.originalIndex;
+        });
+
+    auto assignIt = partitionIt;
+    for (const auto& entry : transparentEntries) {
+        *assignIt = entry.renderable;
+        ++assignIt;
+    }
 }
 
 } // namespace Render

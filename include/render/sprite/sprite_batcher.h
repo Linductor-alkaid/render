@@ -27,13 +27,13 @@ public:
                    const Matrix4& projectionMatrix,
                    bool screenSpace,
                    uint32_t layer,
-                   uint32_t sortOrder,
+                   int32_t sortOrder,
                    BlendMode blendMode = BlendMode::Alpha);
 
     void BuildBatches();
     [[nodiscard]] size_t GetBatchCount() const noexcept;
     [[nodiscard]] uint32_t GetBatchLayer(size_t index) const;
-    [[nodiscard]] uint32_t GetBatchSortOrder(size_t index) const;
+    [[nodiscard]] int32_t GetBatchSortOrder(size_t index) const;
     void DrawBatch(size_t index, RenderState* renderState);
 
     struct SpriteBatchInfo {
@@ -46,7 +46,7 @@ public:
         Matrix4 projectionMatrix = Matrix4::Identity();
         uint32_t instanceCount = 0;
         uint32_t layer = 0;
-        uint32_t sortOrder = 0;
+        int32_t sortOrder = 0;
     };
 
     [[nodiscard]] bool GetBatchInfo(size_t index, SpriteBatchInfo& outInfo) const;
@@ -58,13 +58,15 @@ private:
         bool screenSpace = true;
         uint32_t viewHash = 0;
         uint32_t projectionHash = 0;
+        uint32_t layer = 0;
 
         bool operator==(const SpriteBatchKey& other) const noexcept {
             return texturePtr == other.texturePtr &&
                    blendMode == other.blendMode &&
                    screenSpace == other.screenSpace &&
                    viewHash == other.viewHash &&
-                   projectionHash == other.projectionHash;
+                   projectionHash == other.projectionHash &&
+                   layer == other.layer;
         }
     };
 
@@ -77,7 +79,7 @@ private:
         Vector4 tint{1.0f, 1.0f, 1.0f, 1.0f};
         Ref<Texture> texture;
         uint32_t layer = 0;
-        uint32_t sortOrder = 0;
+        int32_t sortOrder = 0;
     };
 
     struct InstancePayload {
@@ -93,7 +95,7 @@ private:
         Ref<Texture> texture;
         std::vector<InstancePayload> instances;
         uint32_t layer = 0;
-        uint32_t sortOrder = 0;
+        int32_t sortOrder = 0;
     };
 
     static uint32_t HashMatrix(const Matrix4& matrix);

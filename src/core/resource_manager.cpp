@@ -318,6 +318,63 @@ bool ResourceManager::HasSpriteAtlas(const std::string& name) const {
 }
 
 // ============================================================================
+// 字体管理
+// ============================================================================
+
+bool ResourceManager::RegisterFont(const std::string& name, FontPtr font) {
+    if (!font) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer,
+                                 "ResourceManager: 尝试注册空字体: " + name));
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (m_fonts.find(name) != m_fonts.end()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists,
+                                   "ResourceManager: 字体已存在: " + name));
+        return false;
+    }
+
+    m_fonts[name] = ResourceEntry<Font>(font, m_currentFrame);
+    m_dependencyTracker.RegisterResource(name, ResourceType::Font);
+
+    Logger::GetInstance().Debug("ResourceManager: 注册字体: " + name);
+    return true;
+}
+
+FontPtr ResourceManager::GetFont(const std::string& name) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_fonts.find(name);
+    if (it != m_fonts.end()) {
+        it->second.lastAccessFrame = m_currentFrame;
+        return it->second.resource;
+    }
+
+    return nullptr;
+}
+
+bool ResourceManager::RemoveFont(const std::string& name) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_fonts.find(name);
+    if (it != m_fonts.end()) {
+        m_fonts.erase(it);
+        m_dependencyTracker.UnregisterResource(name);
+        Logger::GetInstance().Debug("ResourceManager: 移除字体: " + name);
+        return true;
+    }
+
+    return false;
+}
+
+bool ResourceManager::HasFont(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_fonts.find(name) != m_fonts.end();
+}
+
+// ============================================================================
 // 批量操作
 // ============================================================================
 
@@ -332,6 +389,7 @@ void ResourceManager::Clear() {
     m_materials.clear();
     m_shaders.clear();
     m_spriteAtlases.clear();
+    m_fonts.clear();
     
     // 清理句柄系统
     m_textureSlots.Clear();
@@ -372,6 +430,10 @@ void ResourceManager::ClearType(ResourceType type) {
             m_spriteAtlases.clear();
             Logger::GetInstance().Info("ResourceManager: 清空所有 SpriteAtlas");
             break;
+        case ResourceType::Font:
+            m_fonts.clear();
+            Logger::GetInstance().Info("ResourceManager: 清空所有字体");
+            break;
         case ResourceType::Unknown:
             break;
     }
@@ -388,6 +450,7 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
     std::vector<std::string> materialsToDelete;
     std::vector<std::string> shadersToDelete;
     std::vector<std::string> atlasesToDelete;
+    std::vector<std::string> fontsToDelete;
     
     // 标记纹理
     for (auto& [name, entry] : m_textures) {
@@ -440,6 +503,17 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
 
         if (unused && onlyManagerRef) {
             atlasesToDelete.push_back(name);
+            entry.markedForDeletion = true;
+        }
+    }
+
+    // 标记字体
+    for (auto& [name, entry] : m_fonts) {
+        bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+        bool onlyManagerRef = entry.resource.use_count() == 1;
+
+        if (unused && onlyManagerRef) {
+            fontsToDelete.push_back(name);
             entry.markedForDeletion = true;
         }
     }
@@ -496,6 +570,16 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
             Logger::GetInstance().Debug("ResourceManager: 清理未使用 SpriteAtlas: " + name +
                 " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
             m_spriteAtlases.erase(it);
+            ++cleanedCount;
+        }
+    }
+
+    for (const auto& name : fontsToDelete) {
+        auto it = m_fonts.find(name);
+        if (it != m_fonts.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+            Logger::GetInstance().Debug("ResourceManager: 清理未使用字体: " + name +
+                " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
+            m_fonts.erase(it);
             ++cleanedCount;
         }
     }
@@ -629,6 +713,28 @@ size_t ResourceManager::CleanupUnusedType(ResourceType type, uint32_t unusedFram
             }
             break;
         }
+        case ResourceType::Font: {
+            std::vector<std::string> toDelete;
+            for (auto& [name, entry] : m_fonts) {
+                bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+                bool onlyManagerRef = entry.resource.use_count() == 1;
+
+                if (unused && onlyManagerRef) {
+                    toDelete.push_back(name);
+                    entry.markedForDeletion = true;
+                }
+            }
+
+            for (const auto& name : toDelete) {
+                auto it = m_fonts.find(name);
+                if (it != m_fonts.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+                    Logger::GetInstance().Debug("ResourceManager: 清理未使用字体: " + name);
+                    m_fonts.erase(it);
+                    ++cleanedCount;
+                }
+            }
+            break;
+        }
     }
     
     if (cleanedCount > 0) {
@@ -651,8 +757,9 @@ ResourceStats ResourceManager::GetStats() const {
     stats.materialCount = m_materials.size();
     stats.shaderCount = m_shaders.size();
     stats.spriteAtlasCount = m_spriteAtlases.size();
+    stats.fontCount = m_fonts.size();
     stats.totalCount = stats.textureCount + stats.meshCount + stats.materialCount +
-                       stats.shaderCount + stats.spriteAtlasCount;
+                       stats.shaderCount + stats.spriteAtlasCount + stats.fontCount;
     
     // 计算纹理内存
     for (const auto& [name, entry] : m_textures) {
@@ -693,6 +800,10 @@ long ResourceManager::GetReferenceCount(ResourceType type, const std::string& na
             auto it = m_shaders.find(name);
             return (it != m_shaders.end()) ? it->second.resource.use_count() : 0;
         }
+        case ResourceType::Font: {
+            auto it = m_fonts.find(name);
+            return (it != m_fonts.end()) ? it->second.resource.use_count() : 0;
+        }
     }
     
     return 0;
@@ -709,6 +820,7 @@ void ResourceManager::PrintStatistics() const {
     Logger::GetInstance().Info("材质数量: " + std::to_string(stats.materialCount));
     Logger::GetInstance().Info("着色器数量: " + std::to_string(stats.shaderCount));
     Logger::GetInstance().Info("图集数量: " + std::to_string(stats.spriteAtlasCount));
+    Logger::GetInstance().Info("字体数量: " + std::to_string(stats.fontCount));
     Logger::GetInstance().Info("总资源数量: " + std::to_string(stats.totalCount));
     Logger::GetInstance().Info("----------------------------------------");
     Logger::GetInstance().Info("纹理内存: " + std::to_string(stats.textureMemory / 1024) + " KB");
@@ -767,6 +879,17 @@ std::vector<std::string> ResourceManager::ListSpriteAtlases() const {
     std::vector<std::string> names;
     names.reserve(m_spriteAtlases.size());
     for (const auto& [name, _] : m_spriteAtlases) {
+        names.push_back(name);
+    }
+    return names;
+}
+
+std::vector<std::string> ResourceManager::ListFonts() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    std::vector<std::string> names;
+    names.reserve(m_fonts.size());
+    for (const auto& [name, _] : m_fonts) {
         names.push_back(name);
     }
     return names;
@@ -849,6 +972,23 @@ void ResourceManager::ForEachShader(std::function<void(const std::string&, Ref<S
     }  // 锁释放
     
     // 无锁调用回调，用户可以安全地调用ResourceManager的其他方法
+    for (const auto& [name, resource] : snapshot) {
+        if (callback) {
+            callback(name, resource);
+        }
+    }
+}
+
+void ResourceManager::ForEachFont(std::function<void(const std::string&, FontPtr)> callback) {
+    std::vector<std::pair<std::string, FontPtr>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        snapshot.reserve(m_fonts.size());
+        for (const auto& [name, entry] : m_fonts) {
+            snapshot.emplace_back(name, entry.resource);
+        }
+    }
+
     for (const auto& [name, resource] : snapshot) {
         if (callback) {
             callback(name, resource);

@@ -29,13 +29,13 @@ public:
                    const Matrix4& projectionMatrix,
                    bool screenSpace,
                    uint32_t layer,
-                   uint32_t sortOrder,
+                   int32_t sortOrder,
                    BlendMode blendMode = BlendMode::Alpha);
 
     void BuildBatches();
     size_t GetBatchCount() const;
     uint32_t GetBatchLayer(size_t index) const;
-    uint32_t GetBatchSortOrder(size_t index) const;
+    int32_t GetBatchSortOrder(size_t index) const;
     void DrawBatch(size_t index, RenderState* renderState);
 
     struct SpriteBatchInfo {
@@ -48,7 +48,7 @@ public:
         Matrix4 projectionMatrix;
         uint32_t instanceCount;
         uint32_t layer;
-        uint32_t sortOrder;
+        int32_t sortOrder;
     };
 
     bool GetBatchInfo(size_t index, SpriteBatchInfo& outInfo) const;

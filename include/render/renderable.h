@@ -9,11 +9,33 @@
 #include <Eigen/Dense>
 #include <shared_mutex>
 #include <optional>
+#include <cstdint>
 
 namespace Render {
 
 // 前向声明
 class Renderer;
+class Text;
+class SpriteBatcher;
+class Shader;
+class Mesh;
+class Material;
+class Texture;
+class Text;
+struct TextRenderBatchData;
+
+struct TextRenderBatchData {
+    Ref<Texture> texture;
+    Ref<Mesh> mesh;
+    Ref<Shader> shader;
+    Matrix4 modelMatrix = Matrix4::Identity();
+    Matrix4 viewMatrix = Matrix4::Identity();
+    Matrix4 projectionMatrix = Matrix4::Identity();
+    Color color = Color::White();
+    bool screenSpace = true;
+    uint32_t viewHash = 0;
+    uint32_t projectionHash = 0;
+};
 
 /**
  * @brief 渲染对象类型
@@ -21,7 +43,7 @@ class Renderer;
 enum class RenderableType {
     Mesh,       ///< 3D 网格
     Sprite,     ///< 2D 精灵
-    Text,       ///< 文本（未来）
+    Text,       ///< 文本
     Particle,   ///< 粒子（未来）
     Custom      ///< 自定义
 };
@@ -120,13 +142,13 @@ public:
      * @brief 设置渲染优先级
      * @param priority 优先级
      */
-    void SetRenderPriority(uint32_t priority);
+    void SetRenderPriority(int32_t priority);
     
     /**
      * @brief 获取渲染优先级
      * @return 优先级
      */
-    [[nodiscard]] uint32_t GetRenderPriority() const;
+    [[nodiscard]] int32_t GetRenderPriority() const;
 
     // ==================== 材质排序 ====================
 
@@ -154,6 +176,27 @@ public:
      * @brief 材质排序键是否处于待刷新状态
      */
     [[nodiscard]] bool IsMaterialSortKeyDirty() const;
+
+    /**
+     * @brief 设置透明排序的深度提示值
+     * @param depth 深度提示（通常为到相机的距离，越大表示越远）
+     */
+    void SetDepthHint(float depth);
+
+    /**
+     * @brief 是否已经提供深度提示
+     */
+    [[nodiscard]] bool HasDepthHint() const;
+
+    /**
+     * @brief 获取深度提示
+     */
+    [[nodiscard]] float GetDepthHint() const;
+
+    /**
+     * @brief 清除深度提示
+     */
+    void ClearDepthHint();
 
     /**
      * @brief 设置透明提示标记
@@ -189,12 +232,14 @@ protected:
     Ref<Transform> m_transform;           ///< 变换对象（复用）
     bool m_visible = true;                ///< 可见性
     uint32_t m_layerID = 300;             ///< 渲染层级（WORLD_GEOMETRY）
-    uint32_t m_renderPriority = 0;        ///< 渲染优先级
+    int32_t m_renderPriority = 0;         ///< 渲染优先级
 
     MaterialSortKey m_materialSortKey{};
     bool m_materialSortDirty = true;
     bool m_hasMaterialSortKey = false;
     bool m_transparentHint = false;
+    float m_depthHint = 0.0f;
+    bool m_hasDepthHint = false;
     
     mutable std::shared_mutex m_mutex;    ///< 线程安全锁
 };
@@ -225,6 +270,9 @@ struct MaterialOverride {
                metallic.has_value() || roughness.has_value() || 
                opacity.has_value();
     }
+
+    /// 计算覆盖内容的哈希值（用于材质排序键）
+    [[nodiscard]] uint32_t ComputeHash() const;
     
     /// 清除所有覆盖
     void Clear() {
@@ -478,6 +526,46 @@ private:
     Matrix4 m_viewMatrixOverride = Matrix4::Identity();
     Matrix4 m_projectionMatrixOverride = Matrix4::Identity();
     bool m_useViewProjectionOverride = false;
+};
+
+// ============================================================
+// TextRenderable（文本渲染对象）
+// ============================================================
+
+class TextRenderable : public Renderable {
+public:
+    TextRenderable();
+    ~TextRenderable() override = default;
+
+    TextRenderable(const TextRenderable&) = delete;
+    TextRenderable& operator=(const TextRenderable&) = delete;
+
+    TextRenderable(TextRenderable&& other) noexcept;
+    TextRenderable& operator=(TextRenderable&& other) noexcept;
+
+    void Render(RenderState* renderState = nullptr) override;
+    void SubmitToRenderer(Renderer* renderer) override;
+
+    void SetText(const Ref<Text>& text);
+    [[nodiscard]] Ref<Text> GetText() const;
+
+    void SetViewProjectionOverride(const Matrix4& view, const Matrix4& projection);
+    void ClearViewProjectionOverride();
+
+    [[nodiscard]] AABB GetBoundingBox() const override;
+
+    static void SetViewProjection(const Matrix4& view, const Matrix4& projection);
+    static bool AcquireSharedResources(Ref<Mesh>& outMesh, Ref<Shader>& outShader);
+    static void GetSharedMatrices(Matrix4& outView, Matrix4& outProjection, bool& outInitialized);
+
+    bool GatherBatchData(TextRenderBatchData& outData);
+
+private:
+    Ref<Text> m_text;
+    Matrix4 m_viewMatrixOverride = Matrix4::Identity();
+    Matrix4 m_projectionMatrixOverride = Matrix4::Identity();
+    bool m_useViewProjectionOverride = false;
+    mutable Vector2 m_cachedSize{0.0f, 0.0f};
 };
 
 } // namespace Render

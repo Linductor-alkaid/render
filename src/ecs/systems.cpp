@@ -11,6 +11,9 @@
 #include "render/mesh_loader.h"
 #include "render/math_utils.h"
 #include "render/sprite/sprite_layer.h"
+#include "render/sprite/sprite_nineslice.h"
+#include "render/ecs/sprite_animation_script_registry.h"
+#include "render/debug/sprite_animation_debugger.h"
 
 #include <utility>
 #include <algorithm>
@@ -70,6 +73,176 @@ uint32_t ComputeMaterialOverrideHash(const Render::MaterialOverride& overrideDat
     }
 
     return seed == 0 ? 1u : seed;
+}
+
+const SpriteAnimationState* FindAnimationState(const SpriteAnimationComponent& component, const std::string& stateName) {
+    auto it = component.states.find(stateName);
+    if (it == component.states.end()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+bool InvokeAnimationScripts(const std::vector<std::string>& scripts,
+                            EntityID entity,
+                            const SpriteAnimationEvent& eventData,
+                            SpriteAnimationComponent& component) {
+    bool anyInvoked = false;
+    for (const auto& scriptName : scripts) {
+        if (scriptName.empty()) {
+            continue;
+        }
+        if (SpriteAnimationScriptRegistry::Invoke(scriptName, entity, eventData, component)) {
+            anyInvoked = true;
+        }
+    }
+    return anyInvoked;
+}
+
+bool ApplyAnimationState(EntityID entity,
+                         SpriteAnimationComponent& animComp,
+                         SpriteRenderComponent& spriteComp,
+                         const std::string& stateName) {
+    const SpriteAnimationState* nextState = FindAnimationState(animComp, stateName);
+    if (!nextState) {
+        Logger::GetInstance().WarningFormat("[SpriteAnimationSystem] State '%s' not found", stateName.c_str());
+        return false;
+    }
+
+    if (!animComp.HasClip(nextState->clip)) {
+        Logger::GetInstance().WarningFormat("[SpriteAnimationSystem] Clip '%s' not found for state '%s'",
+                                            nextState->clip.c_str(), stateName.c_str());
+        return false;
+    }
+
+    std::string previousClip = animComp.currentClip;
+    int previousFrame = animComp.currentFrame;
+    const SpriteAnimationState* prevState = FindAnimationState(animComp, animComp.currentState);
+
+    if (prevState && !prevState->onExitScripts.empty()) {
+        SpriteAnimationEvent exitEvent{
+            SpriteAnimationEvent::Type::ClipCompleted,
+            previousClip,
+            previousFrame
+        };
+        InvokeAnimationScripts(prevState->onExitScripts, entity, exitEvent, animComp);
+    }
+
+    animComp.currentState = nextState->name;
+    animComp.stateTime = 0.0f;
+    animComp.playbackSpeed = nextState->playbackSpeed;
+
+    auto& clip = animComp.clips[nextState->clip];
+    if (nextState->playbackMode.has_value()) {
+        clip.playbackMode = *nextState->playbackMode;
+        clip.loop = (clip.playbackMode == SpritePlaybackMode::Loop);
+    }
+
+    animComp.Play(nextState->clip, nextState->resetOnEnter);
+    animComp.SetPlaybackSpeed(nextState->playbackSpeed);
+
+    if (!clip.frames.empty()) {
+        spriteComp.sourceRect = clip.frames[animComp.currentFrame];
+    }
+
+    if (!nextState->onEnterScripts.empty()) {
+        SpriteAnimationEvent enterEvent{
+            SpriteAnimationEvent::Type::ClipStarted,
+            nextState->clip,
+            animComp.currentFrame
+        };
+        InvokeAnimationScripts(nextState->onEnterScripts, entity, enterEvent, animComp);
+    }
+
+    return true;
+}
+
+bool MatchesEventCondition(const SpriteAnimationTransitionCondition& condition,
+                           const std::vector<SpriteAnimationEvent>& events) {
+    for (const auto& evt : events) {
+        if (evt.type != condition.eventType) {
+            continue;
+        }
+        if (!condition.eventClip.empty() && evt.clip != condition.eventClip) {
+            continue;
+        }
+        if (condition.eventFrame >= 0 && evt.frameIndex != condition.eventFrame) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool EvaluateTransitionCondition(const SpriteAnimationTransitionCondition& condition,
+                                 const SpriteAnimationComponent& animComp,
+                                 const std::vector<SpriteAnimationEvent>& events) {
+    switch (condition.type) {
+    case SpriteAnimationTransitionCondition::Type::Always:
+        return true;
+    case SpriteAnimationTransitionCondition::Type::StateTimeGreater:
+        return animComp.stateTime >= condition.threshold;
+    case SpriteAnimationTransitionCondition::Type::Trigger:
+        return animComp.triggers.find(condition.parameter) != animComp.triggers.end();
+    case SpriteAnimationTransitionCondition::Type::BoolEquals:
+        return animComp.GetBoolParameter(condition.parameter, false) == condition.boolValue;
+    case SpriteAnimationTransitionCondition::Type::FloatGreater:
+        return animComp.GetFloatParameter(condition.parameter, 0.0f) > condition.threshold;
+    case SpriteAnimationTransitionCondition::Type::FloatLess:
+        return animComp.GetFloatParameter(condition.parameter, 0.0f) < condition.threshold;
+    case SpriteAnimationTransitionCondition::Type::OnEvent:
+        return MatchesEventCondition(condition, events);
+    default:
+        return false;
+    }
+}
+
+bool ProcessAnimationTransitions(EntityID entity,
+                                 SpriteAnimationComponent& animComp,
+                                 SpriteRenderComponent& spriteComp,
+                                 const std::vector<SpriteAnimationEvent>& events) {
+    if (animComp.transitions.empty()) {
+        return false;
+    }
+
+    for (auto& transition : animComp.transitions) {
+        if (transition.once && transition.consumed) {
+            continue;
+        }
+        if (!transition.fromState.empty() && transition.fromState != animComp.currentState) {
+            continue;
+        }
+        if (transition.toState.empty() || transition.toState == animComp.currentState) {
+            continue;
+        }
+
+        bool satisfied = true;
+        std::vector<std::string> triggersToConsume;
+        for (const auto& condition : transition.conditions) {
+            if (!EvaluateTransitionCondition(condition, animComp, events)) {
+                satisfied = false;
+                break;
+            }
+            if (condition.type == SpriteAnimationTransitionCondition::Type::Trigger) {
+                triggersToConsume.push_back(condition.parameter);
+            }
+        }
+
+        if (!satisfied) {
+            continue;
+        }
+
+        if (ApplyAnimationState(entity, animComp, spriteComp, transition.toState)) {
+            for (const auto& trig : triggersToConsume) {
+                animComp.ResetTrigger(trig);
+            }
+            if (transition.once) {
+                transition.consumed = true;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -1175,6 +1348,7 @@ void MeshRenderSystem::SubmitRenderables() {
             RENDER_ASSERT(transform.transform != nullptr, "Transform is null");
             
             MeshRenderable renderable;
+            renderable.ClearDepthHint();
             renderable.SetMesh(meshComp.mesh);
             renderable.SetMaterial(meshComp.material);
             renderable.SetTransform(transform.transform);
@@ -1300,6 +1474,14 @@ void MeshRenderSystem::SubmitRenderables() {
             Camera* camera = m_cameraSystem->GetMainCameraObject();
             if (camera) {
                 Vector3 cameraPos = camera->GetPosition();
+
+                for (size_t idx : transparentIndices) {
+                    auto& renderable = m_renderables[idx];
+                    auto transformPtr = renderable.GetTransform();
+                    Vector3 pos = transformPtr ? transformPtr->GetPosition() : Vector3::Zero();
+                    float dist = (pos - cameraPos).squaredNorm();
+                    renderable.SetDepthHint(dist);
+                }
                 
                 std::sort(transparentIndices.begin(), transparentIndices.end(),
                     [&](size_t a, size_t b) {
@@ -1314,8 +1496,10 @@ void MeshRenderSystem::SubmitRenderables() {
                         Vector3 posB = transformB ? transformB->GetPosition() : Vector3::Zero();
                         
                         // 计算到相机的距离
-                        float distA = (posA - cameraPos).squaredNorm();
-                        float distB = (posB - cameraPos).squaredNorm();
+                        float distA = renderableA.HasDepthHint() ? renderableA.GetDepthHint()
+                                                                 : (posA - cameraPos).squaredNorm();
+                        float distB = renderableB.HasDepthHint() ? renderableB.GetDepthHint()
+                                                                 : (posB - cameraPos).squaredNorm();
                         
                         // 从远到近排序
                         return distA > distB;
@@ -1406,6 +1590,11 @@ void SpriteAnimationSystem::Update(float deltaTime) {
         auto& animComp = m_world->GetComponent<SpriteAnimationComponent>(entity);
         auto& spriteComp = m_world->GetComponent<SpriteRenderComponent>(entity);
 
+#if defined(DEBUG) || defined(_DEBUG)
+        auto& debugger = SpriteAnimationDebugger::GetInstance();
+        debugger.ApplyPendingCommands(entity, animComp);
+#endif
+
         // 为常见默认值自动应用命名层，便于 UI 与世界层级管理
         if (spriteComp.screenSpace) {
             if (spriteComp.layerID == 800 && spriteComp.sortOrder == 0) {
@@ -1417,7 +1606,24 @@ void SpriteAnimationSystem::Update(float deltaTime) {
             }
         }
 
+        bool stateJustInitialized = false;
+        if (!animComp.states.empty()) {
+            if (animComp.currentState.empty()) {
+                std::string startState = animComp.defaultState;
+                if (startState.empty() || !animComp.HasState(startState)) {
+                    startState = animComp.states.begin()->first;
+                }
+                if (!startState.empty()) {
+                    stateJustInitialized = ApplyAnimationState(entity, animComp, spriteComp, startState);
+                }
+            }
+            if (!stateJustInitialized) {
+                animComp.stateTime += deltaTime;
+            }
+        }
+
         animComp.ClearEvents();
+        animComp.FlushDebugEvents(animComp.events);
         bool needsFrameUpdate = animComp.dirty;
 
         if (animComp.currentClip.empty()) {
@@ -1571,6 +1777,11 @@ void SpriteAnimationSystem::Update(float deltaTime) {
             }
         }
 
+        bool stateChangedThisFrame = false;
+        if (!animComp.states.empty() && !animComp.currentState.empty()) {
+            stateChangedThisFrame = ProcessAnimationTransitions(entity, animComp, spriteComp, animComp.events);
+        }
+
         if (!animComp.eventListeners.empty() && !animComp.events.empty()) {
             for (const auto& evt : animComp.events) {
                 for (const auto& listener : animComp.eventListeners) {
@@ -1580,6 +1791,39 @@ void SpriteAnimationSystem::Update(float deltaTime) {
                 }
             }
         }
+
+        if (!animComp.scriptBindings.empty() && !animComp.events.empty()) {
+            for (const auto& evt : animComp.events) {
+                for (const auto& binding : animComp.scriptBindings) {
+                    if (binding.scriptName.empty()) {
+                        continue;
+                    }
+                    if (binding.eventType != evt.type) {
+                        continue;
+                    }
+                    if (!binding.clip.empty() && binding.clip != evt.clip) {
+                        continue;
+                    }
+                    if (binding.frameIndex >= 0 && binding.frameIndex != evt.frameIndex) {
+                        continue;
+                    }
+                    if (SpriteAnimationScriptRegistry::Invoke(binding.scriptName, entity, evt, animComp)) {
+#if defined(DEBUG) || defined(_DEBUG)
+                        debugger.RecordScriptInvocation(entity, binding.scriptName, evt);
+#endif
+                    }
+                }
+            }
+        }
+
+        if (stateChangedThisFrame) {
+            // 状态切换已在 ApplyAnimationState 中完成，无需额外处理
+        }
+
+#if defined(DEBUG) || defined(_DEBUG)
+        debugger.CaptureSnapshot(entity, animComp, spriteComp);
+        debugger.AppendEvents(entity, animComp.events);
+#endif
     }
 }
 
@@ -1717,8 +1961,37 @@ void SpriteRenderSystem::Update(float deltaTime) {
         if (effectiveSize.y() <= 0.0f) {
             effectiveSize.y() = texHeight > 0.0f ? texHeight : 1.0f;
         }
-        Matrix4 modelMatrix = transform.transform->GetWorldMatrix();
-        modelMatrix *= MathUtils::Scale(Vector3(effectiveSize.x(), effectiveSize.y(), 1.0f));
+        Matrix4 baseMatrix = transform.transform ? transform.transform->GetWorldMatrix() : Matrix4::Identity();
+
+        if (spriteComp.screenSpace && transform.transform) {
+            const float offsetX = spriteComp.subPixelOffset.x();
+            const float offsetY = spriteComp.subPixelOffset.y();
+            if (spriteComp.snapToPixel) {
+                Vector3 worldPos = transform.transform->GetWorldPosition();
+                float snappedX = std::round(worldPos.x()) + offsetX;
+                float snappedY = std::round(worldPos.y()) + offsetY;
+                Vector3 delta(snappedX - worldPos.x(), snappedY - worldPos.y(), 0.0f);
+                if (delta.squaredNorm() > MathUtils::EPSILON) {
+                    baseMatrix = MathUtils::Translate(delta) * baseMatrix;
+                }
+            } else if (std::fabs(offsetX) > MathUtils::EPSILON || std::fabs(offsetY) > MathUtils::EPSILON) {
+                baseMatrix = MathUtils::Translate(Vector3(offsetX, offsetY, 0.0f)) * baseMatrix;
+            }
+        }
+
+        const bool flipX = Render::SpriteUI::HasFlag(spriteComp.flipFlags, Render::SpriteUI::SpriteFlipFlags::FlipX);
+        const bool flipY = Render::SpriteUI::HasFlag(spriteComp.flipFlags, Render::SpriteUI::SpriteFlipFlags::FlipY);
+        if (flipX || flipY) {
+            Vector3 flipOffset(
+                flipX ? effectiveSize.x() : 0.0f,
+                flipY ? effectiveSize.y() : 0.0f,
+                0.0f);
+            Vector3 flipScale(flipX ? -1.0f : 1.0f,
+                              flipY ? -1.0f : 1.0f,
+                              1.0f);
+            baseMatrix *= MathUtils::Translate(flipOffset);
+            baseMatrix *= MathUtils::Scale(flipScale);
+        }
 
         Matrix4 viewForSprite = screenView;
         Matrix4 projForSprite = screenProjection;
@@ -1739,18 +2012,134 @@ void SpriteRenderSystem::Update(float deltaTime) {
             }
         }
 
-        m_batcher.AddSprite(spriteComp.texture,
-                            spriteComp.sourceRect,
-                            effectiveSize,
-                            spriteComp.tintColor,
-                            modelMatrix,
-                            viewForSprite,
-                            projForSprite,
-                            spriteComp.screenSpace,
-                            spriteComp.layerID,
-                            spriteComp.sortOrder);
-        submittedSprites++;
+        auto submitSprite = [&](const Rect& srcRect,
+                                const Vector2& sliceSize,
+                                const Matrix4& sliceMatrix) {
+            m_batcher.AddSprite(spriteComp.texture,
+                                srcRect,
+                                sliceSize,
+                                spriteComp.tintColor,
+                                sliceMatrix,
+                                viewForSprite,
+                                projForSprite,
+                                spriteComp.screenSpace,
+                                spriteComp.layerID,
+                                spriteComp.sortOrder);
+            submittedSprites++;
+        };
+
+        if (spriteComp.nineSlice.IsEnabled()) {
+            Rect srcRectPixels = spriteComp.sourceRect;
+            const bool normalizedRect = std::fabs(srcRectPixels.width) <= 1.0f || std::fabs(srcRectPixels.height) <= 1.0f;
+            if (normalizedRect) {
+                srcRectPixels.x *= texWidth;
+                srcRectPixels.y *= texHeight;
+                srcRectPixels.width *= texWidth;
+                srcRectPixels.height *= texHeight;
+            }
+
+            const float widthPx = std::fabs(srcRectPixels.width);
+            const float heightPx = std::fabs(srcRectPixels.height);
+            const float srcXStart = srcRectPixels.width >= 0.0f ? srcRectPixels.x : srcRectPixels.x + srcRectPixels.width;
+            const float srcYStart = srcRectPixels.height >= 0.0f ? srcRectPixels.y : srcRectPixels.y + srcRectPixels.height;
+
+            if (widthPx < MathUtils::EPSILON || heightPx < MathUtils::EPSILON ||
+                effectiveSize.x() < MathUtils::EPSILON || effectiveSize.y() < MathUtils::EPSILON) {
+                Matrix4 modelMatrix = baseMatrix;
+                modelMatrix *= MathUtils::Scale(Vector3(effectiveSize.x(), effectiveSize.y(), 1.0f));
+                submitSprite(spriteComp.sourceRect, effectiveSize, modelMatrix);
+                continue;
+            }
+
+            const Vector4 borders = spriteComp.nineSlice.borderPixels;
+            const float leftPx = std::clamp(borders.x(), 0.0f, widthPx);
+            const float rightPx = std::clamp(borders.y(), 0.0f, widthPx - leftPx);
+            const float topPx = std::clamp(borders.z(), 0.0f, heightPx);
+            const float bottomPx = std::clamp(borders.w(), 0.0f, heightPx - topPx);
+
+            const float centerWidthPx = std::max(widthPx - leftPx - rightPx, 0.0f);
+            const float centerHeightPx = std::max(heightPx - topPx - bottomPx, 0.0f);
+
+            const float destLeft = widthPx > MathUtils::EPSILON ? effectiveSize.x() * (leftPx / widthPx) : 0.0f;
+            const float destRight = widthPx > MathUtils::EPSILON ? effectiveSize.x() * (rightPx / widthPx) : 0.0f;
+            const float destTop = heightPx > MathUtils::EPSILON ? effectiveSize.y() * (topPx / heightPx) : 0.0f;
+            const float destBottom = heightPx > MathUtils::EPSILON ? effectiveSize.y() * (bottomPx / heightPx) : 0.0f;
+
+            const float destCenterWidth = std::max(effectiveSize.x() - destLeft - destRight, 0.0f);
+            const float destCenterHeight = std::max(effectiveSize.y() - destTop - destBottom, 0.0f);
+
+            const float destWidths[3] = {destLeft, destCenterWidth, destRight};
+            const float destHeights[3] = {destBottom, destCenterHeight, destTop};
+            const float srcWidths[3] = {leftPx, centerWidthPx, rightPx};
+            const float srcHeights[3] = {bottomPx, centerHeightPx, topPx};
+
+            float srcXOffsets[3] = {
+                srcXStart,
+                srcXStart + leftPx,
+                srcXStart + leftPx + centerWidthPx
+            };
+
+            float srcYOffsets[3] = {
+                srcYStart,
+                srcYStart + bottomPx,
+                srcYStart + bottomPx + centerHeightPx
+            };
+
+            float destXOffsets[3] = {
+                0.0f,
+                destLeft,
+                destLeft + destCenterWidth
+            };
+
+            float destYOffsets[3] = {
+                0.0f,
+                destBottom,
+                destBottom + destCenterHeight
+            };
+
+            auto mapIndex = [&](int idx, bool flip) -> int {
+                if (!flip) {
+                    return idx;
+                }
+                if (idx == 0) return 2;
+                if (idx == 2) return 0;
+                return 1;
+            };
+
+            for (int row = 0; row < 3; ++row) {
+                const int mappedRow = mapIndex(row, flipY);
+                if (destHeights[mappedRow] <= MathUtils::EPSILON || srcHeights[row] <= MathUtils::EPSILON) {
+                    continue;
+                }
+                for (int col = 0; col < 3; ++col) {
+                    const int mappedCol = mapIndex(col, flipX);
+                    if (destWidths[mappedCol] <= MathUtils::EPSILON || srcWidths[col] <= MathUtils::EPSILON) {
+                        continue;
+                    }
+
+                    Rect sliceRect;
+                    sliceRect.x = srcXOffsets[col];
+                    sliceRect.y = srcYOffsets[row];
+                    sliceRect.width = srcWidths[col];
+                    sliceRect.height = srcHeights[row];
+
+                    Matrix4 sliceMatrix = baseMatrix;
+                    sliceMatrix *= MathUtils::Translate(Vector3(destXOffsets[mappedCol], destYOffsets[mappedRow], 0.0f));
+                    sliceMatrix *= MathUtils::Scale(Vector3(destWidths[mappedCol], destHeights[mappedRow], 1.0f));
+
+                    submitSprite(sliceRect, Vector2(destWidths[mappedCol], destHeights[mappedRow]), sliceMatrix);
+                }
+            }
+            continue;
+        }
+
+        Matrix4 modelMatrix = baseMatrix;
+        modelMatrix *= MathUtils::Scale(Vector3(effectiveSize.x(), effectiveSize.y(), 1.0f));
+
+        submitSprite(spriteComp.sourceRect, effectiveSize, modelMatrix);
     }
+
+    m_lastSubmittedSpriteCount = submittedSprites;
 
     static bool loggedOnce = false;
     if (submittedSprites > 0 && !loggedOnce) {
@@ -1773,6 +2162,7 @@ void SpriteRenderSystem::Update(float deltaTime) {
         if (!renderable) {
             renderable = std::make_unique<SpriteBatchRenderable>();
         }
+        renderable->ClearDepthHint();
         renderable->SetBatch(&m_batcher, i);
         renderable->SetLayerID(m_batcher.GetBatchLayer(i));
         renderable->SetRenderPriority(m_batcher.GetBatchSortOrder(i));
@@ -1807,6 +2197,9 @@ void SpriteRenderSystem::Update(float deltaTime) {
                  batchInfo.blendMode == BlendMode::Additive ||
                  batchInfo.blendMode == BlendMode::Multiply);
             renderable->SetTransparentHint(transparentHint);
+            const float depthHint = static_cast<float>((batchInfo.screenSpace ? (std::numeric_limits<int32_t>::max() - m_batcher.GetBatchSortOrder(i))
+                                                                             : static_cast<int32_t>(batchCount - i)));
+            renderable->SetDepthHint(depthHint);
         } else {
             renderable->MarkMaterialSortKeyDirty();
         }

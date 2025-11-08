@@ -97,6 +97,30 @@ else()
 endif()
 
 # ============================================================================
+# SDL3_ttf 配置 - 作为子项目编译
+# ============================================================================
+set(SDL3_TTF_DIR ${THIRD_PARTY_DIR}/SDL3_ttf-3.2.2)
+
+# 配置 SDL3_ttf 构建选项
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library" FORCE)
+set(SDLTTF_INSTALL OFF CACHE BOOL "Enable SDL3_ttf install target" FORCE)
+set(SDLTTF_INSTALL_CPACK OFF CACHE BOOL "Disable SDL3_ttf CPack packaging" FORCE)
+set(SDLTTF_SAMPLES OFF CACHE BOOL "Disable SDL3_ttf samples" FORCE)
+set(SDLTTF_VENDORED ON CACHE BOOL "Use vendored dependencies for SDL3_ttf" FORCE)
+set(SDLTTF_HARFBUZZ OFF CACHE BOOL "Disable Harfbuzz for SDL3_ttf" FORCE)
+set(SDLTTF_PLUTOSVG OFF CACHE BOOL "Disable PlutoSVG for SDL3_ttf" FORCE)
+
+if(EXISTS ${SDL3_TTF_DIR}/CMakeLists.txt)
+    message(STATUS "Adding SDL3_ttf as subdirectory: ${SDL3_TTF_DIR}")
+    add_subdirectory(${SDL3_TTF_DIR} ${CMAKE_BINARY_DIR}/SDL3_ttf EXCLUDE_FROM_ALL)
+    set(SDL3_TTF_LIBRARY SDL3_ttf::SDL3_ttf-static)
+    set(SDL3_TTF_INCLUDE_DIRS ${SDL3_TTF_DIR}/include)
+    message(STATUS "SDL3_ttf configured as subproject")
+else()
+    message(FATAL_ERROR "SDL3_ttf source not found at ${SDL3_TTF_DIR}")
+endif()
+
+# ============================================================================
 # Eigen3 配置
 # ============================================================================
 set(EIGEN3_INCLUDE_DIR ${THIRD_PARTY_DIR}/eigen-3.4.0)
@@ -165,6 +189,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${SDL3_INCLUDE_DIRS}
     ${SDL3_IMAGE_INCLUDE_DIRS}
+    ${SDL3_TTF_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIR}
     ${ASSIMP_INCLUDE_DIRS}
     ${GLAD_INCLUDE_DIR}
@@ -201,9 +226,15 @@ set(RENDER_SOURCES
     src/rendering/mesh_loader.cpp
     src/rendering/material.cpp
     src/rendering/material_sort_key.cpp
+    src/rendering/material_state_cache.cpp
     src/rendering/framebuffer.cpp
     src/rendering/renderable.cpp
     src/rendering/render_batching.cpp
+    src/ecs/sprite_animation_script_registry.cpp
+
+    # Debug
+    src/debug/sprite_animation_debugger.cpp
+    src/debug/sprite_animation_debug_panel.cpp
 
     # Sprite
     src/sprite/sprite.cpp
@@ -214,10 +245,17 @@ set(RENDER_SOURCES
     src/sprite/sprite_animator.cpp
     src/sprite/sprite_renderer.cpp
     src/sprite/sprite_layer.cpp
+    
+    # Text
+    src/text/font.cpp
+    src/text/text.cpp
+    src/text/text_renderer.cpp
 
     # Shaders
     shaders/sprite.vert
     shaders/sprite.frag
+    shaders/text.vert
+    shaders/text.frag
     
     # Utils
     src/utils/logger.cpp
@@ -252,6 +290,7 @@ set(RENDER_HEADERS
     include/render/ecs/system.h
     include/render/ecs/systems.h
     include/render/ecs/world.h
+    include/render/ecs/sprite_animation_script_registry.h
     
     # Rendering
     include/render/shader.h
@@ -263,9 +302,12 @@ set(RENDER_HEADERS
     include/render/mesh_loader.h
     include/render/material.h
     include/render/material_sort_key.h
+    include/render/material_state_cache.h
     include/render/framebuffer.h
     include/render/renderable.h
     include/render/render_batching.h
+    include/render/debug/sprite_animation_debugger.h
+    include/render/debug/sprite_animation_debug_panel.h
 
     # Sprite
     include/render/sprite/sprite.h
@@ -276,6 +318,12 @@ set(RENDER_HEADERS
     include/render/sprite/sprite_animator.h
     include/render/sprite/sprite_renderer.h
     include/render/sprite/sprite_layer.h
+    include/render/sprite/sprite_nineslice.h
+    
+    # Text
+    include/render/text/font.h
+    include/render/text/text.h
+    include/render/text/text_renderer.h
     
     # Utils
     include/render/logger.h
@@ -303,6 +351,7 @@ target_link_libraries(RenderEngine
     PUBLIC
         ${SDL3_LIBRARY}
         ${SDL3_IMAGE_LIBRARY}
+        ${SDL3_TTF_LIBRARY}
         ${ASSIMP_LIBRARY}
         ${OPENGL_LIBRARIES}
 )
@@ -354,6 +403,8 @@ message(STATUS "  SDL3 Include: ${SDL3_INCLUDE_DIRS}")
 message(STATUS "  SDL3 Library: ${SDL3_LIBRARY}")
 message(STATUS "  SDL3_image Include: ${SDL3_IMAGE_INCLUDE_DIRS}")
 message(STATUS "  SDL3_image Library: ${SDL3_IMAGE_LIBRARY}")
+message(STATUS "  SDL3_ttf Include: ${SDL3_TTF_INCLUDE_DIRS}")
+message(STATUS "  SDL3_ttf Library: ${SDL3_TTF_LIBRARY}")
 message(STATUS "  Eigen3 Include: ${EIGEN3_INCLUDE_DIR}")
 message(STATUS "  Assimp Include: ${ASSIMP_INCLUDE_DIRS}")
 message(STATUS "  Assimp Library: ${ASSIMP_LIBRARY}")

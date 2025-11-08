@@ -64,7 +64,7 @@
 
 ## 实施阶段
 - 阶段一：引入 `MaterialSortKey` 与 `Material::GetStableID()`，保持原有渲染逻辑，记录材质切换统计。
-- 阶段二：更新 `Renderer::SortRenderQueue()` 与 `BatchManager`，实现不透明对象材质优先排序，透明对象保持原流程。
+- 阶段二：更新 `Renderer::SortRenderQueue()` 与 `BatchManager`，实现不透明对象材质优先排序，透明对象保持原流程。（Renderer 已使用 `MaterialSortKey` 排序并扩展 `RenderBatchKey`，后续按类型补全材质键）
 - 阶段三：引入透明队列的材质稳定排序与 `MaterialStateCache`，裁剪冗余 Uniform 绑定。
 - 阶段四：为 Sprite 管线应用同一策略，统一 UI 与 3D 渲染的材质排序行为。
 - 每个阶段完成后需更新 `docs/api` 对应手册、示例程序，并验证性能回归测试。

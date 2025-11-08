@@ -19,6 +19,7 @@ enum class ResourceType {
     Material,
     Shader,
     SpriteAtlas,
+    Font,
     Unknown
 };
 

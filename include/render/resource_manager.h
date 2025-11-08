@@ -9,6 +9,7 @@
 #include "resource_slot.h"
 #include "resource_dependency.h"
 #include "sprite/sprite_atlas.h"
+#include "text/font.h"
 #include <unordered_map>
 #include <mutex>
 #include <string>
@@ -42,6 +43,7 @@ struct ResourceStats {
     size_t materialCount = 0;
     size_t shaderCount = 0;
     size_t spriteAtlasCount = 0;
+    size_t fontCount = 0;
     size_t totalCount = 0;
     
     size_t textureMemory = 0;    // 纹理内存（字节）
@@ -201,6 +203,15 @@ public:
      * @brief 检查精灵图集是否存在
      */
     bool HasSpriteAtlas(const std::string& name) const;
+
+    // ============================================================================
+    // 字体管理
+    // ============================================================================
+
+    bool RegisterFont(const std::string& name, FontPtr font);
+    FontPtr GetFont(const std::string& name);
+    bool RemoveFont(const std::string& name);
+    bool HasFont(const std::string& name) const;
     
     // ========================================================================
     // 批量操作
@@ -286,6 +297,11 @@ public:
      * @brief 列出所有 SpriteAtlas 名称
      */
     std::vector<std::string> ListSpriteAtlases() const;
+
+    /**
+     * @brief 列出所有字体名称
+     */
+    std::vector<std::string> ListFonts() const;
     
     // ========================================================================
     // 高级功能
@@ -342,6 +358,11 @@ public:
      *       详见 ForEachTexture() 的文档说明。
      */
     void ForEachShader(std::function<void(const std::string&, Ref<Shader>)> callback);
+
+    /**
+     * @brief 遍历字体资源
+     */
+    void ForEachFont(std::function<void(const std::string&, FontPtr)> callback);
     
     // ========================================================================
     // 智能句柄系统（新增）
@@ -562,6 +583,7 @@ private:
     std::unordered_map<std::string, ResourceEntry<Material>> m_materials;
     std::unordered_map<std::string, ResourceEntry<Shader>> m_shaders;
     std::unordered_map<std::string, ResourceEntry<SpriteAtlas>> m_spriteAtlases;
+    std::unordered_map<std::string, ResourceEntry<Font>> m_fonts;
     
     // 智能句柄系统 - 新方式
     ResourceSlotManager<Texture> m_textureSlots;

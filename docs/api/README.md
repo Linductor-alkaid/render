@@ -67,11 +67,18 @@
 - **[SpriteSheet](SpriteSheet.md)** - 图集帧管理
 - **[SpriteAnimator](SpriteAnimator.md)** - 精灵动画播放控制
 - **[SpriteAnimation](SpriteAnimation.md)** - ECS 动画组件与系统事件
+- **[SpriteAnimationScriptRegistry](SpriteAnimationScriptRegistry.md)** - 动画脚本注册表
+- **[SpriteAnimationDebugger](SpriteAnimationDebugger.md)** - 动画调试器与日志面板（Debug 构建）
+- **[SpriteBatch](SpriteBatch.md)** - 渲染批处理框架概述
 - **[SpriteRenderer](SpriteRenderer.md)** - 即时模式 2D 渲染器
 - **[SpriteAtlas](SpriteAtlas.md)** - 带元数据的精灵图集
 - **[SpriteAtlasImporter](SpriteAtlasImporter.md)** - 精灵图集 JSON 导入器
 - **[SpriteBatcher](SpriteBatcher.md)** - 精灵实例批处理器
 - **[SpriteRenderLayer](SpriteRenderLayer.md)** - 精灵渲染层级管理器
+- **[TextRenderable](TextRenderable.md)** - 文本渲染对象
+- **[Text](Text.md)** - 文本数据对象（字符串、颜色、换行）
+- **[Font](Font.md)** - SDL_ttf 字体封装与光栅化
+- **[TextRenderer](TextRenderer.md)** - 即时模式文本渲染器
 
 ### 数学库
 - **[Types](Types.md)** - 数学类型和基础类型定义（Vector, Matrix, Quaternion, Plane, Ray）

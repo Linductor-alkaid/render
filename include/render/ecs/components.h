@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <functional>
 #include <sstream>  // std::ostringstream
+#include "render/sprite/sprite_nineslice.h"
 
 namespace Render {
 
@@ -292,7 +293,7 @@ struct MeshRenderComponent {
     bool castShadows = true;       ///< 是否投射阴影
     bool receiveShadows = true;    ///< 是否接收阴影
     uint32_t layerID = 300;        ///< 渲染层级（默认 WORLD_GEOMETRY）
-    uint32_t renderPriority = 0;   ///< 渲染优先级
+    int32_t renderPriority = 0;    ///< 渲染优先级
     
     // ==================== 材质属性覆盖 ====================
     // 这些属性会在渲染时覆盖材质的默认值
@@ -379,8 +380,12 @@ struct SpriteRenderComponent {
     
     bool visible = true;
     uint32_t layerID = 800;        ///< UI_LAYER
-    uint32_t sortOrder = 0;        ///< 渲染优先级（同层内排序）
+    int32_t sortOrder = 0;         ///< 渲染优先级（同层内排序，可为负）
     bool screenSpace = true;       ///< 是否使用屏幕空间坐标（正交投影）
+    SpriteUI::NineSliceSettings nineSlice{}; ///< 九宫格配置
+    bool snapToPixel = false;       ///< 是否对齐像素网格
+    Vector2 subPixelOffset{0.0f, 0.0f}; ///< 子像素偏移
+    SpriteUI::SpriteFlipFlags flipFlags = SpriteUI::SpriteFlipFlags::None;
     
     bool resourcesLoaded = false;
     bool asyncLoading = false;
@@ -411,6 +416,68 @@ struct SpriteAnimationEvent {
     int frameIndex = 0;
 };
 
+struct SpriteAnimationTransitionCondition {
+    enum class Type {
+        Always,
+        StateTimeGreater,
+        Trigger,
+        BoolEquals,
+        FloatGreater,
+        FloatLess,
+        OnEvent
+    };
+
+    Type type = Type::Always;
+    std::string parameter;
+    float threshold = 0.0f;
+    bool boolValue = true;
+    SpriteAnimationEvent::Type eventType = SpriteAnimationEvent::Type::FrameChanged;
+    std::string eventClip;
+    int eventFrame = -1;
+};
+
+struct SpriteAnimationStateTransition {
+    std::string fromState;
+    std::string toState;
+    std::vector<SpriteAnimationTransitionCondition> conditions;
+    bool once = false;
+    bool consumed = false;
+};
+
+struct SpriteAnimationState {
+    std::string name;
+    std::string clip;
+    float playbackSpeed = 1.0f;
+    std::optional<SpritePlaybackMode> playbackMode;
+    bool resetOnEnter = true;
+    std::vector<std::string> onEnterScripts;
+    std::vector<std::string> onExitScripts;
+};
+
+struct SpriteAnimationScriptBinding {
+    SpriteAnimationEvent::Type eventType = SpriteAnimationEvent::Type::FrameChanged;
+    std::string clip;
+    int frameIndex = -1;
+    std::string scriptName;
+};
+
+struct SpriteAnimationStateMachineDebug {
+    std::string defaultState;
+    std::string currentState;
+    std::string currentClip;
+    int currentFrame = 0;
+    float stateTime = 0.0f;
+    float playbackSpeed = 1.0f;
+    bool playing = false;
+    std::unordered_map<std::string, bool> boolParameters;
+    std::unordered_map<std::string, float> floatParameters;
+    std::vector<std::string> activeTriggers;
+    std::vector<SpriteAnimationState> states;
+    std::vector<SpriteAnimationStateTransition> transitions;
+    std::vector<SpriteAnimationScriptBinding> scriptBindings;
+    std::vector<SpriteAnimationEvent> queuedEvents;
+};
+
 struct SpriteAnimationComponent {
     std::unordered_map<std::string, SpriteAnimationClip> clips; ///< 动画剪辑集合
     std::string currentClip;        ///< 当前播放的剪辑名称
@@ -424,6 +491,18 @@ struct SpriteAnimationComponent {
     std::vector<SpriteAnimationEvent> events; ///< 帧事件（本帧生成）
     using EventListener = std::function<void(EntityID, const SpriteAnimationEvent&)>;
     std::vector<EventListener> eventListeners; ///< 事件监听器
+
+    std::unordered_map<std::string, SpriteAnimationState> states; ///< 状态机配置
+    std::vector<SpriteAnimationStateTransition> transitions; ///< 状态过渡
+    std::vector<SpriteAnimationScriptBinding> scriptBindings; ///< 事件脚本绑定
+    std::string defaultState;      ///< 默认状态
+    std::string currentState;      ///< 当前状态
+    float stateTime = 0.0f;        ///< 当前状态已运行时间
+    std::unordered_map<std::string, bool> boolParameters; ///< 状态参数（布尔）
+    std::unordered_map<std::string, float> floatParameters; ///< 状态参数（浮点）
+    std::unordered_set<std::string> triggers; ///< 单次触发参数
+
+    std::vector<SpriteAnimationEvent> debugEventQueue; ///< 调试注入的事件
 
     SpriteAnimationComponent() = default;
 
@@ -474,6 +553,138 @@ struct SpriteAnimationComponent {
 
     void ClearEventListeners() {
         eventListeners.clear();
+    }
+
+    void SetBoolParameter(const std::string& name, bool value) {
+        boolParameters[name] = value;
+    }
+
+    [[nodiscard]] bool GetBoolParameter(const std::string& name, bool defaultValue = false) const {
+        if (auto it = boolParameters.find(name); it != boolParameters.end()) {
+            return it->second;
+        }
+        return defaultValue;
+    }
+
+    void SetFloatParameter(const std::string& name, float value) {
+        floatParameters[name] = value;
+    }
+
+    [[nodiscard]] float GetFloatParameter(const std::string& name, float defaultValue = 0.0f) const {
+        if (auto it = floatParameters.find(name); it != floatParameters.end()) {
+            return it->second;
+        }
+        return defaultValue;
+    }
+
+    void SetTrigger(const std::string& name) {
+        triggers.insert(name);
+    }
+
+    bool ConsumeTrigger(const std::string& name) {
+        auto it = triggers.find(name);
+        if (it != triggers.end()) {
+            triggers.erase(it);
+            return true;
+        }
+        return false;
+    }
+
+    void ResetTrigger(const std::string& name) {
+        triggers.erase(name);
+    }
+
+    void ClearTriggers() {
+        triggers.clear();
+    }
+
+    void AddState(const SpriteAnimationState& state) {
+        states[state.name] = state;
+    }
+
+    void AddTransition(const SpriteAnimationStateTransition& transition) {
+        transitions.push_back(transition);
+    }
+
+    void AddScriptBinding(const SpriteAnimationScriptBinding& binding) {
+        if (!binding.scriptName.empty()) {
+            scriptBindings.push_back(binding);
+        }
+    }
+
+    void SetDefaultState(const std::string& stateName) {
+        defaultState = stateName;
+    }
+
+    [[nodiscard]] bool HasState(const std::string& stateName) const {
+        return states.find(stateName) != states.end();
+    }
+
+    [[nodiscard]] std::vector<std::string> GetActiveTriggers() const {
+        return std::vector<std::string>(triggers.begin(), triggers.end());
+    }
+
+    void QueueDebugEvent(const SpriteAnimationEvent& evt) {
+        debugEventQueue.push_back(evt);
+    }
+
+    void FlushDebugEvents(std::vector<SpriteAnimationEvent>& target) {
+        if (debugEventQueue.empty()) {
+            return;
+        }
+        target.insert(target.end(), debugEventQueue.begin(), debugEventQueue.end());
+        debugEventQueue.clear();
+    }
+
+    bool ForceState(const std::string& stateName, bool resetTime = true) {
+        auto it = states.find(stateName);
+        if (it == states.end()) {
+            return false;
+        }
+        const auto& state = it->second;
+        currentState = state.name;
+        if (resetTime) {
+            stateTime = 0.0f;
+        }
+        playbackSpeed = state.playbackSpeed;
+
+        if (!HasClip(state.clip)) {
+            return true;
+        }
+
+        auto& clip = clips[state.clip];
+        if (state.playbackMode.has_value()) {
+            clip.playbackMode = *state.playbackMode;
+            clip.loop = (clip.playbackMode == SpritePlaybackMode::Loop);
+        }
+
+        Play(state.clip, state.resetOnEnter);
+        SetPlaybackSpeed(state.playbackSpeed);
+        return true;
+    }
+
+    [[nodiscard]] SpriteAnimationStateMachineDebug GetStateMachineDebug() const {
+        SpriteAnimationStateMachineDebug debugInfo;
+        debugInfo.defaultState = defaultState;
+        debugInfo.currentState = currentState;
+        debugInfo.currentClip = currentClip;
+        debugInfo.currentFrame = currentFrame;
+        debugInfo.stateTime = stateTime;
+        debugInfo.playbackSpeed = playbackSpeed;
+        debugInfo.playing = playing;
+        debugInfo.boolParameters = boolParameters;
+        debugInfo.floatParameters = floatParameters;
+        debugInfo.activeTriggers = GetActiveTriggers();
+        debugInfo.transitions = transitions;
+        debugInfo.scriptBindings = scriptBindings;
+        debugInfo.queuedEvents = debugEventQueue;
+
+        debugInfo.states.reserve(states.size());
+        for (const auto& [name, state] : states) {
+            debugInfo.states.push_back(state);
+        }
+
+        return debugInfo;
     }
 };
 

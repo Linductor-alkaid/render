@@ -69,8 +69,8 @@ public:
     void SetLayerID(uint32_t layerID);
     uint32_t GetLayerID() const;
     
-    void SetRenderPriority(uint32_t priority);
-    uint32_t GetRenderPriority() const;
+    void SetRenderPriority(int32_t priority);
+    int32_t GetRenderPriority() const;
     
     // 类型
     RenderableType GetType() const;
@@ -83,7 +83,7 @@ protected:
     Ref<Transform> m_transform;
     bool m_visible = true;
     uint32_t m_layerID = 300;      // WORLD_GEOMETRY
-    uint32_t m_renderPriority = 0;
+    int32_t m_renderPriority = 0;
     
     mutable std::shared_mutex m_mutex;
 };
