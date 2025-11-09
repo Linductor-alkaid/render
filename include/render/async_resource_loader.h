@@ -4,6 +4,7 @@
 #include "render/mesh.h"
 #include "render/texture.h"
 #include "render/material.h"
+#include "render/model_loader.h"
 #include <memory>
 #include <string>
 #include <functional>
@@ -61,6 +62,10 @@ struct LoadResult {
 using MeshLoadResult = LoadResult<Mesh>;
 using TextureLoadResult = LoadResult<Texture>;
 using MaterialLoadResult = LoadResult<Material>;
+struct ModelLoadResult : LoadResult<Model> {
+    std::vector<std::string> meshResourceNames;
+    std::vector<std::string> materialResourceNames;
+};
 
 /**
  * @brief 加载任务基类
@@ -142,6 +147,44 @@ struct TextureLoadTask : public LoadTaskBase {
     void ExecuteUpload() override {
         try {
             if (uploadFunc && result) {
+                uploadFunc(result);
+            }
+        } catch (const std::exception& e) {
+            errorMessage = "Upload failed: " + std::string(e.what());
+            status = LoadStatus::Failed;
+        }
+    }
+};
+
+struct ModelLoadTask : public LoadTaskBase {
+    using LoadFunc = std::function<ModelLoadOutput()>;
+    using UploadFunc = std::function<void(ModelLoadOutput&)>;
+    using CallbackFunc = std::function<void(const ModelLoadResult&)>;
+
+    LoadFunc loadFunc;
+    UploadFunc uploadFunc;
+    CallbackFunc callback;
+
+    ModelLoadOptions requestedOptions;
+    std::string filepath;
+    std::string overrideName;
+
+    ModelLoadOutput result;
+
+    void ExecuteLoad() override {
+        try {
+            if (loadFunc) {
+                result = loadFunc();
+            }
+        } catch (const std::exception& e) {
+            errorMessage = e.what();
+            status = LoadStatus::Failed;
+        }
+    }
+
+    void ExecuteUpload() override {
+        try {
+            if (uploadFunc) {
                 uploadFunc(result);
             }
         } catch (const std::exception& e) {
@@ -235,6 +278,14 @@ public:
         const std::string& name = "",
         bool generateMipmap = true,
         std::function<void(const TextureLoadResult&)> callback = nullptr,
+        float priority = 0.0f
+    );
+
+    std::shared_ptr<ModelLoadTask> LoadModelAsync(
+        const std::string& filepath,
+        const std::string& name = "",
+        const ModelLoadOptions& options = {},
+        std::function<void(const ModelLoadResult&)> callback = nullptr,
         float priority = 0.0f
     );
     

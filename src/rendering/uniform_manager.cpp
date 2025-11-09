@@ -3,6 +3,8 @@
 #include "render/error.h"
 #include "render/gl_thread_checker.h"
 #include <glad/glad.h>
+#include <algorithm>
+#include <vector>
 
 namespace Render {
 
@@ -149,6 +151,29 @@ void UniformManager::SetVector3Array(const std::string& name, const Vector3* val
     }
 }
 
+void UniformManager::SetVector2Array(const std::string& name, const Vector2* values, uint32_t count) {
+    if (!values) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                                   "UniformManager::SetVector2Array: values pointer is null"));
+        return;
+    }
+
+    if (count == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                                   "UniformManager::SetVector2Array: count is zero"));
+        return;
+    }
+
+    int location = GetOrFindUniformLocation(name);
+    if (location == -1 && name.find('[') == std::string::npos) {
+        location = GetOrFindUniformLocation(name + "[0]");
+    }
+    if (location != -1) {
+        GL_THREAD_CHECK();
+        glUniform2fv(location, count, reinterpret_cast<const float*>(values));
+    }
+}
+
 void UniformManager::SetMatrix4Array(const std::string& name, const Matrix4* values, uint32_t count) {
     // 添加参数验证
     if (!values) {
@@ -190,6 +215,28 @@ void UniformManager::SetVector4Array(const std::string& name, const Vector4* val
     }
 }
 
+void UniformManager::SetColorArray(const std::string& name, const Color* values, uint32_t count) {
+    if (!values) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                                   "UniformManager::SetColorArray: values pointer is null"));
+        return;
+    }
+
+    if (count == 0) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                                   "UniformManager::SetColorArray: count is zero"));
+        return;
+    }
+
+    std::vector<Vector4> converted;
+    converted.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        converted.emplace_back(values[i].r, values[i].g, values[i].b, values[i].a);
+    }
+
+    SetVector4Array(name, converted.data(), count);
+}
+
 bool UniformManager::HasUniform(const std::string& name) const {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
     
@@ -206,6 +253,35 @@ bool UniformManager::HasUniform(const std::string& name) const {
     return location != -1;
 }
 
+void UniformManager::RegisterTextureUniform(const std::string& name, int textureUnit) {
+    if (textureUnit < 0 || textureUnit > 31) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "UniformManager::RegisterTextureUniform: textureUnit out of range (0-31) for '" + name + "'"));
+        textureUnit = std::clamp(textureUnit, 0, 31);
+    }
+
+    int location = GetOrFindUniformLocation(name);
+    if (location == -1) {
+        return;
+    }
+
+    GL_THREAD_CHECK();
+    glUniform1i(location, textureUnit);
+
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    m_textureUnits[name] = textureUnit;
+}
+
+bool UniformManager::TryGetTextureUnit(const std::string& name, int& outTextureUnit) const {
+    std::lock_guard<std::mutex> lock(m_cacheMutex);
+    auto it = m_textureUnits.find(name);
+    if (it == m_textureUnits.end()) {
+        return false;
+    }
+    outTextureUnit = it->second;
+    return true;
+}
+
 int UniformManager::GetUniformLocation(const std::string& name) {
     return GetOrFindUniformLocation(name);
 }
@@ -213,6 +289,7 @@ int UniformManager::GetUniformLocation(const std::string& name) {
 void UniformManager::ClearCache() {
     std::lock_guard<std::mutex> lock(m_cacheMutex);
     m_uniformLocationCache.clear();
+    m_textureUnits.clear();
 }
 
 std::vector<std::string> UniformManager::GetAllUniformNames() const {

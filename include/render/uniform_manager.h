@@ -80,6 +80,11 @@ public:
     void SetVector3Array(const std::string& name, const Vector3* values, uint32_t count);
     
     /**
+     * @brief 设置 Vector2 数组
+     */
+    void SetVector2Array(const std::string& name, const Vector2* values, uint32_t count);
+    
+    /**
      * @brief 设置 Matrix4 数组
      */
     void SetMatrix4Array(const std::string& name, const Matrix4* values, uint32_t count);
@@ -88,11 +93,31 @@ public:
      * @brief 设置 Vector4 数组
      */
     void SetVector4Array(const std::string& name, const Vector4* values, uint32_t count);
+
+    /**
+     * @brief 设置颜色数组
+     */
+    void SetColorArray(const std::string& name, const Color* values, uint32_t count);
     
     /**
      * @brief 检查 uniform 是否存在
      */
     bool HasUniform(const std::string& name) const;
+
+    /**
+     * @brief 注册纹理采样器 uniform 并绑定到指定纹理单元
+     * @param name uniform 名称
+     * @param textureUnit 纹理单元（0-31）
+     */
+    void RegisterTextureUniform(const std::string& name, int textureUnit);
+
+    /**
+     * @brief 获取已注册的纹理单元
+     * @param name uniform 名称
+     * @param outTextureUnit 输出纹理单元
+     * @return 如果 uniform 已注册，返回 true
+     */
+    bool TryGetTextureUnit(const std::string& name, int& outTextureUnit) const;
     
     /**
      * @brief 获取 uniform 位置
@@ -120,6 +145,7 @@ private:
     // Uniform 位置缓存
     mutable std::unordered_map<std::string, int> m_uniformLocationCache;
     mutable std::mutex m_cacheMutex;  // 保护缓存的互斥锁
+    mutable std::unordered_map<std::string, int> m_textureUnits; // 已注册的纹理单元
     
     /**
      * @brief 获取或查找 uniform 位置

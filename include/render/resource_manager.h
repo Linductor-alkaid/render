@@ -4,6 +4,7 @@
 #include "texture.h"
 #include "mesh.h"
 #include "material.h"
+#include "model.h"
 #include "shader.h"
 #include "resource_handle.h"
 #include "resource_slot.h"
@@ -40,6 +41,7 @@ struct ResourceEntry {
 struct ResourceStats {
     size_t textureCount = 0;
     size_t meshCount = 0;
+    size_t modelCount = 0;
     size_t materialCount = 0;
     size_t shaderCount = 0;
     size_t spriteAtlasCount = 0;
@@ -131,6 +133,30 @@ public:
      * @brief 检查网格是否存在
      */
     bool HasMesh(const std::string& name) const;
+
+    // ========================================================================
+    // 模型管理
+    // ========================================================================
+
+    /**
+     * @brief 注册模型资源
+     */
+    bool RegisterModel(const std::string& name, ModelPtr model);
+
+    /**
+     * @brief 获取模型资源
+     */
+    ModelPtr GetModel(const std::string& name);
+
+    /**
+     * @brief 移除模型资源
+     */
+    bool RemoveModel(const std::string& name);
+
+    /**
+     * @brief 检查模型是否存在
+     */
+    bool HasModel(const std::string& name) const;
     
     // ========================================================================
     // 材质管理
@@ -259,13 +285,7 @@ public:
      * @brief 获取资源统计信息
      */
     ResourceStats GetStats() const;
-    
-    /**
-     * @brief 获取指定资源的引用计数
-     * @param type 资源类型
-     * @param name 资源名称
-     * @return 引用计数，资源不存在返回 0
-     */
+    void RegisterDefaultGeometry();
     long GetReferenceCount(ResourceType type, const std::string& name) const;
     
     /**
@@ -282,6 +302,11 @@ public:
      * @brief 列出所有网格名称
      */
     std::vector<std::string> ListMeshes() const;
+
+    /**
+     * @brief 列出所有模型名称
+     */
+    std::vector<std::string> ListModels() const;
     
     /**
      * @brief 列出所有材质名称
@@ -340,6 +365,12 @@ public:
      *       详见 ForEachTexture() 的文档说明。
      */
     void ForEachMesh(std::function<void(const std::string&, Ref<Mesh>)> callback);
+
+    /**
+     * @brief 遍历所有模型
+     * @param callback 回调函数 (name, model)
+     */
+    void ForEachModel(std::function<void(const std::string&, ModelPtr)> callback);
     
     /**
      * @brief 遍历所有材质
@@ -580,6 +611,7 @@ private:
     // 资源存储（使用 ResourceEntry 封装）- 传统方式
     std::unordered_map<std::string, ResourceEntry<Texture>> m_textures;
     std::unordered_map<std::string, ResourceEntry<Mesh>> m_meshes;
+    std::unordered_map<std::string, ResourceEntry<Model>> m_models;
     std::unordered_map<std::string, ResourceEntry<Material>> m_materials;
     std::unordered_map<std::string, ResourceEntry<Shader>> m_shaders;
     std::unordered_map<std::string, ResourceEntry<SpriteAtlas>> m_spriteAtlases;
@@ -602,7 +634,7 @@ private:
     
     // 依赖关系跟踪器
     ResourceDependencyTracker m_dependencyTracker;
-    
+    std::once_flag m_geometryInitFlag;
     // 线程安全
     mutable std::mutex m_mutex;
 };

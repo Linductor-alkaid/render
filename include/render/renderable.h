@@ -6,6 +6,7 @@
 #include "render/material.h"
 #include "render/texture.h"
 #include "render/material_sort_key.h"
+#include "render/model.h"
 #include <Eigen/Dense>
 #include <shared_mutex>
 #include <optional>
@@ -42,6 +43,7 @@ struct TextRenderBatchData {
  */
 enum class RenderableType {
     Mesh,       ///< 3D 网格
+    Model,      ///< 组合模型
     Sprite,     ///< 2D 精灵
     Text,       ///< 文本
     Particle,   ///< 粒子（未来）
@@ -403,6 +405,49 @@ private:
     MaterialOverride m_materialOverride;  ///< 材质属性覆盖
     bool m_castShadows = true;            ///< 是否投射阴影
     bool m_receiveShadows = true;         ///< 是否接收阴影
+};
+
+/**
+ * @brief ModelRenderable（组合模型渲染对象）
+ *
+ * 负责渲染包含多个子网格/材质的 `Model`。该渲染对象会在渲染阶段遍历
+ * `ModelPart`，依次绑定材质并绘制网格，同时支持统一的透明度提示与包围盒计算。
+ */
+class ModelRenderable : public Renderable {
+public:
+    ModelRenderable();
+    ~ModelRenderable() override = default;
+
+    ModelRenderable(const ModelRenderable&) = delete;
+    ModelRenderable& operator=(const ModelRenderable&) = delete;
+
+    ModelRenderable(ModelRenderable&& other) noexcept;
+    ModelRenderable& operator=(ModelRenderable&& other) noexcept;
+
+    void Render(RenderState* renderState = nullptr) override;
+    void SubmitToRenderer(Renderer* renderer) override;
+
+    void SetModel(const ModelPtr& model);
+    [[nodiscard]] ModelPtr GetModel() const;
+
+    [[nodiscard]] size_t GetPartCount() const;
+    [[nodiscard]] bool HasSkinning() const;
+
+    void SetCastShadows(bool cast);
+    [[nodiscard]] bool GetCastShadows() const;
+
+    void SetReceiveShadows(bool receive);
+    [[nodiscard]] bool GetReceiveShadows() const;
+
+    [[nodiscard]] AABB GetBoundingBox() const override;
+
+private:
+    void UpdateTransparencyHintLocked();
+
+private:
+    ModelPtr m_model;
+    bool m_castShadows = true;
+    bool m_receiveShadows = true;
 };
 
 // ============================================================

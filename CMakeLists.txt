@@ -232,6 +232,10 @@ set(RENDER_SOURCES
     src/rendering/framebuffer.cpp
     src/rendering/renderable.cpp
     src/rendering/render_batching.cpp
+    src/rendering/model.cpp
+    src/rendering/model_loader.cpp
+    src/rendering/skinning.cpp
+    src/rendering/geometry_preset.cpp
     src/ecs/sprite_animation_script_registry.cpp
 
     # Debug
@@ -310,6 +314,9 @@ set(RENDER_HEADERS
     include/render/framebuffer.h
     include/render/renderable.h
     include/render/render_batching.h
+    include/render/model.h
+    include/render/model_loader.h
+    include/render/geometry_preset.h
     include/render/debug/sprite_animation_debugger.h
     include/render/debug/sprite_animation_debug_panel.h
 

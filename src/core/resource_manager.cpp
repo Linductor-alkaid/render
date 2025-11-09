@@ -1,6 +1,7 @@
 #include "render/resource_manager.h"
 #include "render/logger.h"
 #include "render/error.h"
+#include "render/geometry_preset.h"
 #include <algorithm>
 #include <fstream>
 
@@ -11,7 +12,14 @@ ResourceManager& ResourceManager::GetInstance() {
     return instance;
 }
 
+void ResourceManager::RegisterDefaultGeometry() {
+    std::call_once(m_geometryInitFlag, [&]() {
+        GeometryPreset::RegisterDefaults(*this);
+    });
+}
+
 void ResourceManager::BeginFrame() {
+    RegisterDefaultGeometry();
     std::lock_guard<std::mutex> lock(m_mutex);
     ++m_currentFrame;
 }
@@ -138,6 +146,64 @@ bool ResourceManager::RemoveMesh(const std::string& name) {
 bool ResourceManager::HasMesh(const std::string& name) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_meshes.find(name) != m_meshes.end();
+}
+
+// ============================================================================
+// 模型管理
+// ============================================================================
+
+bool ResourceManager::RegisterModel(const std::string& name, ModelPtr model) {
+    if (!model) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NullPointer,
+                                 "ResourceManager: 尝试注册空模型: " + name));
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (m_models.find(name) != m_models.end()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::ResourceAlreadyExists,
+                                   "ResourceManager: 模型已存在: " + name));
+        return false;
+    }
+
+    m_models[name] = ResourceEntry<Model>(std::move(model), m_currentFrame);
+
+    m_dependencyTracker.RegisterResource(name, ResourceType::Model);
+
+    Logger::GetInstance().Debug("ResourceManager: 注册模型: " + name);
+    return true;
+}
+
+ModelPtr ResourceManager::GetModel(const std::string& name) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_models.find(name);
+    if (it != m_models.end()) {
+        it->second.lastAccessFrame = m_currentFrame;
+        return it->second.resource;
+    }
+
+    return nullptr;
+}
+
+bool ResourceManager::RemoveModel(const std::string& name) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_models.find(name);
+    if (it != m_models.end()) {
+        m_models.erase(it);
+        m_dependencyTracker.UnregisterResource(name);
+        Logger::GetInstance().Debug("ResourceManager: 移除模型: " + name);
+        return true;
+    }
+
+    return false;
+}
+
+bool ResourceManager::HasModel(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_models.find(name) != m_models.end();
 }
 
 // ============================================================================
@@ -386,6 +452,7 @@ void ResourceManager::Clear() {
     // 清理传统资源存储
     m_textures.clear();
     m_meshes.clear();
+    m_models.clear();
     m_materials.clear();
     m_shaders.clear();
     m_spriteAtlases.clear();
@@ -418,6 +485,10 @@ void ResourceManager::ClearType(ResourceType type) {
             m_meshes.clear();
             Logger::GetInstance().Info("ResourceManager: 清空所有网格");
             break;
+        case ResourceType::Model:
+            m_models.clear();
+            Logger::GetInstance().Info("ResourceManager: 清空所有模型");
+            break;
         case ResourceType::Material:
             m_materials.clear();
             Logger::GetInstance().Info("ResourceManager: 清空所有材质");
@@ -448,6 +519,7 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
     std::vector<std::string> texturesToDelete;
     std::vector<std::string> meshesToDelete;
     std::vector<std::string> materialsToDelete;
+    std::vector<std::string> modelsToDelete;
     std::vector<std::string> shadersToDelete;
     std::vector<std::string> atlasesToDelete;
     std::vector<std::string> fontsToDelete;
@@ -474,6 +546,17 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
         }
     }
     
+    // 标记模型
+    for (auto& [name, entry] : m_models) {
+        bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+        bool onlyManagerRef = entry.resource.use_count() == 1;
+
+        if (unused && onlyManagerRef) {
+            modelsToDelete.push_back(name);
+            entry.markedForDeletion = true;
+        }
+    }
+
     // 标记材质
     for (auto& [name, entry] : m_materials) {
         bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
@@ -541,6 +624,17 @@ size_t ResourceManager::CleanupUnused(uint32_t unusedFrames) {
         }
     }
     
+    // 删除模型
+    for (const auto& name : modelsToDelete) {
+        auto it = m_models.find(name);
+        if (it != m_models.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+            Logger::GetInstance().Debug("ResourceManager: 清理未使用模型: " + name +
+                " (已 " + std::to_string(m_currentFrame - it->second.lastAccessFrame) + " 帧未使用)");
+            m_models.erase(it);
+            ++cleanedCount;
+        }
+    }
+
     // 删除材质
     for (const auto& name : materialsToDelete) {
         auto it = m_materials.find(name);
@@ -639,6 +733,29 @@ size_t ResourceManager::CleanupUnusedType(ResourceType type, uint32_t unusedFram
                 if (it != m_meshes.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
                     Logger::GetInstance().Debug("ResourceManager: 清理未使用网格: " + name);
                     m_meshes.erase(it);
+                    ++cleanedCount;
+                }
+            }
+            break;
+        }
+
+        case ResourceType::Model: {
+            std::vector<std::string> toDelete;
+            for (auto& [name, entry] : m_models) {
+                bool unused = (m_currentFrame - entry.lastAccessFrame) > unusedFrames;
+                bool onlyManagerRef = entry.resource.use_count() == 1;
+
+                if (unused && onlyManagerRef) {
+                    toDelete.push_back(name);
+                    entry.markedForDeletion = true;
+                }
+            }
+
+            for (const auto& name : toDelete) {
+                auto it = m_models.find(name);
+                if (it != m_models.end() && it->second.markedForDeletion && it->second.resource.use_count() == 1) {
+                    Logger::GetInstance().Debug("ResourceManager: 清理未使用模型: " + name);
+                    m_models.erase(it);
                     ++cleanedCount;
                 }
             }
@@ -754,11 +871,12 @@ ResourceStats ResourceManager::GetStats() const {
     ResourceStats stats;
     stats.textureCount = m_textures.size();
     stats.meshCount = m_meshes.size();
+    stats.modelCount = m_models.size();
     stats.materialCount = m_materials.size();
     stats.shaderCount = m_shaders.size();
     stats.spriteAtlasCount = m_spriteAtlases.size();
     stats.fontCount = m_fonts.size();
-    stats.totalCount = stats.textureCount + stats.meshCount + stats.materialCount +
+    stats.totalCount = stats.textureCount + stats.meshCount + stats.modelCount + stats.materialCount +
                        stats.shaderCount + stats.spriteAtlasCount + stats.fontCount;
     
     // 计算纹理内存
@@ -792,6 +910,10 @@ long ResourceManager::GetReferenceCount(ResourceType type, const std::string& na
             auto it = m_meshes.find(name);
             return (it != m_meshes.end()) ? it->second.resource.use_count() : 0;
         }
+        case ResourceType::Model: {
+            auto it = m_models.find(name);
+            return (it != m_models.end()) ? it->second.resource.use_count() : 0;
+        }
         case ResourceType::Material: {
             auto it = m_materials.find(name);
             return (it != m_materials.end()) ? it->second.resource.use_count() : 0;
@@ -817,6 +939,7 @@ void ResourceManager::PrintStatistics() const {
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("纹理数量: " + std::to_string(stats.textureCount));
     Logger::GetInstance().Info("网格数量: " + std::to_string(stats.meshCount));
+    Logger::GetInstance().Info("模型数量: " + std::to_string(stats.modelCount));
     Logger::GetInstance().Info("材质数量: " + std::to_string(stats.materialCount));
     Logger::GetInstance().Info("着色器数量: " + std::to_string(stats.shaderCount));
     Logger::GetInstance().Info("图集数量: " + std::to_string(stats.spriteAtlasCount));
@@ -846,6 +969,17 @@ std::vector<std::string> ResourceManager::ListMeshes() const {
     std::vector<std::string> names;
     names.reserve(m_meshes.size());
     for (const auto& [name, _] : m_meshes) {
+        names.push_back(name);
+    }
+    return names;
+}
+
+std::vector<std::string> ResourceManager::ListModels() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    std::vector<std::string> names;
+    names.reserve(m_models.size());
+    for (const auto& [name, _] : m_models) {
         names.push_back(name);
     }
     return names;
@@ -932,6 +1066,23 @@ void ResourceManager::ForEachMesh(std::function<void(const std::string&, Ref<Mes
     }  // 锁释放
     
     // 无锁调用回调，用户可以安全地调用ResourceManager的其他方法
+    for (const auto& [name, resource] : snapshot) {
+        if (callback) {
+            callback(name, resource);
+        }
+    }
+}
+
+void ResourceManager::ForEachModel(std::function<void(const std::string&, ModelPtr)> callback) {
+    std::vector<std::pair<std::string, ModelPtr>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        snapshot.reserve(m_models.size());
+        for (const auto& [name, entry] : m_models) {
+            snapshot.emplace_back(name, entry.resource);
+        }
+    }
+
     for (const auto& [name, resource] : snapshot) {
         if (callback) {
             callback(name, resource);

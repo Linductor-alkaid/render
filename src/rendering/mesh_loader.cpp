@@ -2,10 +2,15 @@
 #include "render/material.h"
 #include "render/texture_loader.h"
 #include "render/logger.h"
+#include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <limits>
+#include <unordered_map>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/config.h>
 #include <filesystem>
 #include <thread>
 #include <chrono>
@@ -18,20 +23,117 @@
 namespace Render {
 
 // ============================================================================
+// 辅助函数 - Assimp 常用转换
+// ============================================================================
+
+static Matrix4 ConvertMatrix(const aiMatrix4x4& matrix) {
+    Matrix4 result;
+    result(0, 0) = matrix.a1; result(0, 1) = matrix.a2; result(0, 2) = matrix.a3; result(0, 3) = matrix.a4;
+    result(1, 0) = matrix.b1; result(1, 1) = matrix.b2; result(1, 2) = matrix.b3; result(1, 3) = matrix.b4;
+    result(2, 0) = matrix.c1; result(2, 1) = matrix.c2; result(2, 2) = matrix.c3; result(2, 3) = matrix.c4;
+    result(3, 0) = matrix.d1; result(3, 1) = matrix.d2; result(3, 2) = matrix.d3; result(3, 3) = matrix.d4;
+    return result;
+}
+
+static std::string ResolveBasePath(const std::string& filepath, const std::string& overrideBasePath) {
+    if (!overrideBasePath.empty()) {
+        return overrideBasePath;
+    }
+    size_t lastSlash = filepath.find_last_of("/\\");
+    if (lastSlash != std::string::npos) {
+        return filepath.substr(0, lastSlash);
+    }
+    return ".";
+}
+
+static unsigned int GeneratePostProcessFlags(const MeshImportOptions& options) {
+    unsigned int flags = 0;
+    if (options.triangulate) {
+        flags |= aiProcess_Triangulate;
+    }
+    if (options.generateSmoothNormals) {
+        flags |= aiProcess_GenSmoothNormals;
+    }
+    if (options.calculateTangentSpace) {
+        flags |= aiProcess_CalcTangentSpace;
+    }
+    if (options.joinIdenticalVertices) {
+        flags |= aiProcess_JoinIdenticalVertices;
+    }
+    if (options.sortByPrimitiveType) {
+        flags |= aiProcess_SortByPType;
+    }
+    if (options.improveCacheLocality) {
+        flags |= aiProcess_ImproveCacheLocality;
+    }
+    if (options.optimizeMeshes) {
+        flags |= aiProcess_OptimizeMeshes;
+    }
+    if (options.validateDataStructure) {
+        flags |= aiProcess_ValidateDataStructure;
+    }
+    if (options.generateUVCoords) {
+        flags |= aiProcess_GenUVCoords;
+    }
+    if (options.transformUVCoords) {
+        flags |= aiProcess_TransformUVCoords;
+    }
+    if (options.findInvalidData) {
+        flags |= aiProcess_FindInvalidData;
+    }
+    if (options.populateArmatureData) {
+        flags |= aiProcess_PopulateArmatureData;
+    }
+    return flags;
+}
+
+static const aiNode* FindNodeByName(const aiNode* node, const std::string& target) {
+    if (!node) {
+        return nullptr;
+    }
+    if (target == node->mName.C_Str()) {
+        return node;
+    }
+    for (unsigned int i = 0; i < node->mNumChildren; ++i) {
+        if (const aiNode* found = FindNodeByName(node->mChildren[i], target)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+// ============================================================================
 // 辅助函数 - Assimp 网格处理
 // ============================================================================
 
 /**
  * @brief 处理单个 Assimp 网格并转换为引擎网格对象
  */
-static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene, bool autoUpload = true) {
+static Ref<Mesh> ProcessAssimpMesh(
+    aiMesh* assimpMesh,
+    const aiScene* scene,
+    bool autoUpload = true,
+    MeshExtraData* extraData = nullptr,
+    const MeshImportOptions* options = nullptr) {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    const bool hasTangents = assimpMesh->HasTangentsAndBitangents();
+    bool hasPrimaryUV = assimpMesh->mTextureCoords[0] != nullptr;
+    bool requireTangentRecalculate = !hasTangents;
+    const float tangentEpsilon = 1e-5f;
+
+    if (extraData) {
+        extraData->uvChannels.clear();
+        extraData->colorChannels.clear();
+        extraData->skinning.Clear();
+    }
     
     // 提取顶点数据
     vertices.reserve(assimpMesh->mNumVertices);
     for (uint32_t i = 0; i < assimpMesh->mNumVertices; i++) {
         Vertex vertex;
+        vertex.tangent = Vector3::Zero();
+        vertex.bitangent = Vector3::Zero();
         
         // 位置（必须有）
         vertex.position = Vector3(
@@ -72,8 +174,76 @@ static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene, boo
         } else {
             vertex.color = Color::White();
         }
+
+        if (hasTangents) {
+            vertex.tangent = Vector3(
+                assimpMesh->mTangents[i].x,
+                assimpMesh->mTangents[i].y,
+                assimpMesh->mTangents[i].z
+            );
+            vertex.bitangent = Vector3(
+                assimpMesh->mBitangents[i].x,
+                assimpMesh->mBitangents[i].y,
+                assimpMesh->mBitangents[i].z
+            );
+            if (vertex.tangent.squaredNorm() < tangentEpsilon || vertex.bitangent.squaredNorm() < tangentEpsilon) {
+                requireTangentRecalculate = true;
+            }
+        }
         
         vertices.push_back(vertex);
+    }
+
+    // 收集额外的 UV 通道
+    if (extraData) {
+        unsigned int uvChannelCount = assimpMesh->GetNumUVChannels();
+        if (uvChannelCount > 0) {
+            unsigned int channelsToStore = uvChannelCount;
+            if (options && !options->gatherAdditionalUVs) {
+                channelsToStore = std::min<unsigned int>(1u, uvChannelCount);
+            }
+            extraData->uvChannels.resize(channelsToStore);
+            for (unsigned int channel = 0; channel < channelsToStore; ++channel) {
+                auto& uvData = extraData->uvChannels[channel];
+                uvData.reserve(assimpMesh->mNumVertices);
+                if (assimpMesh->mTextureCoords[channel]) {
+                    for (uint32_t i = 0; i < assimpMesh->mNumVertices; ++i) {
+                        uvData.emplace_back(
+                            assimpMesh->mTextureCoords[channel][i].x,
+                            assimpMesh->mTextureCoords[channel][i].y
+                        );
+                    }
+                } else {
+                    for (uint32_t i = 0; i < assimpMesh->mNumVertices; ++i) {
+                        uvData.emplace_back(0.0f, 0.0f);
+                    }
+                }
+            }
+        }
+
+        // 收集额外颜色通道
+        unsigned int colorChannelCount = assimpMesh->GetNumColorChannels();
+        if (colorChannelCount > 0) {
+            unsigned int channelsToStore = colorChannelCount;
+            if (options && !options->gatherVertexColors) {
+                channelsToStore = std::min<unsigned int>(1u, colorChannelCount);
+            }
+            extraData->colorChannels.resize(channelsToStore);
+            for (unsigned int channel = 0; channel < channelsToStore; ++channel) {
+                auto& colorData = extraData->colorChannels[channel];
+                colorData.reserve(assimpMesh->mNumVertices);
+                if (assimpMesh->HasVertexColors(channel)) {
+                    for (uint32_t i = 0; i < assimpMesh->mNumVertices; ++i) {
+                        const auto& color = assimpMesh->mColors[channel][i];
+                        colorData.emplace_back(color.r, color.g, color.b, color.a);
+                    }
+                } else {
+                    for (uint32_t i = 0; i < assimpMesh->mNumVertices; ++i) {
+                        colorData.push_back(Color::White());
+                    }
+                }
+            }
+        }
     }
     
     // 提取索引数据
@@ -85,8 +255,136 @@ static Ref<Mesh> ProcessAssimpMesh(aiMesh* assimpMesh, const aiScene* scene, boo
         }
     }
     
+    if (hasTangents) {
+        const float EPSILON = 1e-6f;
+        for (auto& vertex : vertices) {
+            Vector3 normal = vertex.normal;
+            if (normal.squaredNorm() < EPSILON) {
+                normal = Vector3::UnitY();
+            } else {
+                normal.normalize();
+            }
+
+            Vector3 tangent = vertex.tangent;
+            if (tangent.squaredNorm() < EPSILON) {
+                tangent = Vector3::UnitX();
+            }
+            tangent = tangent - normal * normal.dot(tangent);
+            float tLen = tangent.norm();
+            if (tLen < EPSILON) {
+                tangent = Vector3::UnitX();
+            } else {
+                tangent /= tLen;
+            }
+
+            Vector3 bitangent = vertex.bitangent;
+            float handedness = 1.0f;
+            if (bitangent.squaredNorm() >= EPSILON) {
+                handedness = (normal.cross(tangent).dot(bitangent) < 0.0f) ? -1.0f : 1.0f;
+            }
+            bitangent = normal.cross(tangent) * handedness;
+
+            vertex.normal = normal;
+            vertex.tangent = tangent;
+            vertex.bitangent = bitangent;
+        }
+    }
+
+    // 蒙皮数据采集
+    if (extraData && options && options->gatherBones && assimpMesh->HasBones()) {
+        auto& skinning = extraData->skinning;
+        skinning.Clear();
+        skinning.bones.reserve(assimpMesh->mNumBones);
+        skinning.boneOffsetMatrices.reserve(assimpMesh->mNumBones);
+        skinning.vertexWeights.resize(assimpMesh->mNumVertices);
+        skinning.boneNameToIndex.reserve(assimpMesh->mNumBones);
+
+        std::vector<std::vector<std::pair<uint32_t, float>>> rawWeights(assimpMesh->mNumVertices);
+
+        for (uint32_t boneIdx = 0; boneIdx < assimpMesh->mNumBones; ++boneIdx) {
+            aiBone* bone = assimpMesh->mBones[boneIdx];
+            MeshBoneInfo boneInfo;
+            boneInfo.name = bone->mName.C_Str();
+            boneInfo.parentName.clear();
+            boneInfo.vertexWeights.reserve(bone->mNumWeights);
+            uint32_t boneIndex = static_cast<uint32_t>(skinning.bones.size());
+            skinning.boneNameToIndex[boneInfo.name] = boneIndex;
+            skinning.bones.push_back(std::move(boneInfo));
+            skinning.boneOffsetMatrices.push_back(ConvertMatrix(bone->mOffsetMatrix));
+
+            for (uint32_t weightIdx = 0; weightIdx < bone->mNumWeights; ++weightIdx) {
+                const aiVertexWeight& weight = bone->mWeights[weightIdx];
+                if (weight.mVertexId >= assimpMesh->mNumVertices) {
+                    continue;
+                }
+                rawWeights[weight.mVertexId].emplace_back(boneIndex, weight.mWeight);
+            }
+        }
+
+        // 填充父骨骼信息（如存在）
+        if (scene && scene->mRootNode) {
+            for (auto& boneInfo : skinning.bones) {
+                const aiNode* boneNode = FindNodeByName(scene->mRootNode, boneInfo.name);
+                if (!boneNode) {
+                    continue;
+                }
+                if (boneNode->mParent) {
+                    boneInfo.parentName = boneNode->mParent->mName.C_Str();
+                }
+            }
+        }
+
+        const bool limitWeights = options->limitBoneWeightsPerVertex && options->maxBoneWeightsPerVertex > 0;
+        const bool normalizeWeights = options->normalizeBoneWeights;
+
+        for (uint32_t vertexIndex = 0; vertexIndex < assimpMesh->mNumVertices; ++vertexIndex) {
+            auto& weights = rawWeights[vertexIndex];
+            if (weights.empty()) {
+                continue;
+            }
+
+            if (limitWeights && weights.size() > options->maxBoneWeightsPerVertex) {
+                std::sort(weights.begin(), weights.end(), [](const auto& lhs, const auto& rhs) {
+                    return lhs.second > rhs.second;
+                });
+                weights.resize(options->maxBoneWeightsPerVertex);
+            }
+
+            float weightSum = 0.0f;
+            for (const auto& entry : weights) {
+                weightSum += entry.second;
+            }
+
+            if (weightSum > 0.0f && normalizeWeights) {
+                for (auto& entry : weights) {
+                    entry.second /= weightSum;
+                }
+            }
+
+            auto& vertexWeightsForVertex = skinning.vertexWeights[vertexIndex];
+            vertexWeightsForVertex.reserve(weights.size());
+
+            for (const auto& entry : weights) {
+                const uint32_t boneIndex = entry.first;
+                const float weight = entry.second;
+                vertexWeightsForVertex.push_back({ boneIndex, weight });
+                if (boneIndex < skinning.bones.size()) {
+                    skinning.bones[boneIndex].vertexWeights.push_back({ vertexIndex, weight });
+                }
+            }
+        }
+    }
+
     // 创建网格
     auto mesh = CreateRef<Mesh>(vertices, indices);
+
+    if (requireTangentRecalculate) {
+        if (hasPrimaryUV) {
+            mesh->RecalculateTangents();
+        } else {
+            Logger::GetInstance().Warning("MeshLoader: 由于缺少有效切线且没有 UV，无法重建切线空间");
+        }
+    }
     
     // ⭐ v0.12.0: 条件上传（支持异步加载）
     if (autoUpload) {
@@ -338,6 +636,73 @@ static void ProcessAssimpNodeWithMaterials(
     }
 }
 
+/**
+ * @brief 递归处理节点并采集额外数据
+ */
+static void ProcessAssimpNodeDetailed(
+    aiNode* node,
+    const aiScene* scene,
+    const MeshImportOptions& options,
+    const std::string& basePath,
+    Ref<Shader> shader,
+    const Matrix4& parentTransform,
+    std::vector<MeshImportResult>& results)
+{
+    Matrix4 localTransform = ConvertMatrix(node->mTransformation);
+    Matrix4 worldTransform = parentTransform * localTransform;
+
+    for (uint32_t i = 0; i < node->mNumMeshes; ++i) {
+        aiMesh* assimpMesh = scene->mMeshes[node->mMeshes[i]];
+
+        MeshExtraData extra;
+        extra.localTransform = localTransform;
+        extra.worldTransform = worldTransform;
+        extra.assimpMeshIndex = node->mMeshes[i];
+
+        auto mesh = ProcessAssimpMesh(assimpMesh, scene, options.autoUpload, &extra, &options);
+
+        Ref<Material> material = nullptr;
+        if (options.loadMaterials &&
+            assimpMesh->mMaterialIndex >= 0 &&
+            assimpMesh->mMaterialIndex < scene->mNumMaterials) {
+            material = ProcessAssimpMaterial(
+                scene->mMaterials[assimpMesh->mMaterialIndex],
+                scene,
+                basePath,
+                shader,
+                assimpMesh->mMaterialIndex
+            );
+        }
+
+        std::string meshName = assimpMesh->mName.C_Str();
+        if (meshName.empty()) {
+            meshName = node->mName.C_Str();
+        }
+        if (meshName.empty()) {
+            meshName = "Mesh_" + std::to_string(results.size());
+        }
+
+        MeshImportResult result;
+        result.mesh = mesh;
+        result.material = material;
+        result.name = meshName;
+        result.extra = std::move(extra);
+        results.push_back(std::move(result));
+    }
+
+    for (uint32_t i = 0; i < node->mNumChildren; ++i) {
+        ProcessAssimpNodeDetailed(
+            node->mChildren[i],
+            scene,
+            options,
+            basePath,
+            shader,
+            worldTransform,
+            results
+        );
+    }
+}
+
 // ============================================================================
 // MeshLoader - 文件加载实现
 // ============================================================================
@@ -415,16 +780,7 @@ std::vector<MeshWithMaterial> MeshLoader::LoadFromFileWithMaterials(
     Logger::GetInstance().Info("Loading model with materials from file: " + filepath);
     
     // 确定纹理搜索基础路径
-    std::string actualBasePath = basePath;
-    if (actualBasePath.empty()) {
-        // 使用模型文件所在目录作为基础路径（简化处理）
-        size_t lastSlash = filepath.find_last_of("/\\");
-        if (lastSlash != std::string::npos) {
-            actualBasePath = filepath.substr(0, lastSlash);
-        } else {
-            actualBasePath = ".";
-        }
-    }
+    std::string actualBasePath = ResolveBasePath(filepath, basePath);
     
     Logger::GetInstance().Info("Texture base path: " + actualBasePath);
     
@@ -477,9 +833,88 @@ std::vector<MeshWithMaterial> MeshLoader::LoadFromFileWithMaterials(
     return results;
 }
 
+std::vector<MeshImportResult> MeshLoader::LoadDetailedFromFile(
+    const std::string& filepath,
+    const MeshImportOptions& options,
+    const std::string& basePath,
+    Ref<Shader> shader)
+{
+    std::vector<MeshImportResult> results;
+
+    Logger::GetInstance().Info("Loading detailed model from file: " + filepath);
+
+    Assimp::Importer importer;
+    if (options.limitBoneWeightsPerVertex && options.maxBoneWeightsPerVertex > 0) {
+        importer.SetPropertyInteger(
+            AI_CONFIG_PP_LBW_MAX_WEIGHTS,
+            static_cast<int>(options.maxBoneWeightsPerVertex)
+        );
+    }
+
+    unsigned int postProcessFlags = GeneratePostProcessFlags(options);
+    if (options.flipUVs) {
+        postProcessFlags |= aiProcess_FlipUVs;
+    }
+
+    const aiScene* scene = importer.ReadFile(filepath, postProcessFlags);
+    if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+        Logger::GetInstance().Error("Assimp failed to load model: " + std::string(importer.GetErrorString()));
+        return results;
+    }
+
+    std::string actualBasePath = ResolveBasePath(filepath, basePath);
+    Matrix4 identity = Matrix4::Identity();
+
+    ProcessAssimpNodeDetailed(
+        scene->mRootNode,
+        scene,
+        options,
+        actualBasePath,
+        shader,
+        identity,
+        results
+    );
+
+    Logger::GetInstance().Info("Detailed model loading complete. Total meshes: " + std::to_string(results.size()));
+
+    return results;
+}
+
 // ============================================================================
 // MeshLoader 实现
 // ============================================================================
+
+namespace {
+
+float SanitizePositive(const char* name, float value, float fallback = 1.0f) {
+    if (value > std::numeric_limits<float>::epsilon()) {
+        return value;
+    }
+    Logger::GetInstance().WarningFormat("[MeshLoader] %s must be > 0 (received %.3f). Using fallback %.3f.",
+        name, value, fallback);
+    return fallback;
+}
+
+float SanitizeNonNegative(const char* name, float value, float fallback = 0.0f) {
+    if (value >= 0.0f) {
+        return value;
+    }
+    Logger::GetInstance().WarningFormat("[MeshLoader] %s must be >= 0 (received %.3f). Using fallback %.3f.",
+        name, value, fallback);
+    return fallback;
+}
+
+uint32_t SanitizeSegments(const char* name, uint32_t value, uint32_t minValue, uint32_t fallback) {
+    if (value >= minValue) {
+        return value;
+    }
+    uint32_t clamped = std::max(minValue, fallback);
+    Logger::GetInstance().WarningFormat("[MeshLoader] %s must be >= %u (received %u). Using %u.",
+        name, minValue, value, clamped);
+    return clamped;
+}
+
+} // namespace
 
 Ref<Mesh> MeshLoader::CreatePlane(float width, float height, 
                                    uint32_t widthSegments, uint32_t heightSegments,
@@ -487,9 +922,10 @@ Ref<Mesh> MeshLoader::CreatePlane(float width, float height,
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
-    // 确保至少有 1 个分段
-    widthSegments = std::max(1u, widthSegments);
-    heightSegments = std::max(1u, heightSegments);
+    width = SanitizePositive("width", width);
+    height = SanitizePositive("height", height);
+    widthSegments = SanitizeSegments("widthSegments", widthSegments, 1u, 1u);
+    heightSegments = SanitizeSegments("heightSegments", heightSegments, 1u, 1u);
     
     float halfWidth = width * 0.5f;
     float halfHeight = height * 0.5f;
@@ -535,6 +971,7 @@ Ref<Mesh> MeshLoader::CreatePlane(float width, float height,
     }
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created plane mesh: " + std::to_string(vertices.size()) + " vertices");
@@ -545,6 +982,13 @@ Ref<Mesh> MeshLoader::CreateCube(float width, float height, float depth, const C
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
+    width = SanitizePositive("width", width, 1.0f);
+    height = SanitizePositive("height", height, 1.0f);
+    depth = SanitizePositive("depth", depth, 1.0f);
+
+    width = SanitizePositive("width", width, 1.0f);
+    height = SanitizePositive("height", height, 1.0f);
+
     float hw = width * 0.5f;
     float hh = height * 0.5f;
     float hd = depth * 0.5f;
@@ -601,6 +1045,7 @@ Ref<Mesh> MeshLoader::CreateCube(float width, float height, float depth, const C
     }
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created cube mesh: " + std::to_string(vertices.size()) + " vertices");
@@ -611,8 +1056,9 @@ Ref<Mesh> MeshLoader::CreateSphere(float radius, uint32_t segments, uint32_t rin
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
-    segments = std::max(3u, segments);
-    rings = std::max(2u, rings);
+    radius = SanitizePositive("radius", radius, 0.5f);
+    segments = SanitizeSegments("segments", segments, 3u, 32u);
+    rings = SanitizeSegments("rings", rings, 2u, 16u);
     
     // 生成顶点
     for (uint32_t ring = 0; ring <= rings; ++ring) {
@@ -659,6 +1105,7 @@ Ref<Mesh> MeshLoader::CreateSphere(float radius, uint32_t segments, uint32_t rin
     }
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created sphere mesh: " + std::to_string(vertices.size()) + " vertices");
@@ -670,7 +1117,10 @@ Ref<Mesh> MeshLoader::CreateCylinder(float radiusTop, float radiusBottom, float 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
-    segments = std::max(3u, segments);
+    radiusTop = SanitizeNonNegative("radiusTop", radiusTop, 0.5f);
+    radiusBottom = SanitizeNonNegative("radiusBottom", radiusBottom, 0.5f);
+    height = SanitizePositive("height", height, 1.0f);
+    segments = SanitizeSegments("segments", segments, 3u, 32u);
     float halfHeight = height * 0.5f;
     
     // ========== 侧面 ==========
@@ -776,6 +1226,7 @@ Ref<Mesh> MeshLoader::CreateCylinder(float radiusTop, float radiusBottom, float 
     }
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created cylinder mesh: " + std::to_string(vertices.size()) + " vertices");
@@ -793,8 +1244,10 @@ Ref<Mesh> MeshLoader::CreateTorus(float majorRadius, float minorRadius,
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
-    majorSegments = std::max(3u, majorSegments);
-    minorSegments = std::max(3u, minorSegments);
+    majorRadius = SanitizePositive("majorRadius", majorRadius, 1.0f);
+    minorRadius = SanitizePositive("minorRadius", minorRadius, 0.3f);
+    majorSegments = SanitizeSegments("majorSegments", majorSegments, 3u, 32u);
+    minorSegments = SanitizeSegments("minorSegments", minorSegments, 3u, 16u);
     
     // 生成顶点
     for (uint32_t i = 0; i <= majorSegments; ++i) {
@@ -850,6 +1303,7 @@ Ref<Mesh> MeshLoader::CreateTorus(float majorRadius, float minorRadius,
     }
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created torus mesh: " + std::to_string(vertices.size()) + " vertices");
@@ -861,8 +1315,10 @@ Ref<Mesh> MeshLoader::CreateCapsule(float radius, float height, uint32_t segment
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
-    segments = std::max(3u, segments);
-    rings = std::max(1u, rings);
+    radius = SanitizePositive("radius", radius, 0.5f);
+    height = SanitizeNonNegative("height", height, 1.0f);
+    segments = SanitizeSegments("segments", segments, 3u, 32u);
+    rings = SanitizeSegments("rings", rings, 1u, 8u);
     
     float halfHeight = height * 0.5f;
     
@@ -997,6 +1453,7 @@ Ref<Mesh> MeshLoader::CreateCapsule(float radius, float height, uint32_t segment
     }
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created capsule mesh: " + std::to_string(vertices.size()) + " vertices");
@@ -1020,6 +1477,7 @@ Ref<Mesh> MeshLoader::CreateQuad(float width, float height, const Color& color) 
     indices = { 0, 1, 2, 0, 2, 3 };
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created quad mesh: 4 vertices");
@@ -1030,7 +1488,8 @@ Ref<Mesh> MeshLoader::CreateTriangle(float size, const Color& color) {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
-    float h = size * 0.866f;  // sqrt(3) / 2
+    size = SanitizePositive("size", size, 1.0f);
+    float h = size * 0.86602540378f;  // sqrt(3) / 2
     float halfSize = size * 0.5f;
     
     // 等边三角形（XY 平面，法线向 +Z）
@@ -1041,6 +1500,7 @@ Ref<Mesh> MeshLoader::CreateTriangle(float size, const Color& color) {
     indices = { 0, 1, 2 };
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created triangle mesh: 3 vertices");
@@ -1051,7 +1511,8 @@ Ref<Mesh> MeshLoader::CreateCircle(float radius, uint32_t segments, const Color&
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     
-    segments = std::max(3u, segments);
+    radius = SanitizePositive("radius", radius, 0.5f);
+    segments = SanitizeSegments("segments", segments, 3u, 32u);
     
     // 中心点
     vertices.push_back(Vertex(Vector3(0, 0, 0), Vector2(0.5f, 0.5f), Vector3(0, 0, 1), color));
@@ -1080,6 +1541,7 @@ Ref<Mesh> MeshLoader::CreateCircle(float radius, uint32_t segments, const Color&
     }
     
     auto mesh = CreateRef<Mesh>(vertices, indices);
+    mesh->RecalculateTangents();
     mesh->Upload();
     
     Logger::GetInstance().Info("Created circle mesh: " + std::to_string(vertices.size()) + " vertices");

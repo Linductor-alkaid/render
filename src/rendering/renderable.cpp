@@ -11,6 +11,10 @@
 #include "render/text/text.h"
 
 #include <algorithm>
+#include <array>
+#include <vector>
+#include <limits>
+#include <cmath>
 #include <mutex>
 #include <cstdint>
 #include <functional>
@@ -29,6 +33,9 @@ constexpr const char* kTextMeshResourceName = "__engine_text_quad";
 constexpr const char* kTextShaderResourceName = "__engine_text_shader";
 constexpr const char* kTextShaderVertPath = "shaders/text.vert";
 constexpr const char* kTextShaderFragPath = "shaders/text.frag";
+
+constexpr size_t kMaxExtraUVSets = 4;
+constexpr size_t kMaxExtraColorSets = 4;
 
 struct SpriteSharedResources {
     std::mutex mutex;
@@ -627,6 +634,270 @@ AABB MeshRenderable::GetBoundingBox() const {
     }
     
     return localBounds;
+}
+
+// ============================================================
+// ModelRenderable 实现
+// ============================================================
+
+ModelRenderable::ModelRenderable()
+    : Renderable(RenderableType::Model) {
+}
+
+ModelRenderable::ModelRenderable(ModelRenderable&& other) noexcept
+    : Renderable(std::move(other)),
+      m_model(std::move(other.m_model)) {
+}
+
+ModelRenderable& ModelRenderable::operator=(ModelRenderable&& other) noexcept {
+    if (this != &other) {
+        Renderable::operator=(std::move(other));
+        m_model = std::move(other.m_model);
+    }
+    return *this;
+}
+
+void ModelRenderable::Render(RenderState* renderState) {
+    ModelPtr model;
+    Ref<Transform> transform;
+    {
+        std::shared_lock lock(m_mutex);
+        if (!m_visible || !m_model) {
+            return;
+        }
+        model = m_model;
+        transform = m_transform;
+    }
+
+    if (!model) {
+        return;
+    }
+
+    Matrix4 worldMatrix = Matrix4::Identity();
+    if (transform) {
+        worldMatrix = transform->GetWorldMatrix();
+    }
+
+    model->AccessParts([&](const std::vector<ModelPart>& parts) {
+        for (const auto& part : parts) {
+            if (!part.mesh || !part.material) {
+                continue;
+            }
+
+            if (!part.mesh->IsUploaded()) {
+                part.mesh->Upload();
+            }
+
+            if (part.extraData) {
+                std::vector<Vector2> extraUVScales;
+                extraUVScales.reserve(kMaxExtraUVSets);
+                if (part.extraData->uvChannels.size() > 1) {
+                    for (size_t channel = 1; channel < part.extraData->uvChannels.size() && extraUVScales.size() < kMaxExtraUVSets; ++channel) {
+                        const auto& channelData = part.extraData->uvChannels[channel];
+                        if (channelData.empty()) {
+                            continue;
+                        }
+                        Vector2 minUV(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+                        Vector2 maxUV(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+                        for (const auto& uv : channelData) {
+                            minUV.x() = std::min(minUV.x(), uv.x());
+                            minUV.y() = std::min(minUV.y(), uv.y());
+                            maxUV.x() = std::max(maxUV.x(), uv.x());
+                            maxUV.y() = std::max(maxUV.y(), uv.y());
+                        }
+                        Vector2 scale = maxUV - minUV;
+                        if (std::abs(scale.x()) < std::numeric_limits<float>::epsilon()) {
+                            scale.x() = 1.0f;
+                        }
+                        if (std::abs(scale.y()) < std::numeric_limits<float>::epsilon()) {
+                            scale.y() = 1.0f;
+                        }
+                        extraUVScales.push_back(scale);
+                    }
+                }
+                part.material->SetVector2Array("uExtraUVSetScales[0]", extraUVScales);
+                part.material->SetInt("uExtraUVSetCount", static_cast<int>(extraUVScales.size()));
+
+                std::vector<Color> extraColorSets;
+                extraColorSets.reserve(kMaxExtraColorSets);
+                for (size_t channel = 0; channel < part.extraData->colorChannels.size() && extraColorSets.size() < kMaxExtraColorSets; ++channel) {
+                    const auto& channelData = part.extraData->colorChannels[channel];
+                    if (channelData.empty()) {
+                        continue;
+                    }
+                    Color accum(0.0f, 0.0f, 0.0f, 0.0f);
+                    for (const auto& c : channelData) {
+                        accum.r += c.r;
+                        accum.g += c.g;
+                        accum.b += c.b;
+                        accum.a += c.a;
+                    }
+                    float inv = 1.0f / static_cast<float>(channelData.size());
+                    accum.r *= inv;
+                    accum.g *= inv;
+                    accum.b *= inv;
+                    accum.a *= inv;
+                    extraColorSets.push_back(accum);
+                }
+                part.material->SetColorArray("uExtraColorSets[0]", extraColorSets);
+                part.material->SetInt("uExtraColorSetCount", static_cast<int>(extraColorSets.size()));
+            } else {
+                part.material->SetVector2Array("uExtraUVSetScales[0]", {});
+                part.material->SetInt("uExtraUVSetCount", 0);
+                part.material->SetColorArray("uExtraColorSets[0]", {});
+                part.material->SetInt("uExtraColorSetCount", 0);
+            }
+
+            auto& stateCache = MaterialStateCache::Get();
+            part.material->Bind(renderState);
+            stateCache.OnBind(part.material.get(), renderState);
+
+            if (auto shader = part.material->GetShader()) {
+                if (shader->IsValid()) {
+                    if (auto* uniformMgr = shader->GetUniformManager()) {
+                        Matrix4 partMatrix = worldMatrix * part.localTransform;
+                        uniformMgr->SetMatrix4("uModel", partMatrix);
+                        if (uniformMgr->HasUniform("uHasInstanceData")) {
+                            uniformMgr->SetBool("uHasInstanceData", false);
+                        }
+                    }
+                }
+            }
+
+            part.mesh->Draw();
+        }
+    });
+}
+
+void ModelRenderable::SubmitToRenderer(Renderer* renderer) {
+    if (renderer) {
+        renderer->SubmitRenderable(this);
+    }
+}
+
+void ModelRenderable::SetModel(const ModelPtr& model) {
+    std::unique_lock lock(m_mutex);
+    m_model = model;
+    m_materialSortDirty = true;
+    m_hasMaterialSortKey = false;
+    UpdateTransparencyHintLocked();
+}
+
+ModelPtr ModelRenderable::GetModel() const {
+    std::shared_lock lock(m_mutex);
+    return m_model;
+}
+
+size_t ModelRenderable::GetPartCount() const {
+    auto model = GetModel();
+    if (!model) {
+        return 0;
+    }
+
+    size_t count = 0;
+    model->AccessParts([&](const std::vector<ModelPart>& parts) {
+        count = parts.size();
+    });
+    return count;
+}
+
+bool ModelRenderable::HasSkinning() const {
+    auto model = GetModel();
+    if (!model) {
+        return false;
+    }
+    return model->HasSkinning();
+}
+
+void ModelRenderable::SetCastShadows(bool cast) {
+    std::unique_lock lock(m_mutex);
+    m_castShadows = cast;
+    m_materialSortDirty = true;
+}
+
+bool ModelRenderable::GetCastShadows() const {
+    std::shared_lock lock(m_mutex);
+    return m_castShadows;
+}
+
+void ModelRenderable::SetReceiveShadows(bool receive) {
+    std::unique_lock lock(m_mutex);
+    m_receiveShadows = receive;
+    m_materialSortDirty = true;
+}
+
+bool ModelRenderable::GetReceiveShadows() const {
+    std::shared_lock lock(m_mutex);
+    return m_receiveShadows;
+}
+
+AABB ModelRenderable::GetBoundingBox() const {
+    ModelPtr model;
+    Ref<Transform> transform;
+    {
+        std::shared_lock lock(m_mutex);
+        model = m_model;
+        transform = m_transform;
+    }
+
+    if (!model) {
+        return AABB();
+    }
+
+    AABB modelBounds = model->GetBounds();
+
+    if (transform) {
+        Matrix4 worldMatrix = transform->GetWorldMatrix();
+        std::array<Vector3, 8> corners = {
+            Vector3(modelBounds.min.x(), modelBounds.min.y(), modelBounds.min.z()),
+            Vector3(modelBounds.max.x(), modelBounds.min.y(), modelBounds.min.z()),
+            Vector3(modelBounds.min.x(), modelBounds.max.y(), modelBounds.min.z()),
+            Vector3(modelBounds.max.x(), modelBounds.max.y(), modelBounds.min.z()),
+            Vector3(modelBounds.min.x(), modelBounds.min.y(), modelBounds.max.z()),
+            Vector3(modelBounds.max.x(), modelBounds.min.y(), modelBounds.max.z()),
+            Vector3(modelBounds.min.x(), modelBounds.max.y(), modelBounds.max.z()),
+            Vector3(modelBounds.max.x(), modelBounds.max.y(), modelBounds.max.z())
+        };
+
+        Vector3 worldMin = (worldMatrix * Vector4(corners[0].x(), corners[0].y(), corners[0].z(), 1.0f)).head<3>();
+        Vector3 worldMax = worldMin;
+
+        for (size_t i = 1; i < corners.size(); ++i) {
+            Vector3 transformed = (worldMatrix * Vector4(corners[i].x(), corners[i].y(), corners[i].z(), 1.0f)).head<3>();
+            worldMin = worldMin.cwiseMin(transformed);
+            worldMax = worldMax.cwiseMax(transformed);
+        }
+
+        return AABB(worldMin, worldMax);
+    }
+
+    return modelBounds;
+}
+
+void ModelRenderable::UpdateTransparencyHintLocked() {
+    bool transparent = false;
+    if (m_model) {
+        m_model->AccessParts([&](const std::vector<ModelPart>& parts) {
+            for (const auto& part : parts) {
+                if (!part.material) {
+                    continue;
+                }
+
+                const auto blend = part.material->GetBlendMode();
+                if (blend == BlendMode::Alpha || blend == BlendMode::Additive || blend == BlendMode::Custom) {
+                    transparent = true;
+                    break;
+                }
+
+                if (part.material->GetOpacity() < 1.0f) {
+                    transparent = true;
+                    break;
+                }
+            }
+        });
+    }
+
+    m_transparentHint = transparent;
 }
 
 // ============================================================

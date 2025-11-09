@@ -1,6 +1,6 @@
 # AsyncResourceLoader API 参考
 
-[返回文档首页](README.md)
+[返回 API 首页](README.md)
 
 ---
 
@@ -70,6 +70,14 @@ public:
         const std::string& name = "",
         bool generateMipmap = true,
         std::function<void(const TextureLoadResult&)> callback = nullptr,
+        float priority = 0.0f
+    );
+    
+    std::shared_ptr<ModelLoadTask> LoadModelAsync(
+        const std::string& filepath,
+        const std::string& name = "",
+        const ModelLoadOptions& options = {},
+        std::function<void(const ModelLoadResult&)> callback = nullptr,
         float priority = 0.0f
     );
     
@@ -149,6 +157,25 @@ struct LoadResult {
     bool IsSuccess() const;
 };
 ```
+
+### ModelLoadTask / ModelLoadResult (v1.1 新增)
+
+```cpp
+struct ModelLoadTask : LoadTaskBase {
+    ModelLoadOptions requestedOptions;
+    std::string filepath;
+    std::string overrideName;
+    ModelLoadOutput result;
+    std::function<void(const ModelLoadResult&)> callback;
+};
+
+struct ModelLoadResult : LoadResult<Model> {
+    std::vector<std::string> meshResourceNames;
+    std::vector<std::string> materialResourceNames;
+};
+```
+
+> `ModelLoadOptions` 定义于 [ModelLoader](ModelLoader.md)，用于控制 UV 翻转、自动上传和资源注册策略。
 
 ---
 
@@ -289,6 +316,56 @@ auto task = loader.LoadTextureAsync(
         if (result.IsSuccess()) {
             ResourceManager::GetInstance().RegisterTexture(result.name, result.resource);
         }
+    }
+);
+```
+
+---
+
+#### LoadModelAsync ⭐ v1.1 新增
+
+```cpp
+std::shared_ptr<ModelLoadTask> LoadModelAsync(
+    const std::string& filepath,
+    const std::string& name = "",
+    const ModelLoadOptions& options = {},
+    std::function<void(const ModelLoadResult&)> callback = nullptr,
+    float priority = 0.0f
+);
+```
+
+**说明**: 利用后台线程解析完整模型（多网格 + 材质），在主线程完成网格上传及资源注册。
+
+**关键点**:
+- 工作线程中默认禁用 GPU 上传与资源注册，解析结果存放在 `ModelLoadOutput`。  
+- 主线程在 `ProcessCompletedTasks()` 阶段根据 `options.autoUpload` 对所有 `ModelPart` 触发 `mesh->Upload()`。  
+- 根据 `options.registerModel / registerMeshes / registerMaterials` 决定是否调用 `ModelLoader::RegisterResources()`，并更新依赖关系。  
+- 回调得到 `ModelLoadResult`，可直接访问 `ModelPtr` 以及实际注册的资源名称列表。
+
+**示例**:
+
+```cpp
+ModelLoadOptions options;
+options.autoUpload = true;
+options.resourcePrefix = "level01";
+
+loader.LoadModelAsync(
+    "models/level01.glb",
+    "level01",
+    options,
+    [](const ModelLoadResult& result) {
+        if (!result.IsSuccess()) {
+            Logger::GetInstance().Error("模型加载失败: " + result.errorMessage);
+            return;
+        }
+
+        Logger::GetInstance().InfoFormat(
+            "模型 %s 加载完成，注册了 %zu 个网格",
+            result.name.c_str(),
+            result.meshResourceNames.size()
+        );
+
+        // 将模型提交给场景或 ECS
     }
 );
 ```
@@ -644,6 +721,7 @@ for (size_t batch = 0; batch < total; batch += BATCH_SIZE) {
 | `Shutdown` | ⚠️ 否 | 主线程 |
 | `LoadMeshAsync` | ✅ 是 | 任意线程 |
 | `LoadTextureAsync` | ✅ 是 | 任意线程 |
+| `LoadModelAsync` | ✅ 是 | 任意线程 |
 | `ProcessCompletedTasks` | ⚠️ **主线程** | ⭐ 主线程（必须） |
 | `WaitForAll` | ✅ 是 | 任意线程 |
 | `Get*Count` | ✅ 是 | 任意线程 |
@@ -841,6 +919,12 @@ loader.Shutdown();
 
 ## 版本历史
 
+### v1.1.0 (2025-11-09)
+
+- ✅ 新增 `LoadModelAsync()` 支持完整模型异步加载  
+- ✅ 集成 `ModelLoader`，自动上传网格并注册资源  
+- ✅ 回调返回 `ModelLoadResult`，包含注册后的资源名称
+
 ### v0.12.0 (2025-11-03)
 
 - ✅ 初始版本
@@ -854,11 +938,12 @@ loader.Shutdown();
 ## 相关文档
 
 - [MeshLoader API](MeshLoader.md) - 网格加载器（支持 `autoUpload` 参数）
+- [ModelLoader API](ModelLoader.md) - 模型加载与资源注册
 - [ResourceManager API](ResourceManager.md) - 资源管理器
 - [Renderer API](Renderer.md) - 渲染器
 - [异步资源加载系统设计](../todolists/ASYNC_RESOURCE_LOADING.md) - 完整设计文档
 
 ---
 
-[返回文档首页](README.md)
+[上一篇: TextureLoader](TextureLoader.md) | [下一篇: ResourceManager](ResourceManager.md) | [返回 API 首页](README.md)
 

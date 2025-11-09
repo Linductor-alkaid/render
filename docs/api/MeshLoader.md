@@ -22,7 +22,7 @@
 ### ✨ 功能特性
 
 **✅ 几何数据加载**：
-- 顶点位置、法线、UV 坐标、顶点颜色
+- 顶点位置、法线、切线、UV 坐标、顶点颜色
 - 多网格模型支持
 - 自动三角化和法线生成
 - 网格优化（顶点合并、缓存优化）
@@ -36,6 +36,11 @@
 - 支持为 `material_phong.frag` 自动设置 `uAmbientColor`、`uDiffuseColor` 等 uniform
 - **纹理智能缓存**：使用完整路径作为纹理标识，自动去重
 - **路径兼容性**：避免 `std::filesystem` 的中文路径问题，使用简单字符串操作
+
+**✅ 高级导入**（2025-11-09 新增）：
+- `MeshImportOptions` 可统一配置 Assimp 后处理标志、骨骼权重、附加 UV/颜色采集等
+- `LoadDetailedFromFile()` 返回 `MeshImportResult`，包含 `MeshExtraData`（局部/世界变换、多 UV、多颜色、蒙皮信息）
+- `MeshSkinningData` 提供骨骼名称、父子关系、Offset 矩阵以及顶点权重，便于骨骼动画后续流程
 
 **❌ 尚未实现**：
 - 骨骼和蒙皮权重
@@ -71,6 +76,13 @@ public:
         uint32_t meshIndex = 0,
         bool flipUVs = true,
         bool autoUpload = true  // ⭐ v0.12.0 新增：延迟上传支持
+    );
+
+    static std::vector<MeshImportResult> LoadDetailedFromFile(
+        const std::string& filepath,
+        const MeshImportOptions& options = MeshImportOptions(),
+        const std::string& basePath = "",
+        Ref<Shader> shader = nullptr  // 当 options.loadMaterials=true 时使用
     );
     
     // ========================================================================
@@ -124,6 +136,44 @@ public:
 
 ---
 
+## 高级导入类型（2025-11-09 新增）
+
+### MeshImportOptions
+
+`MeshImportOptions` 用于集中配置高级导入行为，主要字段包含：
+
+- `flipUVs` / `autoUpload` / `loadMaterials`：与旧接口保持一致。
+- Assimp 后处理开关：`triangulate`、`generateSmoothNormals`、`calculateTangentSpace`、`improveCacheLocality` 等，默认开启常用流程。
+- 贴图与 UV 控制：`gatherAdditionalUVs`、`gatherVertexColors`、`generateUVCoords`、`transformUVCoords`。
+- 骨骼权重控制：`gatherBones`、`normalizeBoneWeights`、`limitBoneWeightsPerVertex`、`maxBoneWeightsPerVertex`（写入 Assimp `AI_CONFIG_PP_LBW_MAX_WEIGHTS`）。
+- 骨架数据：`populateArmatureData` 确保 Assimp 生成节点骨架信息。
+
+### MeshExtraData
+
+`MeshExtraData` 与单个 `aiMesh` 对应，包含：
+
+- `localTransform` / `worldTransform`：节点局部与层级矩阵。
+- `uvChannels` / `colorChannels`：多套 UV、颜色通道（Vector2/Color 数组）。
+- `skinning`：`MeshSkinningData`，用于骨骼蒙皮。
+
+### MeshSkinningData
+
+- `bones`：`MeshBoneInfo` 列表（名称、父骨骼、Offset 矩阵、骨骼影响的顶点权重）。
+- `vertexWeights`：每个顶点对应的骨骼权重列表。
+- `boneNameToIndex`：名称→索引映射，便于快速查找。
+- `HasBones()` / `Clear()` 实用方法。
+
+### MeshImportResult
+
+`LoadDetailedFromFile()` 返回 `MeshImportResult` 列表，每个结果包含：
+
+- `mesh`、`material`、`name`：与基础接口类似。
+- `extra`：`MeshExtraData`（含蒙皮/多 UV 信息）。
+
+> ✅ `ModelLoader`（2025-11-09）会将 `MeshExtraData` 挂载到 `ModelPart.extraData`，并提供 `ModelPart::HasSkinning()`、`ModelPart::GetSkinningData()` 以及 `Model::HasSkinning()` 便捷查询。
+
+---
+
 ## 文件加载方法
 
 ### LoadFromFile
@@ -167,13 +217,14 @@ static std::vector<Ref<Mesh>> LoadFromFile(
 **特性**:
 - ✅ 自动三角化（所有多边形转换为三角形）
 - ✅ 自动生成法线（如果文件中不包含）
+- ✅ 自动生成切线空间（导入数据缺失或退化时自动补齐）
 - ✅ 自动优化（合并相同顶点、改善缓存局部性）
 - ✅ 自动上传到 GPU（`autoUpload=true` 时，返回的网格可直接渲染）
 - ✅ 支持多网格模型（返回网格列表）
 - ✅ 支持延迟上传（`autoUpload=false`，用于异步加载）
 
 **当前限制**:
-- ⚠️ 仅提取几何数据（位置、法线、UV、顶点颜色）
+- ⚠️ 仅提取几何数据（位置、法线、切线、UV、顶点颜色）
 - ⚠️ 不支持骨骼动画
 - ⚠️ PMX 模型的特殊效果（Toon、Sphere Map）暂不支持
 

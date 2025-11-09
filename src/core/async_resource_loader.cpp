@@ -1,11 +1,13 @@
 #include "render/async_resource_loader.h"
 #include "render/mesh_loader.h"
 #include "render/texture_loader.h"
+#include "render/model_loader.h"
 #include "render/logger.h"
 #include "render/gl_thread_checker.h"
 #include "render/error.h"
 #include <algorithm>
 #include <chrono>
+#include <unordered_set>
 
 namespace Render {
 
@@ -348,6 +350,87 @@ std::shared_ptr<TextureLoadTask> AsyncResourceLoader::LoadTextureAsync(
     return task;
 }
 
+std::shared_ptr<ModelLoadTask> AsyncResourceLoader::LoadModelAsync(
+    const std::string& filepath,
+    const std::string& name,
+    const ModelLoadOptions& options,
+    std::function<void(const ModelLoadResult&)> callback,
+    float priority)
+{
+    if (!m_running.load()) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NotInitialized,
+                                 "AsyncResourceLoader: 未初始化"));
+        return nullptr;
+    }
+
+    auto task = std::make_shared<ModelLoadTask>();
+    task->name = name.empty() ? filepath : name;
+    task->type = AsyncResourceType::Model;
+    task->priority = priority;
+    task->callback = callback;
+    task->requestedOptions = options;
+    task->filepath = filepath;
+    task->overrideName = name;
+
+    ModelLoadOptions workerOptions = options;
+    workerOptions.autoUpload = false;
+    workerOptions.registerModel = false;
+    workerOptions.registerMeshes = false;
+    workerOptions.registerMaterials = false;
+    workerOptions.updateDependencyGraph = false;
+
+    task->loadFunc = [filepath, overrideName = name, workerOptions]() -> ModelLoadOutput {
+        Logger::GetInstance().Info("⭐ 工作线程：开始解析模型数据 " + filepath);
+        return ModelLoader::LoadFromFile(filepath, overrideName, workerOptions);
+    };
+
+    task->uploadFunc = [options, filepath](ModelLoadOutput& output) {
+        if (!output.model) {
+            Logger::GetInstance().Error("❌ 模型上传阶段失败：模型数据为空 - " + filepath);
+            return;
+        }
+
+        GL_THREAD_CHECK();
+
+        if (options.autoUpload) {
+            std::unordered_set<Mesh*> uploaded;
+            output.model->AccessParts([&uploaded](const std::vector<ModelPart>& parts) {
+                for (const auto& part : parts) {
+                    if (!part.mesh) {
+                        continue;
+                    }
+                    Mesh* meshPtr = part.mesh.get();
+                    if (uploaded.insert(meshPtr).second && !part.mesh->IsUploaded()) {
+                        part.mesh->Upload();
+                    }
+                }
+            });
+        }
+
+        if (options.registerModel || options.registerMeshes || options.registerMaterials) {
+            ModelLoader::RegisterResources(
+                output.modelName.empty() ? filepath : output.modelName,
+                output.model,
+                options,
+                &output.meshResourceNames,
+                &output.materialResourceNames
+            );
+        }
+    };
+
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingTasks.push(task);
+        m_totalTasks++;
+    }
+
+    m_taskAvailable.notify_one();
+
+    Logger::GetInstance().Info("✅ 提交模型加载任务: " + task->name);
+
+    return task;
+}
+
 size_t AsyncResourceLoader::ProcessCompletedTasks(size_t maxTasks) {
     // ✅ 确保在主线程（OpenGL上下文线程）
     try {
@@ -413,6 +496,19 @@ size_t AsyncResourceLoader::ProcessCompletedTasks(size_t maxTasks) {
                     result.status = task->status;
                     result.errorMessage = task->errorMessage;
                     texTask->callback(result);
+                }
+            } else if (auto modelTask = std::dynamic_pointer_cast<ModelLoadTask>(task)) {
+                if (modelTask->callback) {
+                    ModelLoadResult result;
+                    result.resource = modelTask->result.model;
+                    result.name = modelTask->result.modelName.empty()
+                        ? modelTask->name
+                        : modelTask->result.modelName;
+                    result.status = task->status;
+                    result.errorMessage = task->errorMessage;
+                    result.meshResourceNames = modelTask->result.meshResourceNames;
+                    result.materialResourceNames = modelTask->result.materialResourceNames;
+                    modelTask->callback(result);
                 }
             }
             

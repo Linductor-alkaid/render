@@ -3,7 +3,10 @@
 #include "mesh.h"
 #include "material.h"
 #include "types.h"
+#include <array>
 #include <memory>
+#include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace Render {
@@ -24,6 +27,104 @@ struct MeshWithMaterial {
     MeshWithMaterial() = default;
     MeshWithMaterial(Ref<Mesh> m, Ref<Material> mat = nullptr, const std::string& n = "")
         : mesh(m), material(mat), name(n) {}
+};
+
+/**
+ * @brief 单个顶点受到的骨骼影响
+ */
+struct VertexBoneWeight {
+    uint32_t boneIndex = 0;   ///< 骨骼索引
+    float weight = 0.0f;      ///< 权重
+};
+
+/**
+ * @brief 骨骼对顶点的整体影响
+ */
+struct BoneVertexWeight {
+    uint32_t vertexIndex = 0; ///< 顶点索引
+    float weight = 0.0f;      ///< 权重
+};
+
+/**
+ * @brief 骨骼信息
+ */
+struct MeshBoneInfo {
+    std::string name;                         ///< 骨骼名称
+    std::string parentName;                   ///< 父骨骼名称（若存在）
+    std::vector<BoneVertexWeight> vertexWeights; ///< 骨骼影响的顶点集合
+};
+
+/**
+ * @brief 蒙皮数据
+ */
+struct MeshSkinningData {
+    std::vector<MeshBoneInfo> bones;                          ///< 骨骼列表
+    std::vector<Matrix4, Eigen::aligned_allocator<Matrix4>> boneOffsetMatrices; ///< 绑定姿势逆矩阵列表
+    std::vector<std::vector<VertexBoneWeight>> vertexWeights; ///< 每个顶点的骨骼权重
+    std::unordered_map<std::string, uint32_t> boneNameToIndex; ///< 骨骼名字到索引映射
+
+    bool HasBones() const { return !bones.empty(); }
+    void Clear() {
+        bones.clear();
+        boneOffsetMatrices.clear();
+        vertexWeights.clear();
+        boneNameToIndex.clear();
+    }
+};
+
+/**
+ * @brief 额外导入数据（多 UV/颜色通道、蒙皮信息等）
+ */
+struct MeshExtraData {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    Matrix4 localTransform = Matrix4::Identity();   ///< 节点局部变换
+    Matrix4 worldTransform = Matrix4::Identity();   ///< 节点世界变换
+    uint32_t assimpMeshIndex = 0;                   ///< 对应的 Assimp 网格索引
+
+    std::vector<std::vector<Vector2>> uvChannels;   ///< 多套 UV 坐标
+    std::vector<std::vector<Color>> colorChannels;  ///< 多套颜色数据
+    MeshSkinningData skinning;                      ///< 蒙皮数据
+};
+
+/**
+ * @brief 导入选项
+ */
+struct MeshImportOptions {
+    bool flipUVs = true;                       ///< 是否翻转UV（OpenGL约定）
+    bool autoUpload = true;                    ///< 是否自动上传到GPU
+    bool loadMaterials = false;                ///< 是否加载材质和纹理
+
+    // Assimp 后处理配置
+    bool triangulate = true;
+    bool generateSmoothNormals = true;
+    bool calculateTangentSpace = true;
+    bool joinIdenticalVertices = true;
+    bool sortByPrimitiveType = true;
+    bool improveCacheLocality = true;
+    bool optimizeMeshes = true;
+    bool validateDataStructure = true;
+    bool generateUVCoords = false;
+    bool transformUVCoords = false;
+    bool findInvalidData = true;
+    bool populateArmatureData = true;
+
+    // 数据采集配置
+    bool gatherAdditionalUVs = true;
+    bool gatherVertexColors = true;
+    bool gatherBones = true;
+    bool normalizeBoneWeights = true;
+    bool limitBoneWeightsPerVertex = true;
+    uint32_t maxBoneWeightsPerVertex = 4;
+};
+
+/**
+ * @brief 高级导入结果
+ */
+struct MeshImportResult {
+    Ref<Mesh> mesh;
+    Ref<Material> material;
+    std::string name;
+    MeshExtraData extra;
 };
 
 /**
@@ -114,6 +215,21 @@ public:
         const std::string& filepath,
         const std::string& basePath = "",
         bool flipUVs = true,
+        Ref<Shader> shader = nullptr
+    );
+
+    /**
+     * @brief 使用高级选项从文件加载模型（包含额外信息）
+     * @param filepath 模型文件路径
+     * @param options 导入选项
+     * @param basePath 纹理搜索路径（可选）
+     * @param shader 材质绑定的着色器（可选，仅当 options.loadMaterials=true 时使用）
+     * @return 包含额外导入数据的网格结果列表
+     */
+    static std::vector<MeshImportResult> LoadDetailedFromFile(
+        const std::string& filepath,
+        const MeshImportOptions& options = MeshImportOptions(),
+        const std::string& basePath = "",
         Ref<Shader> shader = nullptr
     );
     

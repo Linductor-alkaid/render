@@ -286,22 +286,28 @@
 ## 3D 渲染
 
 ### 模型渲染
-- [ ] Model 类
-  - [ ] 网格集合
-  - [ ] 材质绑定
-  - [ ] 变换矩阵
-- [ ] ModelRenderer
-  - [ ] 模型加载接口
-  - [ ] 模型渲染
-  - [ ] 模型变换
+- [x] Model 类 ✅ （支持网格/材质集合、局部变换与统计）
+  - [x] 网格集合
+  - [x] 材质绑定
+  - [x] 变换矩阵
+- [x] ModelRenderer ✅ （ModelRenderable + ModelRenderSystem 提交流程）
+  - [x] 模型加载接口
+  - [x] 模型渲染
+  - [x] 模型变换
 
 ### 基本几何形状
-- [ ] 预定义网格生成器
-  - [ ] 立方体（Cube）
-  - [ ] 球体（Sphere）
-  - [ ] 平面（Plane）
-  - [ ] 圆锥（Cone）
-  - [ ] 圆柱（Cylinder）
+- [x] 预定义网格生成器
+  - [x] 立方体（Cube）
+  - [x] 球体（Sphere）
+  - [x] 平面（Plane）
+  - [x] 圆锥（Cone）
+  - [x] 圆柱（Cylinder）
+  - [x] 圆环（Torus）
+  - [x] 胶囊（Capsule）
+  - [x] 四边形（Quad）
+  - [x] 三角形（Triangle）
+  - [x] 圆形（Circle）
+  - [x] 线框/法线贴图验证示例（`50_geometry_catalog_test`）
 
 ---
 

@@ -67,9 +67,12 @@ public:
     // 自定义参数
     void SetInt(const std::string& name, int value);
     void SetFloat(const std::string& name, float value);
+    void SetVector2(const std::string& name, const Vector2& value);
     void SetVector3(const std::string& name, const Vector3& value);
     void SetColor(const std::string& name, const Color& value);
     void SetMatrix4(const std::string& name, const Matrix4& value);
+    void SetVector2Array(const std::string& name, const std::vector<Vector2>& values);
+    void SetColorArray(const std::string& name, const std::vector<Color>& values);
     
     // 渲染状态
     void SetBlendMode(BlendMode mode);
@@ -397,19 +400,56 @@ material->SetInt("useTexture", 1);
 material->SetFloat("tiling", 2.0f);
 ```
 
-### SetVector3() / SetColor()
+### SetVector2() / SetVector3()
 
-设置向量/颜色参数。
+设置二维/三维向量参数。
 
 ```cpp
+void SetVector2(const std::string& name, const Vector2& value);
 void SetVector3(const std::string& name, const Vector3& value);
+```
+
+**示例**:
+```cpp
+material->SetVector2("uvTiling", Vector2(2.0f, 2.0f));
+material->SetVector3("windDirection", Vector3(1.0f, 0.0f, 0.0f));
+```
+
+### SetColor()
+
+设置颜色参数。
+
+```cpp
 void SetColor(const std::string& name, const Color& value);
 ```
 
 **示例**:
 ```cpp
-material->SetVector3("windDirection", Vector3(1.0f, 0.0f, 0.0f));
 material->SetColor("tintColor", Color(1.0f, 0.5f, 0.5f, 1.0f));
+```
+
+### SetVector2Array() / SetColorArray()（2025-11-09 新增）
+
+批量设置 uniform 数组，用于多 UV 缩放、多颜色通道等高级材质数据。超过 64 个元素会自动裁剪。
+
+```cpp
+void SetVector2Array(const std::string& name, const std::vector<Vector2>& values);
+void SetColorArray(const std::string& name, const std::vector<Color>& values);
+```
+
+**使用建议**:
+
+- uniform 名建议以 `[0]` 结尾，如 `uExtraUVSetScales[0]`、`uExtraColorSets[0]`。
+- 传入空数组将移除缓存并阻止上传无效 uniform。
+- 可结合 `SetInt("uExtraUVSetCount", values.size())` 等计数 uniform 使用。
+
+**示例**:
+```cpp
+material->SetVector2Array("uExtraUVSetScales[0]", { Vector2(2.0f, 2.0f), Vector2(1.5f, 0.75f) });
+material->SetInt("uExtraUVSetCount", 2);
+
+material->SetColorArray("uExtraColorSets[0]", { Color(1.2f, 1.0f, 1.0f, 1.0f) });
+material->SetInt("uExtraColorSetCount", 1);
 ```
 
 ### SetMatrix4()

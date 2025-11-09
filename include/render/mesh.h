@@ -19,6 +19,8 @@ struct Vertex {
     Vector2 texCoord;   // 纹理坐标
     Vector3 normal;     // 法线
     Color color;        // 顶点颜色
+    Vector3 tangent;    // 切线
+    Vector3 bitangent;  // 副切线
     
     /**
      * @brief 默认构造函数
@@ -27,7 +29,9 @@ struct Vertex {
         : position(Vector3::Zero())
         , texCoord(Vector2::Zero())
         , normal(Vector3::UnitY())
-        , color(Color::White()) {}
+        , color(Color::White())
+        , tangent(Vector3::UnitX())
+        , bitangent(Vector3::UnitZ()) {}
     
     /**
      * @brief 构造函数（仅位置）
@@ -36,7 +40,9 @@ struct Vertex {
         : position(pos)
         , texCoord(Vector2::Zero())
         , normal(Vector3::UnitY())
-        , color(Color::White()) {}
+        , color(Color::White())
+        , tangent(Vector3::UnitX())
+        , bitangent(Vector3::UnitZ()) {}
     
     /**
      * @brief 完整构造函数
@@ -45,7 +51,9 @@ struct Vertex {
         : position(pos)
         , texCoord(uv)
         , normal(norm)
-        , color(col) {}
+        , color(col)
+        , tangent(Vector3::UnitX())
+        , bitangent(Vector3::UnitZ()) {}
 };
 
 /**

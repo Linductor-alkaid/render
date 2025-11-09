@@ -3,6 +3,7 @@
 #include "render/error.h"
 #include "render/gl_thread_checker.h"
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include <thread>
 
@@ -582,8 +583,116 @@ void Mesh::RecalculateNormals() {
 
 void Mesh::RecalculateTangents() {
     std::lock_guard<std::mutex> lock(m_Mutex);
-    // TODO: 实现切线计算（用于法线贴图）
-    Logger::GetInstance().Warning("Mesh::RecalculateTangents - Not implemented yet");
+
+    if (m_Vertices.empty()) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
+                                   "Mesh::RecalculateTangents: Mesh has no vertices"));
+        return;
+    }
+
+    const float EPSILON = 1e-6f;
+
+    // 清零当前切线/副切线
+    for (auto& vertex : m_Vertices) {
+        vertex.tangent = Vector3::Zero();
+        vertex.bitangent = Vector3::Zero();
+    }
+
+    auto accumulateTriangle = [&](uint32_t i0, uint32_t i1, uint32_t i2) {
+        if (i0 >= m_Vertices.size() || i1 >= m_Vertices.size() || i2 >= m_Vertices.size()) {
+            return;
+        }
+
+        const Vector3& p0 = m_Vertices[i0].position;
+        const Vector3& p1 = m_Vertices[i1].position;
+        const Vector3& p2 = m_Vertices[i2].position;
+
+        const Vector2& uv0 = m_Vertices[i0].texCoord;
+        const Vector2& uv1 = m_Vertices[i1].texCoord;
+        const Vector2& uv2 = m_Vertices[i2].texCoord;
+
+        Vector3 edge1 = p1 - p0;
+        Vector3 edge2 = p2 - p0;
+
+        Vector2 deltaUV1 = uv1 - uv0;
+        Vector2 deltaUV2 = uv2 - uv0;
+
+        float determinant = deltaUV1.x() * deltaUV2.y() - deltaUV2.x() * deltaUV1.y();
+        if (std::abs(determinant) < EPSILON) {
+            return;
+        }
+
+        float r = 1.0f / determinant;
+        Vector3 tangent = (edge1 * deltaUV2.y() - edge2 * deltaUV1.y()) * r;
+        Vector3 bitangent = (edge2 * deltaUV1.x() - edge1 * deltaUV2.x()) * r;
+
+        m_Vertices[i0].tangent += tangent;
+        m_Vertices[i1].tangent += tangent;
+        m_Vertices[i2].tangent += tangent;
+
+        m_Vertices[i0].bitangent += bitangent;
+        m_Vertices[i1].bitangent += bitangent;
+        m_Vertices[i2].bitangent += bitangent;
+    };
+
+    if (!m_Indices.empty()) {
+        for (size_t i = 0; i + 2 < m_Indices.size(); i += 3) {
+            accumulateTriangle(m_Indices[i], m_Indices[i + 1], m_Indices[i + 2]);
+        }
+    } else {
+        if (m_Vertices.size() % 3 != 0) {
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
+                                       "Mesh::RecalculateTangents: Non-indexed mesh vertex count not divisible by 3"));
+        }
+
+        for (size_t i = 0; i + 2 < m_Vertices.size(); i += 3) {
+            accumulateTriangle(static_cast<uint32_t>(i),
+                               static_cast<uint32_t>(i + 1),
+                               static_cast<uint32_t>(i + 2));
+        }
+    }
+
+    // 正交化并归一化
+    for (auto& vertex : m_Vertices) {
+        Vector3 normal = vertex.normal;
+        if (normal.squaredNorm() < EPSILON) {
+            normal = Vector3::UnitY();
+        } else {
+            normal.normalize();
+        }
+
+        Vector3 tangent = vertex.tangent;
+        if (tangent.squaredNorm() < EPSILON) {
+            tangent = Vector3::UnitX();
+        }
+
+        tangent = (tangent - normal * normal.dot(tangent));
+        float tangentLength = tangent.norm();
+        if (tangentLength < EPSILON) {
+            tangent = Vector3::UnitX();
+        } else {
+            tangent /= tangentLength;
+        }
+
+        Vector3 bitangent = vertex.bitangent;
+        float handedness = 1.0f;
+        if (bitangent.squaredNorm() >= EPSILON) {
+            handedness = (normal.cross(tangent).dot(bitangent) < 0.0f) ? -1.0f : 1.0f;
+        }
+        bitangent = normal.cross(tangent) * handedness;
+
+        vertex.normal = normal;
+        vertex.tangent = tangent;
+        vertex.bitangent = bitangent;
+    }
+
+    if (m_Uploaded) {
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, m_Vertices.size() * sizeof(Vertex), m_Vertices.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    Logger::GetInstance().Info("Mesh tangents recalculated");
 }
 
 void Mesh::SetupVertexAttributes() {
@@ -592,7 +701,9 @@ void Mesh::SetupVertexAttributes() {
     // Location 1: TexCoord (vec2) - 8 bytes
     // Location 2: Normal (vec3) - 12 bytes
     // Location 3: Color (vec4) - 16 bytes
-    // Total: 48 bytes per vertex
+    // Location 4: Tangent (vec3) - 12 bytes
+    // Location 5: Bitangent (vec3) - 12 bytes
+    // Total: 72 bytes per vertex
     
     // Position
     glEnableVertexAttribArray(0);
@@ -613,6 +724,16 @@ void Mesh::SetupVertexAttributes() {
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), 
                           (void*)offsetof(Vertex, color));
+    
+    // Tangent
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          (void*)offsetof(Vertex, tangent));
+    
+    // Bitangent
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          (void*)offsetof(Vertex, bitangent));
 }
 
 GLenum Mesh::ConvertDrawMode(DrawMode mode) const {

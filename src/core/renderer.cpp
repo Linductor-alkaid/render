@@ -65,6 +65,74 @@ MaterialSortKey BuildMeshRenderableSortKey(MeshRenderable* meshRenderable) {
     return key;
 }
 
+MaterialSortKey BuildModelRenderableSortKey(ModelRenderable* modelRenderable) {
+    MaterialSortKey key{};
+    if (!modelRenderable) {
+        return key;
+    }
+
+    ModelPtr model = modelRenderable->GetModel();
+    if (!model) {
+        return key;
+    }
+
+    uint32_t overrideHash = 0;
+    uint32_t pipelineFlags = MaterialPipelineFlags_None;
+    Material* primaryMaterial = nullptr;
+    bool anyBlend = false;
+    BlendMode resolvedBlend = BlendMode::None;
+
+    bool transparent = false;
+
+    model->AccessParts([&](const std::vector<ModelPart>& parts) {
+        for (const auto& part : parts) {
+            if (part.castShadows) {
+                pipelineFlags |= MaterialPipelineFlags_CastShadow;
+            }
+            if (part.receiveShadows) {
+                pipelineFlags |= MaterialPipelineFlags_ReceiveShadow;
+            }
+
+            if (!part.material) {
+                continue;
+            }
+
+            if (!primaryMaterial) {
+                primaryMaterial = part.material.get();
+            }
+
+            overrideHash = HashCombine(overrideHash, HashPointer(part.material.get()));
+            overrideHash = HashCombine(overrideHash, HashFloat(part.material->GetOpacity()));
+
+            if (auto shader = part.material->GetShader()) {
+                overrideHash = HashCombine(overrideHash, HashPointer(shader.get()));
+            }
+
+            const BlendMode blend = part.material->GetBlendMode();
+            if (!anyBlend) {
+                resolvedBlend = blend;
+                anyBlend = true;
+            } else if (resolvedBlend != blend) {
+                resolvedBlend = BlendMode::Custom;
+            }
+
+            if (blend == BlendMode::Alpha || blend == BlendMode::Additive || part.material->GetOpacity() < 1.0f) {
+                transparent = true;
+            }
+        }
+    });
+
+    key = BuildMaterialSortKey(primaryMaterial, overrideHash, pipelineFlags);
+    key.materialID = overrideHash;
+    if (anyBlend) {
+        key.blendMode = resolvedBlend;
+    }
+
+    modelRenderable->SetTransparentHint(transparent);
+
+    return key;
+}
+
 MaterialSortKey BuildSpriteRenderableSortKey(SpriteRenderable* spriteRenderable) {
     MaterialSortKey key{};
     if (!spriteRenderable) {
@@ -155,6 +223,12 @@ void EnsureMaterialSortKey(Renderable* renderable) {
         case RenderableType::Mesh: {
             auto* meshRenderable = static_cast<MeshRenderable*>(renderable);
             key = BuildMeshRenderableSortKey(meshRenderable);
+            computed = true;
+            break;
+        }
+        case RenderableType::Model: {
+            auto* modelRenderable = static_cast<ModelRenderable*>(renderable);
+            key = BuildModelRenderableSortKey(modelRenderable);
             computed = true;
             break;
         }
@@ -257,6 +331,13 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
             item.isTransparent = isTransparent;
             item.batchable = hasIndices && !item.isTransparent && !item.meshData.hasMaterialOverride;
             item.instanceEligible = hasIndices && !item.meshData.hasMaterialOverride && !item.isTransparent;
+            return item;
+        }
+        case RenderableType::Model: {
+            item.key.renderableType = RenderableType::Model;
+            item.type = BatchItemType::Unsupported;
+            item.batchable = false;
+            item.isTransparent = renderable->GetTransparentHint();
             return item;
         }
         case RenderableType::Sprite: {

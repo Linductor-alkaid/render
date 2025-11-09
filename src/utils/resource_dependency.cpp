@@ -338,6 +338,7 @@ std::string ResourceDependencyTracker::GenerateDOTGraph() const {
         switch (dep.resourceType) {
             case ResourceType::Texture:     color = "lightblue"; break;
             case ResourceType::Mesh:        color = "lightgreen"; break;
+            case ResourceType::Model:       color = "gold"; break;
             case ResourceType::Material:    color = "lightyellow"; break;
             case ResourceType::Shader:      color = "lightpink"; break;
             case ResourceType::SpriteAtlas: color = "lightgray"; break;
@@ -421,7 +422,7 @@ void ResourceDependencyTracker::PrintTreeInternal(const std::string& resourceNam
 std::string ResourceDependencyTracker::GetStatistics() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    size_t textureCount = 0, meshCount = 0, materialCount = 0, shaderCount = 0, atlasCount = 0, fontCount = 0;
+    size_t textureCount = 0, meshCount = 0, modelCount = 0, materialCount = 0, shaderCount = 0, atlasCount = 0, fontCount = 0;
     size_t totalDeps = 0;
     size_t isolatedCount = 0;
     
@@ -429,6 +430,7 @@ std::string ResourceDependencyTracker::GetStatistics() const {
         switch (dep.resourceType) {
             case ResourceType::Texture:     textureCount++; break;
             case ResourceType::Mesh:        meshCount++; break;
+            case ResourceType::Model:       modelCount++; break;
             case ResourceType::Material:    materialCount++; break;
             case ResourceType::Shader:      shaderCount++; break;
             case ResourceType::SpriteAtlas: atlasCount++; break;
@@ -447,6 +449,7 @@ std::string ResourceDependencyTracker::GetStatistics() const {
     oss << "Total Resources: " << m_dependencies.size() << "\n";
     oss << "  - Textures:  " << textureCount << "\n";
     oss << "  - Meshes:    " << meshCount << "\n";
+    oss << "  - Models:    " << modelCount << "\n";
     oss << "  - Materials: " << materialCount << "\n";
     oss << "  - Shaders:   " << shaderCount << "\n";
     oss << "  - Atlases:   " << atlasCount << "\n";
@@ -491,6 +494,7 @@ std::string ResourceDependencyTracker::ResourceTypeToString(ResourceType type) c
     switch (type) {
         case ResourceType::Texture:     return "Texture";
         case ResourceType::Mesh:        return "Mesh";
+        case ResourceType::Model:       return "Model";
         case ResourceType::Material:    return "Material";
         case ResourceType::Shader:      return "Shader";
         case ResourceType::SpriteAtlas: return "SpriteAtlas";

@@ -47,6 +47,11 @@ set(EXAMPLES
     43_sprite_batch_validation_test
     44_text_render_test
     45_lighting_test
+    46_normal_map_test
+    47_skeleton_palette_test
+    48_model_render_test
+    49_miku_model_test
+    50_geometry_catalog_test
 )
 
 # 批量创建示例程序

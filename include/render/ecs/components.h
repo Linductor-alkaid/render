@@ -2,6 +2,7 @@
 
 #include "render/transform.h"
 #include "render/types.h"
+#include "render/model_loader.h"
 #include "entity.h"  // 需要 EntityID 定义
 #include <string>
 #include <vector>
@@ -359,6 +360,44 @@ struct MeshRenderComponent {
     
     /// 清除所有材质覆盖
     void ClearMaterialOverrides() { materialOverride = MaterialOverride{}; }
+};
+
+// ============================================================
+// Model 渲染组件
+// ============================================================
+
+struct ModelComponent {
+    std::string modelName;          ///< 模型资源名称（ResourceManager）
+    ModelPtr model;                 ///< 模型对象（延迟加载）
+    ModelLoadOptions loadOptions;   ///< 模型加载/注册选项
+
+    bool visible = true;
+    bool castShadows = true;
+    bool receiveShadows = true;
+    uint32_t layerID = 300;
+    int32_t renderPriority = 0;
+
+    bool resourcesLoaded = false;
+    bool asyncLoading = false;
+
+    std::vector<std::string> registeredMeshNames;
+    std::vector<std::string> registeredMaterialNames;
+
+    ModelComponent() = default;
+
+    void SetModel(const ModelPtr& modelPtr) {
+        model = modelPtr;
+        resourcesLoaded = (model != nullptr);
+        asyncLoading = false;
+    }
+
+    void SetResourcePrefix(const std::string& prefix) {
+        loadOptions.resourcePrefix = prefix;
+    }
+
+    void SetAutoUpload(bool value) {
+        loadOptions.autoUpload = value;
+    }
 };
 
 // ============================================================

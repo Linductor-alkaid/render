@@ -8,8 +8,15 @@
 #include <map>
 #include <unordered_map>
 #include <atomic>
+#include <array>
+#include <vector>
+#include <algorithm>
 
 namespace Render {
+
+namespace {
+constexpr size_t kMaxUniformVectorArraySize = 64;
+}
 
 std::atomic<uint32_t> Material::s_nextStableID{1};
 
@@ -59,6 +66,8 @@ Material::Material(Material&& other) noexcept {
     m_vector3Params = std::move(other.m_vector3Params);
     m_vector4Params = std::move(other.m_vector4Params);
     m_matrix4Params = std::move(other.m_matrix4Params);
+    m_vector2ArrayParams = std::move(other.m_vector2ArrayParams);
+    m_colorArrayParams = std::move(other.m_colorArrayParams);
     m_blendMode = other.m_blendMode;
     m_cullFace = other.m_cullFace;
     m_depthTest = other.m_depthTest;
@@ -87,6 +96,8 @@ Material& Material::operator=(Material&& other) noexcept {
         m_vector3Params = std::move(other.m_vector3Params);
         m_vector4Params = std::move(other.m_vector4Params);
         m_matrix4Params = std::move(other.m_matrix4Params);
+        m_vector2ArrayParams = std::move(other.m_vector2ArrayParams);
+        m_colorArrayParams = std::move(other.m_colorArrayParams);
         m_blendMode = other.m_blendMode;
         m_cullFace = other.m_cullFace;
         m_depthTest = other.m_depthTest;
@@ -311,6 +322,38 @@ void Material::SetColor(const std::string& name, const Color& value) {
     m_vector4Params[name] = value.ToVector4();
 }
 
+void Material::SetVector2Array(const std::string& name, const std::vector<Vector2>& values) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (values.empty()) {
+        m_vector2ArrayParams.erase(name);
+        return;
+    }
+
+    if (values.size() > kMaxUniformVectorArraySize) {
+        m_vector2ArrayParams[name] = std::vector<Vector2>(values.begin(), values.begin() + kMaxUniformVectorArraySize);
+        LOG_WARNING("Material::SetVector2Array: '" + name + "' 超出最大uniform数组长度 "
+                    + std::to_string(kMaxUniformVectorArraySize) + ", 已截断。");
+    } else {
+        m_vector2ArrayParams[name] = values;
+    }
+}
+
+void Material::SetColorArray(const std::string& name, const std::vector<Color>& values) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (values.empty()) {
+        m_colorArrayParams.erase(name);
+        return;
+    }
+
+    if (values.size() > kMaxUniformVectorArraySize) {
+        m_colorArrayParams[name] = std::vector<Color>(values.begin(), values.begin() + kMaxUniformVectorArraySize);
+        LOG_WARNING("Material::SetColorArray: '" + name + "' 超出最大uniform数组长度 "
+                    + std::to_string(kMaxUniformVectorArraySize) + ", 已截断。");
+    } else {
+        m_colorArrayParams[name] = values;
+    }
+}
+
 void Material::SetMatrix4(const std::string& name, const Matrix4& value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_matrix4Params[name] = value;
@@ -332,6 +375,8 @@ void Material::Bind(RenderState* renderState) {
     std::unordered_map<std::string, Vector3> vector3Params;
     std::unordered_map<std::string, Vector4> vector4Params;
     std::unordered_map<std::string, Matrix4> matrix4Params;
+    std::unordered_map<std::string, std::vector<Vector2>> vector2ArrayParams;
+    std::unordered_map<std::string, std::vector<Color>> colorArrayParams;
     std::string name;
     // ✅ 拷贝渲染状态（避免后续重复加锁）
     BlendMode blendMode;
@@ -370,6 +415,8 @@ void Material::Bind(RenderState* renderState) {
         vector3Params = m_vector3Params;
         vector4Params = m_vector4Params;
         matrix4Params = m_matrix4Params;
+        vector2ArrayParams = m_vector2ArrayParams;
+        colorArrayParams = m_colorArrayParams;
         name = m_name;
         // ✅ 拷贝渲染状态
         blendMode = m_blendMode;
@@ -468,34 +515,52 @@ void Material::Bind(RenderState* renderState) {
     
     // 6. ✅ 使用异常保护绑定纹理和自定义参数
     try {
-        int textureUnit = 0;
+        std::array<bool, 32> usedUnits{};
         bool hasDiffuse = false;
+        bool hasNormal = false;
         
         for (const auto& pair : textures) {
             const std::string& texName = pair.first;
             auto texture = pair.second;
             
             if (texture && texture->IsValid()) {
-                // 绑定纹理到纹理单元
-                texture->Bind(textureUnit);
+                int bindUnit = -1;
+                int cachedUnit = -1;
                 
-                // 设置纹理单元 uniform
-                if (uniformMgr->HasUniform(texName)) {
-                    uniformMgr->SetInt(texName, textureUnit);
+                if (uniformMgr->TryGetTextureUnit(texName, cachedUnit)) {
+                    bindUnit = std::clamp(cachedUnit, 0, 31);
+                    uniformMgr->RegisterTextureUniform(texName, bindUnit);
+                } else {
+                    auto it = std::find(usedUnits.begin(), usedUnits.end(), false);
+                    if (it == usedUnits.end()) {
+                        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
+                            "Material::Bind: 可用纹理单元耗尽，无法绑定 '" + texName + "'"));
+                        continue;
+                    }
+                    bindUnit = static_cast<int>(std::distance(usedUnits.begin(), it));
+                    uniformMgr->RegisterTextureUniform(texName, bindUnit);
                 }
+                
+                if (bindUnit >= 0 && bindUnit < static_cast<int>(usedUnits.size())) {
+                    usedUnits[bindUnit] = true;
+                }
+                texture->Bind(bindUnit);
                 
                 // 标记纹理类型
                 if (texName == "diffuseMap") {
                     hasDiffuse = true;
+                } else if (texName == "normalMap") {
+                    hasNormal = true;
                 }
-                
-                textureUnit++;
             }
         }
         
         // 设置纹理存在标志
         if (uniformMgr->HasUniform("hasDiffuseMap")) {
             uniformMgr->SetBool("hasDiffuseMap", hasDiffuse);
+        }
+        if (uniformMgr->HasUniform("hasNormalMap")) {
+            uniformMgr->SetBool("hasNormalMap", hasNormal);
         }
         
         // 设置自定义整型参数
@@ -537,6 +602,26 @@ void Material::Bind(RenderState* renderState) {
         for (const auto& pair : matrix4Params) {
             if (uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetMatrix4(pair.first, pair.second);
+            }
+        }
+
+        for (const auto& pair : vector2ArrayParams) {
+            if (pair.second.empty()) {
+                continue;
+            }
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetVector2Array(pair.first, pair.second.data(),
+                    static_cast<uint32_t>(pair.second.size()));
+            }
+        }
+
+        for (const auto& pair : colorArrayParams) {
+            if (pair.second.empty()) {
+                continue;
+            }
+            if (uniformMgr->HasUniform(pair.first)) {
+                uniformMgr->SetColorArray(pair.first, pair.second.data(),
+                    static_cast<uint32_t>(pair.second.size()));
             }
         }
     } catch (const std::exception& e) {

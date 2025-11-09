@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <mutex>
 #include <atomic>
 
@@ -312,6 +313,20 @@ public:
     void SetColor(const std::string& name, const Color& value);
     
     /**
+     * @brief 设置向量2数组参数（传入 uniform 数组）
+     * @param name uniform 名称（如 "uExtraUVSetScales[0]"）
+     * @param values 参数值集合
+     */
+    void SetVector2Array(const std::string& name, const std::vector<Vector2>& values);
+    
+    /**
+     * @brief 设置颜色数组参数（传入 uniform 数组）
+     * @param name uniform 名称（如 "uExtraColorSets[0]"）
+     * @param values 参数值集合
+     */
+    void SetColorArray(const std::string& name, const std::vector<Color>& values);
+    
+    /**
      * @brief 设置矩阵4参数
      * @param name 参数名称
      * @param value 参数值
@@ -436,6 +451,8 @@ private:
     std::unordered_map<std::string, Vector3> m_vector3Params;
     std::unordered_map<std::string, Vector4> m_vector4Params;
     std::unordered_map<std::string, Matrix4> m_matrix4Params;
+    std::unordered_map<std::string, std::vector<Vector2>> m_vector2ArrayParams;
+    std::unordered_map<std::string, std::vector<Color>> m_colorArrayParams;
     
     // 渲染状态
     BlendMode m_blendMode;                  ///< 混合模式

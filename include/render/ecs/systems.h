@@ -6,6 +6,7 @@
 #include "render/renderable.h"
 #include "render/sprite/sprite_batcher.h"
 #include "render/async_resource_loader.h"
+#include "render/model_loader.h"
 #include "render/camera.h"
 #include "render/types.h"
 #include <vector>
@@ -132,6 +133,7 @@ public:
     
 private:
     void LoadMeshResources();
+    void LoadModelResources();
     void LoadSpriteResources();
     void LoadTextureOverrides();  ///< 加载纹理覆盖
     void ProcessAsyncTasks();
@@ -140,6 +142,7 @@ private:
     // 资源加载完成回调（不直接修改组件，而是加入队列）
     void OnMeshLoaded(EntityID entity, const MeshLoadResult& result);
     void OnTextureLoaded(EntityID entity, const TextureLoadResult& result);
+    void OnModelLoaded(EntityID entity, const ModelLoadResult& result);
     
     // 延迟更新的数据结构
     struct PendingMeshUpdate {
@@ -164,6 +167,15 @@ private:
         bool success;
         std::string errorMessage;
     };
+
+    struct PendingModelUpdate {
+        EntityID entity;
+        ModelPtr model;
+        std::vector<std::string> meshResourceNames;
+        std::vector<std::string> materialResourceNames;
+        bool success;
+        std::string errorMessage;
+    };
     
     size_t m_maxTasksPerFrame = 10;         ///< 每帧最大处理任务数
     AsyncResourceLoader* m_asyncLoader = nullptr;  ///< 异步加载器
@@ -171,6 +183,7 @@ private:
     std::vector<PendingMeshUpdate> m_pendingMeshUpdates;       ///< 待应用的网格更新
     std::vector<PendingTextureUpdate> m_pendingTextureUpdates; ///< 待应用的纹理更新
     std::vector<PendingTextureOverrideUpdate> m_pendingTextureOverrideUpdates; ///< 待应用的纹理覆盖更新
+    std::vector<PendingModelUpdate> m_pendingModelUpdates;     ///< 待应用的模型更新
     std::mutex m_pendingMutex;  ///< 保护待更新队列的互斥锁
     
     std::atomic<bool> m_shuttingDown{false};  ///< 是否正在关闭
@@ -219,6 +232,39 @@ private:
     CameraSystem* m_cameraSystem = nullptr;     ///< 缓存的相机系统（避免递归锁）
     RenderStats m_stats;                        ///< 渲染统计信息
     std::vector<MeshRenderable> m_renderables;  ///< Renderable 对象池（避免每帧创建销毁）
+};
+
+// ============================================================
+// Model 渲染系统
+// ============================================================
+
+class ModelRenderSystem : public System {
+public:
+    explicit ModelRenderSystem(Renderer* renderer);
+
+    void Update(float deltaTime) override;
+    [[nodiscard]] int GetPriority() const override { return 105; }
+
+    struct RenderStats {
+        size_t visibleModels = 0;
+        size_t culledModels = 0;
+        size_t submittedParts = 0;
+        size_t submittedRenderables = 0;
+    };
+
+    [[nodiscard]] const RenderStats& GetStats() const { return m_stats; }
+
+    void OnCreate(World* world) override;
+    void OnDestroy() override;
+
+private:
+    void SubmitRenderables();
+    bool ShouldCull(const Vector3& position, float radius) const;
+
+    Renderer* m_renderer = nullptr;
+    CameraSystem* m_cameraSystem = nullptr;
+    RenderStats m_stats;
+    std::vector<ModelRenderable> m_renderables;
 };
 
 // ============================================================

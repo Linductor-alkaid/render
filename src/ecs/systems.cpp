@@ -501,13 +501,16 @@ void ResourceLoadingSystem::Update(float deltaTime) {
     // 2. 加载 Mesh 资源
     LoadMeshResources();
     
-    // 3. 加载 Sprite 资源
+    // 3. 加载 Model 资源
+    LoadModelResources();
+    
+    // 4. 加载 Sprite 资源
     LoadSpriteResources();
     
-    // 4. 加载纹理覆盖（多纹理支持）
+    // 5. 加载纹理覆盖（多纹理支持）
     LoadTextureOverrides();
     
-    // 5. 处理异步任务完成回调（回调会将更新加入队列，不直接修改组件）
+    // 6. 处理异步任务完成回调（回调会将更新加入队列，不直接修改组件）
     ProcessAsyncTasks();
 }
 
@@ -736,6 +739,141 @@ void ResourceLoadingSystem::LoadMeshResources() {
                                  meshComp.shaderName.c_str());
                 }
             }
+        }
+    }
+}
+
+void ResourceLoadingSystem::LoadModelResources() {
+    auto entities = m_world->Query<ModelComponent>();
+    if (entities.empty()) {
+        return;
+    }
+
+    auto& resMgr = ResourceManager::GetInstance();
+
+    for (const auto& entity : entities) {
+        auto& modelComp = m_world->GetComponent<ModelComponent>(entity);
+
+        if (modelComp.resourcesLoaded) {
+            continue;
+        }
+
+        if (modelComp.model && modelComp.model->GetPartCount() > 0) {
+            modelComp.resourcesLoaded = true;
+            modelComp.asyncLoading = false;
+            Logger::GetInstance().DebugFormat(
+                "[ResourceLoadingSystem] Entity %u has pre-loaded model instance, marked as loaded",
+                entity.index);
+            continue;
+        }
+
+        if (modelComp.modelName.empty() && !modelComp.model) {
+            Logger::GetInstance().WarningFormat(
+                "[ResourceLoadingSystem] Entity %u: no model and no modelName specified",
+                entity.index);
+            modelComp.resourcesLoaded = true;
+            modelComp.asyncLoading = false;
+            continue;
+        }
+
+        if (modelComp.asyncLoading) {
+            continue;
+        }
+
+        if (!modelComp.model && !modelComp.modelName.empty()) {
+            if (resMgr.HasModel(modelComp.modelName)) {
+                modelComp.model = resMgr.GetModel(modelComp.modelName);
+                modelComp.asyncLoading = false;
+
+                if (modelComp.model) {
+                    modelComp.resourcesLoaded = true;
+                    Logger::GetInstance().DebugFormat(
+                        "[ResourceLoadingSystem] Model loaded from ResourceManager cache: %s",
+                        modelComp.modelName.c_str());
+                } else {
+                    Logger::GetInstance().WarningFormat(
+                        "[ResourceLoadingSystem] Model '%s' exists but returned null",
+                        modelComp.modelName.c_str());
+                    modelComp.resourcesLoaded = true;
+                }
+                continue;
+            }
+        }
+
+        if (!m_asyncLoader || !m_asyncLoader->IsInitialized()) {
+            Logger::GetInstance().WarningFormat(
+                "[ResourceLoadingSystem] Async loader unavailable, cannot load model '%s'",
+                modelComp.modelName.c_str());
+            modelComp.resourcesLoaded = true;
+            modelComp.asyncLoading = false;
+            continue;
+        }
+
+        modelComp.asyncLoading = true;
+
+        EntityID entityCopy = entity;
+        std::string modelNameCopy = modelComp.modelName;
+        ModelLoadOptions options = modelComp.loadOptions;
+        if (options.resourcePrefix.empty()) {
+            options.resourcePrefix = modelNameCopy;
+        }
+        if (options.registerModel && modelNameCopy.empty()) {
+            options.registerModel = false;
+        }
+
+        std::weak_ptr<World> worldWeak;
+        bool legacyCallback = false;
+        try {
+            worldWeak = m_world->weak_from_this();
+        } catch (const std::bad_weak_ptr&) {
+            legacyCallback = true;
+            Logger::GetInstance().WarningFormat(
+                "[ResourceLoadingSystem] World not managed by shared_ptr, using legacy model callback");
+        }
+
+        modelComp.registeredMeshNames.clear();
+        modelComp.registeredMaterialNames.clear();
+
+        Logger::GetInstance().DebugFormat(
+            "[ResourceLoadingSystem] Starting async load for model: %s",
+            modelNameCopy.c_str());
+
+        auto invokeAsyncLoad = [&](auto&& callback) {
+            auto task = m_asyncLoader->LoadModelAsync(
+                modelNameCopy,
+                modelNameCopy,
+                options,
+                std::forward<decltype(callback)>(callback));
+
+            if (!task) {
+                Logger::GetInstance().ErrorFormat(
+                    "[ResourceLoadingSystem] Failed to enqueue async model load task: %s",
+                    modelNameCopy.c_str());
+                modelComp.asyncLoading = false;
+                modelComp.resourcesLoaded = true;
+            }
+        };
+
+        if (legacyCallback) {
+            invokeAsyncLoad([this, entityCopy](const ModelLoadResult& result) {
+                if (!m_shuttingDown.load()) {
+                    this->OnModelLoaded(entityCopy, result);
+                }
+            });
+        } else {
+            invokeAsyncLoad([this, entityCopy, worldWeak](const ModelLoadResult& result) {
+                if (auto worldShared = worldWeak.lock()) {
+                    if (!m_shuttingDown.load()) {
+                        this->OnModelLoaded(entityCopy, result);
+                    } else {
+                        Logger::GetInstance().DebugFormat(
+                            "[ResourceLoadingSystem] System shutting down, skip model callback");
+                    }
+                } else {
+                    Logger::GetInstance().InfoFormat(
+                        "[ResourceLoadingSystem] World destroyed, skip model callback");
+                }
+            });
         }
     }
 }
@@ -1032,6 +1170,35 @@ void ResourceLoadingSystem::OnTextureLoaded(EntityID entity, const TextureLoadRe
     }
 }
 
+void ResourceLoadingSystem::OnModelLoaded(EntityID entity, const ModelLoadResult& result) {
+    if (m_shuttingDown.load()) {
+        Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] System shutting down, ignoring model load callback");
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_pendingMutex);
+
+    PendingModelUpdate update;
+    update.entity = entity;
+    update.model = result.resource;
+    update.meshResourceNames = result.meshResourceNames;
+    update.materialResourceNames = result.materialResourceNames;
+    update.success = result.IsSuccess();
+    update.errorMessage = result.errorMessage;
+
+    m_pendingModelUpdates.push_back(std::move(update));
+
+    if (result.IsSuccess()) {
+        Logger::GetInstance().DebugFormat(
+            "[ResourceLoadingSystem] Model loaded, queued for update: %s",
+            result.name.c_str());
+    } else {
+        Logger::GetInstance().ErrorFormat(
+            "[ResourceLoadingSystem] Failed to load model: %s - %s",
+            result.name.c_str(), result.errorMessage.c_str());
+    }
+}
+
 void ResourceLoadingSystem::ApplyPendingUpdates() {
     if (!m_world) {
         return;
@@ -1048,14 +1215,60 @@ void ResourceLoadingSystem::ApplyPendingUpdates() {
     
     // 获取待更新的队列（交换到本地变量以减少锁持有时间）
     std::vector<PendingMeshUpdate> meshUpdates;
+    std::vector<PendingModelUpdate> modelUpdates;
     std::vector<PendingTextureUpdate> textureUpdates;
     std::vector<PendingTextureOverrideUpdate> textureOverrideUpdates;  // ✅ 新增
     
     {
         std::lock_guard<std::mutex> lock(m_pendingMutex);
         meshUpdates.swap(m_pendingMeshUpdates);
+        modelUpdates.swap(m_pendingModelUpdates);
         textureUpdates.swap(m_pendingTextureUpdates);
         textureOverrideUpdates.swap(m_pendingTextureOverrideUpdates);  // ✅ 交换纹理覆盖更新
+    }
+
+    // 应用模型更新
+    for (const auto& update : modelUpdates) {
+        if (m_shuttingDown.load()) {
+            Logger::GetInstance().InfoFormat("[ResourceLoadingSystem] System shutting down, abort applying model updates");
+            break;
+        }
+
+        if (!m_world->IsValidEntity(update.entity)) {
+            Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Entity %u is no longer valid (model)",
+                                               update.entity.index);
+            continue;
+        }
+
+        if (!m_world->HasComponent<ModelComponent>(update.entity)) {
+            Logger::GetInstance().WarningFormat("[ResourceLoadingSystem] Entity %u missing ModelComponent",
+                                               update.entity.index);
+            continue;
+        }
+
+        try {
+            auto& modelComp = m_world->GetComponent<ModelComponent>(update.entity);
+            modelComp.asyncLoading = false;
+            modelComp.model = update.model;
+            modelComp.resourcesLoaded = update.success && (update.model != nullptr);
+            modelComp.registeredMeshNames = update.meshResourceNames;
+            modelComp.registeredMaterialNames = update.materialResourceNames;
+
+            if (modelComp.resourcesLoaded) {
+                Logger::GetInstance().InfoFormat(
+                    "[ResourceLoadingSystem] ✅ Model applied successfully to entity %u (parts: %zu)",
+                    update.entity.index,
+                    update.model ? update.model->GetPartCount() : 0);
+            } else {
+                Logger::GetInstance().ErrorFormat(
+                    "[ResourceLoadingSystem] Model loading failed for entity %u: %s",
+                    update.entity.index,
+                    update.errorMessage.c_str());
+                modelComp.resourcesLoaded = true;
+            }
+        } catch (const std::exception& e) {
+            Logger::GetInstance().ErrorFormat("[ResourceLoadingSystem] Exception applying model update: %s", e.what());
+        }
     }
     
     // 应用网格更新
@@ -1572,6 +1785,195 @@ bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
     }
     
     return culled;
+}
+
+// ============================================================
+// ModelRenderSystem 实现
+// ============================================================
+
+ModelRenderSystem::ModelRenderSystem(Renderer* renderer)
+    : m_renderer(renderer) {
+    if (!m_renderer) {
+        Logger::GetInstance().ErrorFormat("[ModelRenderSystem] Renderer is null");
+    }
+}
+
+void ModelRenderSystem::OnCreate(World* world) {
+    System::OnCreate(world);
+}
+
+void ModelRenderSystem::OnDestroy() {
+    m_cameraSystem = nullptr;
+    System::OnDestroy();
+}
+
+void ModelRenderSystem::Update(float deltaTime) {
+    (void)deltaTime;
+
+    if (!m_cameraSystem && m_world) {
+        m_cameraSystem = m_world->GetSystemNoLock<CameraSystem>();
+        if (m_cameraSystem) {
+            Logger::GetInstance().InfoFormat("[ModelRenderSystem] CameraSystem acquired");
+        }
+    }
+
+    m_stats = RenderStats{};
+    SubmitRenderables();
+}
+
+void ModelRenderSystem::SubmitRenderables() {
+    RENDER_TRY {
+        if (!m_world || !m_renderer) {
+            throw RENDER_WARNING(ErrorCode::NullPointer, "ModelRenderSystem: World or Renderer is null");
+        }
+
+        if (!m_renderer->IsInitialized()) {
+            throw RENDER_WARNING(ErrorCode::NotInitialized, "ModelRenderSystem: Renderer is not initialized");
+        }
+
+        m_renderables.clear();
+
+        auto entities = m_world->Query<TransformComponent, ModelComponent>();
+        if (entities.empty()) {
+            return;
+        }
+
+        Camera* camera = m_cameraSystem ? m_cameraSystem->GetMainCameraObject() : nullptr;
+        Vector3 cameraPos = camera ? camera->GetPosition() : Vector3::Zero();
+
+        std::vector<size_t> opaqueIndices;
+        std::vector<size_t> transparentIndices;
+        opaqueIndices.reserve(entities.size());
+        transparentIndices.reserve(entities.size());
+
+        for (const auto& entity : entities) {
+            auto& transformComp = m_world->GetComponent<TransformComponent>(entity);
+            auto& modelComp = m_world->GetComponent<ModelComponent>(entity);
+
+            if (!modelComp.visible) {
+                continue;
+            }
+
+            if (!modelComp.resourcesLoaded || !modelComp.model) {
+                continue;
+            }
+
+            Matrix4 worldMatrix = transformComp.GetWorldMatrix();
+            AABB localBounds = modelComp.model->GetBounds();
+            Vector3 localCenter = localBounds.GetCenter();
+            Vector3 localSize = localBounds.GetSize();
+            float radius = localSize.norm() * 0.5f;
+            if (radius <= 0.0f) {
+                radius = 0.5f;
+            }
+
+            Vector3 worldCenter = (worldMatrix * Vector4(localCenter.x(), localCenter.y(), localCenter.z(), 1.0f)).head<3>();
+
+            Vector3 scale = transformComp.GetScale();
+            float maxScale = std::max({std::fabs(scale.x()), std::fabs(scale.y()), std::fabs(scale.z())});
+            if (maxScale > 0.0f) {
+                radius *= maxScale;
+            }
+
+            if (ShouldCull(worldCenter, radius)) {
+                m_stats.culledModels++;
+                continue;
+            }
+
+            ModelRenderable renderable;
+            renderable.SetTransform(transformComp.transform);
+            renderable.SetModel(modelComp.model);
+            renderable.SetVisible(modelComp.visible);
+            renderable.SetLayerID(modelComp.layerID);
+            renderable.SetRenderPriority(modelComp.renderPriority);
+            renderable.SetCastShadows(modelComp.castShadows);
+            renderable.SetReceiveShadows(modelComp.receiveShadows);
+            renderable.ClearDepthHint();
+            renderable.MarkMaterialSortKeyDirty();
+
+            if (camera) {
+                float depth = (worldCenter - cameraPos).squaredNorm();
+                renderable.SetDepthHint(depth);
+            }
+
+            size_t index = m_renderables.size();
+            m_renderables.push_back(std::move(renderable));
+
+            auto& stored = m_renderables.back();
+            if (stored.GetTransparentHint()) {
+                transparentIndices.push_back(index);
+            } else {
+                opaqueIndices.push_back(index);
+            }
+
+            m_stats.visibleModels++;
+            m_stats.submittedParts += modelComp.model->GetPartCount();
+        }
+
+        for (size_t idx : opaqueIndices) {
+            m_renderer->SubmitRenderable(&m_renderables[idx]);
+            m_stats.submittedRenderables++;
+        }
+
+        if (!transparentIndices.empty()) {
+            if (camera) {
+                std::sort(transparentIndices.begin(), transparentIndices.end(),
+                    [&](size_t a, size_t b) {
+                        const auto& renderableA = m_renderables[a];
+                        const auto& renderableB = m_renderables[b];
+
+                        float distA = renderableA.HasDepthHint()
+                            ? renderableA.GetDepthHint()
+                            : (renderableA.GetTransform() ? (renderableA.GetTransform()->GetPosition() - cameraPos).squaredNorm() : 0.0f);
+
+                        float distB = renderableB.HasDepthHint()
+                            ? renderableB.GetDepthHint()
+                            : (renderableB.GetTransform() ? (renderableB.GetTransform()->GetPosition() - cameraPos).squaredNorm() : 0.0f);
+
+                        return distA > distB;
+                    });
+            }
+
+            for (size_t idx : transparentIndices) {
+                m_renderer->SubmitRenderable(&m_renderables[idx]);
+                m_stats.submittedRenderables++;
+            }
+        }
+
+        static int logCounter = 0;
+        if (logCounter++ < 10 || logCounter % 120 == 0) {
+            Logger::GetInstance().InfoFormat(
+                "[ModelRenderSystem] Submitted %zu models (culled: %zu, parts: %zu)",
+                m_stats.visibleModels,
+                m_stats.culledModels,
+                m_stats.submittedParts);
+        }
+    }
+    RENDER_CATCH {
+        // 错误已由 ErrorHandler 记录
+    }
+}
+
+bool ModelRenderSystem::ShouldCull(const Vector3& position, float radius) const {
+    if (!m_cameraSystem) {
+        return false;
+    }
+
+    Camera* mainCamera = m_cameraSystem->GetMainCameraObject();
+    if (!mainCamera) {
+        return false;
+    }
+
+    Vector3 cameraPos = mainCamera->GetPosition();
+    float distanceToCamera = (position - cameraPos).norm();
+    const float noCullRadius = 5.0f;
+    if (distanceToCamera < noCullRadius + radius) {
+        return false;
+    }
+
+    const Frustum& frustum = mainCamera->GetFrustum();
+    float expandedRadius = radius * 1.5f;
+    return !frustum.IntersectsSphere(position, expandedRadius);
 }
 
 // ============================================================
@@ -2759,6 +3161,58 @@ void UniformSystem::SetCameraUniforms() {
         } catch (const std::exception& e) {
             Logger::GetInstance().ErrorFormat("[UniformSystem] Exception setting camera uniforms: %s", e.what());
         }
+    }
+
+    // 处理模型材质的相机 uniform
+    auto modelEntities = m_world->Query<ModelComponent>();
+    for (const auto& entity : modelEntities) {
+        const auto& modelComp = m_world->GetComponent<ModelComponent>(entity);
+        if (!modelComp.resourcesLoaded || !modelComp.model) {
+            continue;
+        }
+
+        modelComp.model->AccessParts([&](const std::vector<ModelPart>& parts) {
+            for (const auto& part : parts) {
+                if (!part.material || !part.material->IsValid()) {
+                    continue;
+                }
+
+                auto shader = part.material->GetShader();
+                if (!shader) {
+                    continue;
+                }
+
+                Shader* shaderPtr = shader.get();
+                if (processedShaders.count(shaderPtr)) {
+                    continue;
+                }
+
+                if (!shader->IsValid()) {
+                    Logger::GetInstance().WarningFormat(
+                        "[UniformSystem] Shader is invalid (model), skipping camera uniforms");
+                    continue;
+                }
+
+                try {
+                    shader->Use();
+                    if (auto uniformMgr = shader->GetUniformManager()) {
+                        if (uniformMgr->HasUniform("uView")) {
+                            uniformMgr->SetMatrix4("uView", viewMatrix);
+                        }
+                        if (uniformMgr->HasUniform("uProjection")) {
+                            uniformMgr->SetMatrix4("uProjection", projectionMatrix);
+                        }
+                        if (uniformMgr->HasUniform("uViewPos")) {
+                            uniformMgr->SetVector3("uViewPos", cameraPos);
+                        }
+                    }
+                    processedShaders.insert(shaderPtr);
+                } catch (const std::exception& e) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UniformSystem] Exception setting model camera uniforms: %s", e.what());
+                }
+            }
+        });
     }
     
     static bool firstLog = true;

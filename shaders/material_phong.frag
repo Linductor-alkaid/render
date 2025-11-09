@@ -7,6 +7,8 @@ const int MAX_AMBIENT = 4;
 
 in vec3 FragPos;
 in vec3 Normal;
+in vec3 Tangent;
+in vec3 Bitangent;
 in vec2 TexCoord;
 in vec4 VertexColor;
 
@@ -19,6 +21,12 @@ uniform float uShininess;
 
 uniform sampler2D diffuseMap;
 uniform bool hasDiffuseMap;
+uniform sampler2D normalMap;
+uniform bool hasNormalMap;
+
+const int MAX_EXTRA_COLOR_SETS = 4;
+uniform int uExtraColorSetCount;
+uniform vec4 uExtraColorSets[MAX_EXTRA_COLOR_SETS];
 
 uniform vec3 uLightPos;
 uniform vec3 uViewPos;
@@ -141,11 +149,24 @@ vec3 EvaluateLegacyLight(vec3 norm, vec3 viewDir, vec3 baseDiffuse) {
 
 void main() {
     vec3 norm = normalize(Normal);
+    if (hasNormalMap) {
+        vec3 T = normalize(Tangent);
+        vec3 B = normalize(Bitangent);
+        vec3 N = normalize(norm);
+        mat3 TBN = mat3(T, B, N);
+        vec3 sampledNormal = texture(normalMap, TexCoord).xyz * 2.0 - 1.0;
+        norm = normalize(TBN * sampledNormal);
+    }
 
     vec4 baseColor = uDiffuseColor;
     if (hasDiffuseMap) {
         vec4 texColor = texture(diffuseMap, TexCoord);
         baseColor = texColor * uDiffuseColor;
+        baseColor.rgb = clamp(baseColor.rgb, 0.0, 1.0);
+    }
+    baseColor *= VertexColor;
+    for (int i = 0; i < uExtraColorSetCount && i < MAX_EXTRA_COLOR_SETS; ++i) {
+        baseColor *= uExtraColorSets[i];
     }
 
     vec3 result = vec3(0.0);

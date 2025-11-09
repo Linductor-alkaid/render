@@ -30,11 +30,15 @@ public:
     void SetVector2(const std::string& name, const Vector2& value);
     void SetVector3(const std::string& name, const Vector3& value);
     void SetVector4(const std::string& name, const Vector4& value);
+    void SetVector2Array(const std::string& name, const Vector2* values, uint32_t count);
+    void SetVector3Array(const std::string& name, const Vector3* values, uint32_t count);
+    void SetVector4Array(const std::string& name, const Vector4* values, uint32_t count);
     
     void SetMatrix3(const std::string& name, const Matrix3& value);
     void SetMatrix4(const std::string& name, const Matrix4& value);
     
     void SetColor(const std::string& name, const Color& value);
+    void SetColorArray(const std::string& name, const Color* values, uint32_t count);
     
     // ... 更多方法见下文
 };
@@ -264,6 +268,25 @@ uniformMgr->SetFloatArray("blurWeights", weights, 8);
 
 ---
 
+### SetVector2Array（2025-11-09 新增）
+
+设置 Vector2 数组 uniform，可用于批量传输多套 UV 缩放、屏幕分辨率采样点等。
+
+```cpp
+void SetVector2Array(const std::string& name, const Vector2* values, uint32_t count);
+```
+
+**示例**:
+```cpp
+Vector2 uvScales[2] = {
+    Vector2(2.0f, 2.0f),
+    Vector2(1.5f, 0.75f)
+};
+uniformMgr->SetVector2Array("uExtraUVSetScales", uvScales, 2);
+```
+
+---
+
 ### SetVector3Array
 
 设置 Vector3 数组 uniform。
@@ -287,6 +310,24 @@ uniformMgr->SetVector3Array("lightPositions", lightPositions, 4);
 ---
 
 ### SetMatrix4Array
+### SetColorArray（2025-11-09 新增）
+
+设置颜色数组 uniform。内部会自动将 `Color` 转换为 `vec4` 数据。
+
+```cpp
+void SetColorArray(const std::string& name, const Color* values, uint32_t count);
+```
+
+**示例**:
+```cpp
+Color palette[2] = {
+    Color(1.2f, 1.0f, 1.0f, 1.0f),
+    Color(0.9f, 1.1f, 1.1f, 1.0f)
+};
+uniformMgr->SetColorArray("uExtraColorSets", palette, 2);
+```
+
+---
 
 设置 Matrix4 数组 uniform。
 

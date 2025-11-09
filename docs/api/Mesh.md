@@ -79,6 +79,8 @@ struct Vertex {
     Vector2 texCoord;   // 纹理坐标
     Vector3 normal;     // 法线
     Color color;        // 顶点颜色
+    Vector3 tangent;    // 切线
+    Vector3 bitangent;  // 副切线
     
     Vertex();
     Vertex(const Vector3& pos);
@@ -91,12 +93,16 @@ struct Vertex {
 - `texCoord` - 纹理坐标（UV 坐标，范围 0-1）
 - `normal` - 顶点法线（用于光照计算）
 - `color` - 顶点颜色（RGBA）
+- `tangent` - 顶点切线（用于法线贴图与切线空间光照）
+- `bitangent` - 顶点副切线（与法线、切线组成正交基）
 
 **顶点布局**:
 - Location 0: Position (vec3)
 - Location 1: TexCoord (vec2)
 - Location 2: Normal (vec3)
 - Location 3: Color (vec4)
+- Location 4: Tangent (vec3)
+- Location 5: Bitangent (vec3)
 
 ---
 
@@ -660,15 +666,23 @@ void RecalculateNormals();
 
 ### RecalculateTangents
 
-重新计算切线。
+重新计算切线空间。
 
 ```cpp
 void RecalculateTangents();
 ```
 
-**说明**: 计算切线和副切线（用于法线贴图）。
+**说明**: 
+- 基于三角形及 UV 计算切线和副切线
+- 自动处理无效三角形、退化 UV、非索引网格
+- 将切线与法线正交化并生成一致的副切线
+- 自动更新 GPU 数据（如果已上传）
 
-**注意**: 当前版本暂未实现。
+**用途**: 
+- 启用法线贴图、各向异性材质等依赖切线空间的效果
+- 在修改顶点或 UV 后重新生成切线空间数据
+
+**提示**: 重新计算后，顶点的 `tangent`/`bitangent` 字段将与法线共同组成右手/左手坐标系，并在 `Upload()` 时一并发送到 GPU。
 
 ---
 

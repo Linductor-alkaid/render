@@ -16,6 +16,7 @@ namespace Render {
 enum class ResourceType {
     Texture,
     Mesh,
+    Model,
     Material,
     Shader,
     SpriteAtlas,
