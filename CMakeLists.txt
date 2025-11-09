@@ -204,6 +204,7 @@ set(RENDER_SOURCES
     src/core/renderer.cpp
     src/core/opengl_context.cpp
     src/core/render_state.cpp
+    src/core/render_layer.cpp
     src/core/resource_manager.cpp
     src/core/async_resource_loader.cpp
     src/core/transform.cpp
@@ -279,6 +280,7 @@ set(RENDER_HEADERS
     include/render/renderer.h
     include/render/opengl_context.h
     include/render/render_state.h
+    include/render/render_layer.h
     include/render/types.h
     include/render/resource_manager.h
     include/render/resource_handle.h

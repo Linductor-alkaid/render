@@ -7,11 +7,13 @@
 #include "render/material_sort_key.h"
 #include "render/text/text.h"
 #include "render/material_state_cache.h"
+#include "render/render_layer.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <cmath>
+#include <unordered_map>
 
 namespace Render {
 
@@ -41,6 +43,69 @@ uint32_t HashPointer(const void* ptr) {
     seed = HashCombine(seed, static_cast<uint32_t>(value & 0xFFFFFFFFu));
     seed = HashCombine(seed, static_cast<uint32_t>((value >> 32) & 0xFFFFFFFFu));
     return seed;
+}
+
+const char* ToString(BlendMode mode) {
+    switch (mode) {
+    case BlendMode::None: return "None";
+    case BlendMode::Alpha: return "Alpha";
+    case BlendMode::Additive: return "Additive";
+    case BlendMode::Multiply: return "Multiply";
+    case BlendMode::Custom: return "Custom";
+    }
+    return "Unknown";
+}
+
+const char* ToString(CullFace mode) {
+    switch (mode) {
+    case CullFace::None: return "None";
+    case CullFace::Front: return "Front";
+    case CullFace::Back: return "Back";
+    case CullFace::FrontAndBack: return "FrontAndBack";
+    }
+    return "Unknown";
+}
+
+const char* ToString(DepthFunc func) {
+    switch (func) {
+    case DepthFunc::Never: return "Never";
+    case DepthFunc::Less: return "Less";
+    case DepthFunc::Equal: return "Equal";
+    case DepthFunc::LessEqual: return "LessEqual";
+    case DepthFunc::Greater: return "Greater";
+    case DepthFunc::NotEqual: return "NotEqual";
+    case DepthFunc::GreaterEqual: return "GreaterEqual";
+    case DepthFunc::Always: return "Always";
+    }
+    return "Unknown";
+}
+
+const char* ToString(const std::optional<bool>& value) {
+    if (!value.has_value()) {
+        return "default";
+    }
+    return value.value() ? "true" : "false";
+}
+
+const char* ToString(const std::optional<BlendMode>& value) {
+    if (!value.has_value()) {
+        return "default";
+    }
+    return ToString(value.value());
+}
+
+const char* ToString(const std::optional<CullFace>& value) {
+    if (!value.has_value()) {
+        return "default";
+    }
+    return ToString(value.value());
+}
+
+const char* ToString(const std::optional<DepthFunc>& value) {
+    if (!value.has_value()) {
+        return "default";
+    }
+    return ToString(value.value());
 }
 
 MaterialSortKey BuildMeshRenderableSortKey(MeshRenderable* meshRenderable) {
@@ -500,12 +565,15 @@ Renderer::Renderer()
     , m_lastFrameTime(0.0f)
     , m_fpsUpdateTimer(0.0f)
     , m_frameCount(0)
-    , m_batchingMode(BatchingMode::Disabled) {
+    , m_batchingMode(BatchingMode::Disabled)
+    , m_activeLayerMask(0xFFFFFFFFu) {
     
     // 注意：构造阶段尚未被其他线程访问
     m_context = std::make_shared<OpenGLContext>();
     m_renderState = std::make_shared<RenderState>();
     m_batchManager.SetResourceManager(&ResourceManager::GetInstance());
+    m_layerRegistry.SetDefaultLayers(RenderLayerDefaults::CreateDefaultDescriptors());
+    m_layerRegistry.ResetToDefaults();
 }
 
 Renderer::~Renderer() {
@@ -661,37 +729,249 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
     
     EnsureMaterialSortKey(renderable);
 
+    RenderLayerId requestedLayer(renderable->GetLayerID());
+    auto descriptorOpt = m_layerRegistry.GetDescriptor(requestedLayer);
+
+    if (!descriptorOpt.has_value()) {
+        Logger::GetInstance().WarningFormat(
+            "[Renderer] Layer %u not registered, falling back to 'world.midground'",
+            requestedLayer.value);
+        requestedLayer = Layers::World::Midground;
+        descriptorOpt = m_layerRegistry.GetDescriptor(requestedLayer);
+        if (descriptorOpt.has_value()) {
+            renderable->SetLayerID(requestedLayer.value);
+        } else {
+            auto defaults = RenderLayerDefaults::CreateDefaultDescriptors();
+            auto it = std::find_if(defaults.begin(), defaults.end(), [&](const RenderLayerDescriptor& desc) {
+                return desc.id == requestedLayer;
+            });
+            if (it != defaults.end()) {
+                m_layerRegistry.RegisterLayer(*it);
+                descriptorOpt = m_layerRegistry.GetDescriptor(requestedLayer);
+                renderable->SetLayerID(requestedLayer.value);
+            }
+        }
+    }
+
+    if (!descriptorOpt.has_value()) {
+        Logger::GetInstance().Warning("[Renderer] Unable to resolve any render layer, dropping renderable");
+        return;
+    }
+
+    const RenderLayerDescriptor descriptor = *descriptorOpt;
+    auto stateOpt = m_layerRegistry.GetState(descriptor.id);
+    if (stateOpt.has_value() && !stateOpt->enabled) {
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_renderQueue.push_back(renderable);
+
+    const uint32_t layerValue = descriptor.id.value;
+    auto [lookupIt, inserted] = m_layerBucketLookup.insert({layerValue, m_layerBuckets.size()});
+    if (inserted) {
+        LayerBucket bucket;
+        bucket.id = descriptor.id;
+        bucket.priority = descriptor.priority;
+        bucket.sortPolicy = descriptor.sortPolicy;
+        m_layerBuckets.push_back(std::move(bucket));
+    }
+
+    LayerBucket& bucket = m_layerBuckets[lookupIt->second];
+    bucket.id = descriptor.id;
+    bucket.priority = descriptor.priority;
+    bucket.sortPolicy = descriptor.sortPolicy;
+    bucket.maskIndex = descriptor.maskIndex;
+    bucket.items.push_back(LayerItem{renderable, m_submissionCounter++});
 }
 
 void Renderer::FlushRenderQueue() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
-    if (m_renderQueue.empty()) {
+    const size_t pendingCount = CountPendingRenderables();
+    if (pendingCount == 0) {
         return;
     }
 
-    const auto originalSwitchMetrics = ComputeMaterialSwitchMetrics(m_renderQueue);
-    
-    // 排序渲染队列
-    SortRenderQueue();
+    const uint32_t activeLayerMask = m_activeLayerMask.load();
+    Logger::GetInstance().DebugFormat("[LayerMaskDebug] Active layer mask = 0x%08X (%u)", activeLayerMask, activeLayerMask);
 
-    const auto sortedSwitchMetrics = ComputeMaterialSwitchMetrics(m_renderQueue);
+    std::vector<LayerItem*> submissionOrder;
+    submissionOrder.reserve(pendingCount);
+    for (auto& bucket : m_layerBuckets) {
+        const bool maskAllows =
+            (bucket.maskIndex >= 32) ||
+            ((activeLayerMask >> bucket.maskIndex) & 0x1u);
+        if (!maskAllows) {
+            continue;
+        }
+        for (auto& item : bucket.items) {
+            submissionOrder.push_back(&item);
+        }
+    }
+
+    std::sort(submissionOrder.begin(), submissionOrder.end(), [](const LayerItem* a, const LayerItem* b) {
+        return a->submissionIndex < b->submissionIndex;
+    });
+
+    std::vector<Renderable*> originalQueue;
+    originalQueue.reserve(submissionOrder.size());
+    for (const auto* item : submissionOrder) {
+        originalQueue.push_back(item->renderable);
+    }
+
+    const auto originalSwitchMetrics = ComputeMaterialSwitchMetrics(originalQueue);
+
+    m_batchManager.SetMode(m_batchingMode);
+    m_batchManager.Reset();
+
+    std::vector<Renderable*> sortedQueue;
+    sortedQueue.reserve(pendingCount);
+
+    const auto layerRecords = m_layerRegistry.ListLayers();
+    std::unordered_map<uint32_t, const RenderLayerRecord*> layerRecordLookup;
+    layerRecordLookup.reserve(layerRecords.size());
+    for (const auto& record : layerRecords) {
+        layerRecordLookup.emplace(record.descriptor.id.value, &record);
+    }
+    std::vector<bool> processedBuckets(m_layerBuckets.size(), false);
+
+    std::optional<uint32_t> previousViewport;
+    bool previousScissorEnabled = false;
+    std::optional<RenderLayerViewport> previousScissorRect;
+
+    for (const auto& record : layerRecords) {
+        auto lookupIt = m_layerBucketLookup.find(record.descriptor.id.value);
+        if (lookupIt == m_layerBucketLookup.end()) {
+            continue;
+        }
+
+        const size_t bucketIndex = lookupIt->second;
+        if (bucketIndex >= m_layerBuckets.size()) {
+            continue;
+        }
+
+        LayerBucket& bucket = m_layerBuckets[bucketIndex];
+        processedBuckets[bucketIndex] = true;
+
+        if (bucket.items.empty()) {
+            continue;
+        }
+
+        const bool maskAllows =
+            (record.descriptor.maskIndex >= 32) ||
+            ((activeLayerMask >> record.descriptor.maskIndex) & 0x1u);
+
+        Logger::GetInstance().DebugFormat(
+            "[LayerMaskDebug] Processing layer '%s' (id=%u, priority=%u, maskIndex=%u, enabled=%s, items=%zu, maskAllows=%s)",
+            record.descriptor.name.c_str(),
+            record.descriptor.id.value,
+            record.descriptor.priority,
+            record.descriptor.maskIndex,
+            record.state.enabled ? "true" : "false",
+            bucket.items.size(),
+            maskAllows ? "true" : "false");
+
+        Logger::GetInstance().DebugFormat(
+            "[LayerMaskDebug] Overrides -> depthTest=%s, depthWrite=%s, depthFunc=%s, blend=%s, cull=%s, scissorTest=%s",
+            ToString(record.state.overrides.depthTest),
+            ToString(record.state.overrides.depthWrite),
+            ToString(record.state.overrides.depthFunc),
+            ToString(record.state.overrides.blendMode),
+            ToString(record.state.overrides.cullFace),
+            ToString(record.state.overrides.scissorTest));
+
+        if (!record.state.enabled || !maskAllows) {
+            bucket.items.clear();
+            continue;
+        }
+
+        bucket.priority = record.descriptor.priority;
+        bucket.sortPolicy = record.descriptor.sortPolicy;
+        bucket.maskIndex = record.descriptor.maskIndex;
+
+        if (m_initialized) {
+            m_renderState->Reset();
+            if (m_context) {
+                int width = m_context->GetWidth();
+                int height = m_context->GetHeight();
+                if (width > 0 && height > 0) {
+                    m_renderState->SetViewport(0, 0, width, height);
+                }
+            }
+            m_renderState->SetScissorTest(false);
+        }
+
+        SortLayerItems(bucket.items, record.descriptor);
+        ApplyLayerOverrides(record.descriptor, record.state);
+
+        for (const auto& item : bucket.items) {
+            if (item.renderable && item.renderable->IsVisible()) {
+                sortedQueue.push_back(item.renderable);
+            }
+        }
+
+        bucket.items.clear();
+    }
+
+    for (size_t i = 0; i < m_layerBuckets.size(); ++i) {
+        if (!processedBuckets[i]) {
+            m_layerBuckets[i].items.clear();
+        }
+    }
+
+    m_layerBuckets.clear();
+    m_layerBucketLookup.clear();
+    m_submissionCounter = 0;
+
+    const auto sortedSwitchMetrics = ComputeMaterialSwitchMetrics(sortedQueue);
 
     m_stats.materialSwitchesOriginal = originalSwitchMetrics.switches;
     m_stats.materialSwitchesSorted = sortedSwitchMetrics.switches;
     m_stats.materialSortKeyReady = std::max(originalSwitchMetrics.keyReady, sortedSwitchMetrics.keyReady);
     m_stats.materialSortKeyMissing = std::max(originalSwitchMetrics.keyMissing, sortedSwitchMetrics.keyMissing);
     
-    m_stats.originalDrawCalls = static_cast<uint32_t>(m_renderQueue.size());
+    m_stats.originalDrawCalls = static_cast<uint32_t>(originalQueue.size());
 
-    m_batchManager.SetMode(m_batchingMode);
-    m_batchManager.Reset();
+    if (sortedQueue.empty()) {
+        return;
+    }
 
-    for (auto* renderable : m_renderQueue) {
+    RenderLayerId activeDrawLayer = RenderLayerId::Invalid();
+    RenderLayerRecord fallbackLayerRecord{};
+
+    for (auto* renderable : sortedQueue) {
         if (!renderable || !renderable->IsVisible()) {
             continue;
+        }
+
+        RenderLayerId renderLayer(static_cast<uint32_t>(renderable->GetLayerID()));
+        if (renderLayer.IsValid() && renderLayer != activeDrawLayer) {
+            activeDrawLayer = renderLayer;
+
+            const RenderLayerRecord* recordPtr = nullptr;
+            if (auto it = layerRecordLookup.find(renderLayer.value); it != layerRecordLookup.end()) {
+                recordPtr = it->second;
+            } else {
+                auto descriptorOpt = m_layerRegistry.GetDescriptor(renderLayer);
+                auto stateOpt = m_layerRegistry.GetState(renderLayer);
+
+                fallbackLayerRecord.descriptor = RenderLayerDescriptor{};
+                fallbackLayerRecord.descriptor.id = renderLayer;
+                fallbackLayerRecord.descriptor.name = descriptorOpt.has_value() ? descriptorOpt->name : "unregistered";
+                fallbackLayerRecord.descriptor.priority = descriptorOpt.has_value() ? descriptorOpt->priority : 0u;
+                fallbackLayerRecord.descriptor.sortPolicy = descriptorOpt.has_value() ? descriptorOpt->sortPolicy : LayerSortPolicy::OpaqueMaterialFirst;
+                fallbackLayerRecord.descriptor.defaultState = descriptorOpt.has_value() ? descriptorOpt->defaultState : RenderStateOverrides{};
+                fallbackLayerRecord.descriptor.enableByDefault = descriptorOpt.has_value() ? descriptorOpt->enableByDefault : true;
+                fallbackLayerRecord.descriptor.defaultSortBias = descriptorOpt.has_value() ? descriptorOpt->defaultSortBias : 0;
+                fallbackLayerRecord.descriptor.maskIndex = descriptorOpt.has_value() ? descriptorOpt->maskIndex : 0;
+
+                fallbackLayerRecord.state = stateOpt.has_value() ? stateOpt.value() : RenderLayerState{};
+                recordPtr = &fallbackLayerRecord;
+            }
+
+            if (recordPtr) {
+                ApplyLayerOverrides(recordPtr->descriptor, recordPtr->state);
+            }
         }
 
         m_batchManager.AddItem(CreateBatchableItem(renderable));
@@ -749,19 +1029,20 @@ void Renderer::FlushRenderQueue() {
         }
     }
 
-    // 清空队列
-    m_renderQueue.clear();
+    // 清空累积统计
 }
 
 void Renderer::ClearRenderQueue() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_renderQueue.clear();
+    m_layerBuckets.clear();
+    m_layerBucketLookup.clear();
+    m_submissionCounter = 0;
     m_batchManager.Reset();
 }
 
 size_t Renderer::GetRenderQueueSize() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_renderQueue.size();
+    return CountPendingRenderables();
 }
 
 void Renderer::SetBatchingMode(BatchingMode mode) {
@@ -775,12 +1056,64 @@ BatchingMode Renderer::GetBatchingMode() const {
     return m_batchingMode;
 }
 
-void Renderer::SortRenderQueue() {
-    auto isOpaque = [](Renderable* renderable) {
-        return renderable && !renderable->GetTransparentHint();
-    };
+void Renderer::SetActiveLayerMask(uint32_t mask) {
+    m_activeLayerMask.store(mask, std::memory_order_relaxed);
+}
 
-    auto partitionIt = std::stable_partition(m_renderQueue.begin(), m_renderQueue.end(), isOpaque);
+uint32_t Renderer::GetActiveLayerMask() const {
+    return m_activeLayerMask.load(std::memory_order_relaxed);
+}
+
+void Renderer::ApplyLayerOverrides(const RenderLayerDescriptor& descriptor,
+                                   const RenderLayerState& state) {
+    if (!m_initialized) {
+        return;
+    }
+
+    const RenderStateOverrides& overrides = state.overrides;
+
+    if (overrides.depthTest.has_value()) {
+        m_renderState->SetDepthTest(*overrides.depthTest);
+    }
+    if (overrides.depthWrite.has_value()) {
+        m_renderState->SetDepthWrite(*overrides.depthWrite);
+    }
+    if (overrides.depthFunc.has_value()) {
+        m_renderState->SetDepthFunc(*overrides.depthFunc);
+    }
+    if (overrides.blendMode.has_value()) {
+        m_renderState->SetBlendMode(*overrides.blendMode);
+    }
+    if (overrides.cullFace.has_value()) {
+        m_renderState->SetCullFace(*overrides.cullFace);
+    }
+    if (overrides.scissorTest.has_value()) {
+        m_renderState->SetScissorTest(*overrides.scissorTest);
+    }
+
+    if (state.viewport.has_value()) {
+        const auto& viewport = state.viewport.value();
+        if (!viewport.IsEmpty()) {
+            m_renderState->SetViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+        }
+    }
+
+    if (state.scissorRect.has_value()) {
+        const auto& rect = state.scissorRect.value();
+        if (!rect.IsEmpty()) {
+            m_renderState->SetScissorRect(rect.x, rect.y, rect.width, rect.height);
+        }
+    }
+}
+
+void Renderer::SortLayerItems(std::vector<LayerItem>& items, const RenderLayerDescriptor& descriptor) {
+    if (items.size() <= 1) {
+        return;
+    }
+
+    auto effectivePriority = [&](Renderable* renderable) -> int32_t {
+        return descriptor.defaultSortBias + (renderable ? renderable->GetRenderPriority() : 0);
+    };
 
     auto resolveKey = [](const Renderable* renderable) {
         if (!renderable) {
@@ -790,52 +1123,6 @@ void Renderer::SortRenderQueue() {
             return renderable->GetMaterialSortKey();
         }
         return BuildFallbackMaterialKey(renderable, 0u);
-    };
-
-    std::stable_sort(m_renderQueue.begin(), partitionIt,
-        [&](Renderable* a, Renderable* b) {
-            if (a == b) {
-                return false;
-            }
-            if (!a) {
-                return false;
-            }
-            if (!b) {
-                return true;
-            }
-
-            const uint32_t layerA = a->GetLayerID();
-            const uint32_t layerB = b->GetLayerID();
-            if (layerA != layerB) {
-                return layerA < layerB;
-            }
-
-            const MaterialSortKey keyA = resolveKey(a);
-            const MaterialSortKey keyB = resolveKey(b);
-            if (keyA != keyB) {
-                return MaterialSortKeyLess{}(keyA, keyB);
-            }
-
-            const int32_t priorityA = a->GetRenderPriority();
-            const int32_t priorityB = b->GetRenderPriority();
-            if (priorityA != priorityB) {
-                return priorityA < priorityB;
-            }
-
-            return static_cast<int>(a->GetType()) < static_cast<int>(b->GetType());
-        });
-
-    if (partitionIt == m_renderQueue.end()) {
-        return;
-    }
-
-    struct TransparentEntry {
-        Renderable* renderable = nullptr;
-        MaterialSortKey materialKey{};
-        float depth = 0.0f;
-        size_t originalIndex = 0;
-        uint32_t layer = 0;
-        int32_t priority = 0;
     };
 
     auto computeDepthHint = [](Renderable* renderable) -> float {
@@ -850,60 +1137,172 @@ void Renderer::SortRenderQueue() {
         return position.squaredNorm();
     };
 
-    std::vector<TransparentEntry> transparentEntries;
-    transparentEntries.reserve(static_cast<size_t>(std::distance(partitionIt, m_renderQueue.end())));
+    switch (descriptor.sortPolicy) {
+    case LayerSortPolicy::OpaqueMaterialFirst: {
+        auto isOpaque = [](const LayerItem& item) {
+            return item.renderable && !item.renderable->GetTransparentHint();
+        };
 
-    size_t originalIndex = 0;
-    for (auto it = partitionIt; it != m_renderQueue.end(); ++it, ++originalIndex) {
-        Renderable* renderable = *it;
-        TransparentEntry entry{};
-        entry.renderable = renderable;
-        entry.originalIndex = originalIndex;
-        entry.layer = renderable ? renderable->GetLayerID() : 0u;
-        entry.priority = renderable ? renderable->GetRenderPriority() : 0;
-        entry.materialKey = resolveKey(renderable);
-        entry.depth = renderable ? computeDepthHint(renderable) : 0.0f;
-        transparentEntries.push_back(entry);
+        auto partitionIt = std::stable_partition(items.begin(), items.end(), isOpaque);
+
+        std::stable_sort(items.begin(), partitionIt,
+            [&](const LayerItem& a, const LayerItem& b) {
+                Renderable* ra = a.renderable;
+                Renderable* rb = b.renderable;
+                if (ra == rb) {
+                    return a.submissionIndex < b.submissionIndex;
+                }
+                if (!ra) {
+                    return false;
+                }
+                if (!rb) {
+                    return true;
+                }
+
+                const MaterialSortKey keyA = resolveKey(ra);
+                const MaterialSortKey keyB = resolveKey(rb);
+                if (keyA != keyB) {
+                    return MaterialSortKeyLess{}(keyA, keyB);
+                }
+
+                const int32_t priorityA = effectivePriority(ra);
+                const int32_t priorityB = effectivePriority(rb);
+                if (priorityA != priorityB) {
+                    return priorityA < priorityB;
+                }
+
+                return static_cast<int>(ra->GetType()) < static_cast<int>(rb->GetType());
+            });
+
+        if (partitionIt == items.end()) {
+            return;
+        }
+
+        struct TransparentEntry {
+            LayerItem item;
+            MaterialSortKey materialKey{};
+            float depth = 0.0f;
+        };
+
+        std::vector<TransparentEntry> transparentEntries;
+        transparentEntries.reserve(static_cast<size_t>(std::distance(partitionIt, items.end())));
+
+        for (auto it = partitionIt; it != items.end(); ++it) {
+            Renderable* renderable = it->renderable;
+            TransparentEntry entry{};
+            entry.item = *it;
+            entry.materialKey = resolveKey(renderable);
+            entry.depth = computeDepthHint(renderable);
+            transparentEntries.push_back(entry);
+        }
+
+        auto nearlyEqual = [](float a, float b) {
+            return std::fabs(a - b) <= 1e-6f * std::max(1.0f, std::max(std::fabs(a), std::fabs(b)));
+        };
+
+        std::stable_sort(transparentEntries.begin(), transparentEntries.end(),
+            [&](const TransparentEntry& a, const TransparentEntry& b) {
+                if (a.item.renderable == b.item.renderable) {
+                    return a.item.submissionIndex < b.item.submissionIndex;
+                }
+
+                if (!nearlyEqual(a.depth, b.depth)) {
+                    return a.depth > b.depth;
+                }
+
+                if (a.materialKey != b.materialKey) {
+                    return MaterialSortKeyLess{}(a.materialKey, b.materialKey);
+                }
+
+                const int32_t priorityA = effectivePriority(a.item.renderable);
+                const int32_t priorityB = effectivePriority(b.item.renderable);
+                if (priorityA != priorityB) {
+                    return priorityA < priorityB;
+                }
+
+                return a.item.submissionIndex < b.item.submissionIndex;
+            });
+
+        auto assignIt = partitionIt;
+        for (const auto& entry : transparentEntries) {
+            *assignIt = entry.item;
+            ++assignIt;
+        }
+        break;
     }
+    case LayerSortPolicy::TransparentDepth: {
+        struct Entry {
+            LayerItem item;
+            MaterialSortKey key{};
+            float depth = 0.0f;
+        };
 
-    if (transparentEntries.empty()) {
-        return;
-    }
+        std::vector<Entry> entries;
+        entries.reserve(items.size());
+        for (const auto& item : items) {
+            entries.push_back(Entry{item, resolveKey(item.renderable), computeDepthHint(item.renderable)});
+        }
 
-    auto nearlyEqual = [](float a, float b) {
-        return std::fabs(a - b) <= 1e-6f * std::max(1.0f, std::max(std::fabs(a), std::fabs(b)));
-    };
+        auto nearlyEqual = [](float a, float b) {
+            return std::fabs(a - b) <= 1e-6f * std::max(1.0f, std::max(std::fabs(a), std::fabs(b)));
+        };
 
-    std::stable_sort(transparentEntries.begin(), transparentEntries.end(),
-        [&](const TransparentEntry& a, const TransparentEntry& b) {
-            if (a.renderable == b.renderable) {
-                return false;
-            }
-
-            if (a.layer != b.layer) {
-                return a.layer < b.layer;
+        std::stable_sort(entries.begin(), entries.end(), [&](const Entry& a, const Entry& b) {
+            if (a.item.renderable == b.item.renderable) {
+                return a.item.submissionIndex < b.item.submissionIndex;
             }
 
             if (!nearlyEqual(a.depth, b.depth)) {
                 return a.depth > b.depth;
             }
 
-            if (a.materialKey != b.materialKey) {
-                return MaterialSortKeyLess{}(a.materialKey, b.materialKey);
+            if (a.key != b.key) {
+                return MaterialSortKeyLess{}(a.key, b.key);
             }
 
-            if (a.priority != b.priority) {
-                return a.priority < b.priority;
+            const int32_t priorityA = effectivePriority(a.item.renderable);
+            const int32_t priorityB = effectivePriority(b.item.renderable);
+            if (priorityA != priorityB) {
+                return priorityA < priorityB;
             }
 
-            return a.originalIndex < b.originalIndex;
+            return a.item.submissionIndex < b.item.submissionIndex;
         });
 
-    auto assignIt = partitionIt;
-    for (const auto& entry : transparentEntries) {
-        *assignIt = entry.renderable;
-        ++assignIt;
+        for (size_t i = 0; i < entries.size(); ++i) {
+            items[i] = entries[i].item;
+        }
+        break;
     }
+    case LayerSortPolicy::ScreenSpaceStable: {
+        std::stable_sort(items.begin(), items.end(), [&](const LayerItem& a, const LayerItem& b) {
+            const int32_t priorityA = effectivePriority(a.renderable);
+            const int32_t priorityB = effectivePriority(b.renderable);
+            if (priorityA != priorityB) {
+                return priorityA < priorityB;
+            }
+            return a.submissionIndex < b.submissionIndex;
+        });
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+size_t Renderer::CountPendingRenderables() const {
+    const uint32_t activeLayerMask = m_activeLayerMask.load();
+    size_t total = 0;
+    for (const auto& bucket : m_layerBuckets) {
+        const bool maskAllows =
+            (bucket.maskIndex >= 32) ||
+            ((activeLayerMask >> bucket.maskIndex) & 0x1u);
+        if (!maskAllows) {
+            continue;
+        }
+        total += bucket.items.size();
+    }
+    return total;
 }
 
 } // namespace Render

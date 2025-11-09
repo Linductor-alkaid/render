@@ -1,6 +1,7 @@
 #include "render/text/text_renderer.h"
 #include "render/render_state.h"
 #include "render/math_utils.h"
+#include "render/render_layer.h"
 
 namespace Render {
 
@@ -101,7 +102,7 @@ void TextRenderer::End() {
         renderable->SetText(instance.text);
         renderable->SetDepthHint((anchor + offset).z());
         renderable->SetVisible(true);
-        renderable->SetLayerID(800);
+        renderable->SetLayerID(Layers::UI::Default.value);
         renderable->SubmitToRenderer(m_renderer);
     }
 

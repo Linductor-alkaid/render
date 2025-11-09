@@ -463,6 +463,59 @@ state->SetBlendMode(BlendMode::Alpha);
 
 ---
 
+### GetLayerRegistry
+
+获取渲染层级注册表。
+
+```cpp
+RenderLayerRegistry& GetLayerRegistry();
+const RenderLayerRegistry& GetLayerRegistry() const;
+```
+
+**返回值**: 渲染层级注册表引用，用于注册/查询层描述。
+
+**🔒 线程安全**: `RenderLayerRegistry` 内部使用读写锁保护，可安全在多线程环境中注册或查询层级数据。
+
+**示例**:
+```cpp
+auto& layers = renderer->GetLayerRegistry();
+layers.SetDefaultLayers(RenderLayerDefaults::CreateDefaultDescriptors());
+layers.ResetToDefaults();
+```
+
+---
+
+### SetActiveLayerMask / GetActiveLayerMask
+
+设置或读取当前相机的可见层级遮罩。`FlushRenderQueue()` 会基于 `RenderLayerDescriptor::maskIndex` 与该遮罩过滤层级。
+
+```cpp
+void SetActiveLayerMask(uint32_t mask);
+uint32_t GetActiveLayerMask() const;
+```
+
+**参数说明**:
+- `mask` — 32bit 位掩码，每一位对应一个层级的 `maskIndex`。默认值 `0xFFFFFFFF` 表示全部可见。
+
+**示例**:
+```cpp
+// 由 CameraSystem / UniformSystem 设置主相机的 layerMask
+renderer->SetActiveLayerMask(cameraComp.layerMask);
+
+// 用户手动切换成仅渲染 UI 层
+if (auto desc = renderer->GetLayerRegistry().GetDescriptor(Layers::UI::Default)) {
+    uint32_t uiMask = 1u << desc->maskIndex;
+    renderer->SetActiveLayerMask(uiMask);
+    renderer->FlushRenderQueue(); // 仅渲染 UI 层的数据
+}
+```
+
+完整演示：示例 `51_layer_mask_demo` 提供键盘切换（1=世界层、2=UI层、3=全部、U=切换 UI 可见性）的可视化对比，并在日志输出 `[LayerMaskDebug]`，可验证遮罩及层级渲染状态覆写是否正常。
+
+> 自 2025-11-10 起，`FlushRenderQueue()` 会在批处理阶段为每个 `Renderable` 重新应用所属层的覆写；`SpriteBatcher` 绘制完 UI 层后也会恢复默认 `RenderState`，避免跨层状态污染。
+
+---
+
 ### IsInitialized
 
 检查是否已初始化。

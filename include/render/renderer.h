@@ -4,12 +4,14 @@
 #include "render/opengl_context.h"
 #include "render/render_state.h"
 #include "render/lighting/light_manager.h"
+#include "render/render_layer.h"
 #include "render/render_batching.h"
 #include <memory>
 #include <string>
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <unordered_map>
 
 namespace Render {
 
@@ -209,6 +211,16 @@ public:
     }
 
     /**
+     * @brief 获取渲染层级注册表
+     */
+    [[nodiscard]] RenderLayerRegistry& GetLayerRegistry() { return m_layerRegistry; }
+
+    /**
+     * @brief 获取渲染层级注册表（常量）
+     */
+    [[nodiscard]] const RenderLayerRegistry& GetLayerRegistry() const { return m_layerRegistry; }
+
+    /**
      * @brief 获取光照管理器
      */
     Lighting::LightManager& GetLightManager() {
@@ -271,6 +283,16 @@ public:
      */
     [[nodiscard]] BatchingMode GetBatchingMode() const;
     
+    /**
+     * @brief 设置当前相机可见层级遮罩
+     */
+    void SetActiveLayerMask(uint32_t mask);
+
+    /**
+     * @brief 获取当前相机可见层级遮罩
+     */
+    [[nodiscard]] uint32_t GetActiveLayerMask() const;
+    
 private:
     void UpdateStats();
     
@@ -286,15 +308,32 @@ private:
     float m_fpsUpdateTimer;
     uint32_t m_frameCount;
     
-    // 渲染队列（ECS 集成）
-    std::vector<Renderable*> m_renderQueue;
+    struct LayerItem {
+        Renderable* renderable = nullptr;
+        size_t submissionIndex = 0;
+    };
+
+    struct LayerBucket {
+        RenderLayerId id{};
+        uint32_t priority = 0;
+        LayerSortPolicy sortPolicy = LayerSortPolicy::OpaqueMaterialFirst;
+        uint8_t maskIndex = 0;
+        std::vector<LayerItem> items;
+    };
     
     // 辅助函数
-    void SortRenderQueue();
+    void SortLayerItems(std::vector<LayerItem>& items, const RenderLayerDescriptor& descriptor);
+    void ApplyLayerOverrides(const RenderLayerDescriptor& descriptor, const RenderLayerState& state);
+    [[nodiscard]] size_t CountPendingRenderables() const;
 
     BatchManager m_batchManager;
     BatchingMode m_batchingMode;
     Lighting::LightManager m_lightManager;
+    RenderLayerRegistry m_layerRegistry;
+    std::unordered_map<uint32_t, size_t> m_layerBucketLookup;
+    std::vector<LayerBucket> m_layerBuckets;
+    size_t m_submissionCounter = 0;
+    std::atomic<uint32_t> m_activeLayerMask;
     
     // 线程安全
     mutable std::mutex m_mutex;  // 保护所有可变状态

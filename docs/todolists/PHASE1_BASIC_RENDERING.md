@@ -342,27 +342,14 @@
 
 ## 渲染层级系统
 
-### RenderLayer 类
-- [ ] 层级创建和销毁
-- [ ] 优先级设置
-- [ ] 启用/禁用控制
-- [ ] 渲染对象添加/移除
-- [ ] 层级排序功能
-
-### 渲染队列
-- [ ] RenderQueue 类
-  - [ ] 按优先级排序
-  - [ ] 按材质排序
-  - [ ] 按深度排序
-- [ ] 渲染提交机制
-  - [ ] Submit 接口
-  - [ ] Flush 接口
-
-### 层级属性配置
-- [ ] 深度测试配置
-- [ ] 混合模式配置
-- [ ] 面剔除配置
-- [ ] 视口配置
+### 渲染层级与遮罩系统
+- [x] RenderLayerRegistry（注册/查询/默认层配置）
+- [x] 层级启用/禁用控制、视口/剪裁/状态覆写
+- [x] LayeredRenderQueue（Submit/Flush 分层改造）
+- [x] Camera LayerMask 过滤
+- [x] 渲染状态覆写在批处理阶段重放
+- [x] SpriteBatcher 批处理后恢复渲染状态
+- [x] 集成测试：`renderer_layer_mask_test` / `51_layer_mask_demo`
 
 ---
 

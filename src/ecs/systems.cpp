@@ -7,6 +7,7 @@
 #include "render/shader_cache.h"
 #include "render/material_sort_key.h"
 #include "render/lighting/light_manager.h"
+#include "render/render_layer.h"
 // ✅ 修复：移除 TextureLoader 头文件，统一使用 ResourceManager [[memory:7392268]]
 #include "render/error.h"
 #include "render/mesh_loader.h"
@@ -2001,11 +2002,19 @@ void SpriteAnimationSystem::Update(float deltaTime) {
 
         // 为常见默认值自动应用命名层，便于 UI 与世界层级管理
         if (spriteComp.screenSpace) {
-            if (spriteComp.layerID == 800 && spriteComp.sortOrder == 0) {
+            const bool needsUiDefault =
+                spriteComp.sortOrder == 0 &&
+                (spriteComp.layerID == Layers::UI::Default.value || spriteComp.layerID == 0u);
+            if (needsUiDefault) {
                 SpriteRenderLayer::ApplyLayer("ui.default", spriteComp, 0);
             }
         } else {
-            if (spriteComp.layerID == 300 && spriteComp.sortOrder == 0) {
+            const bool needsWorldDefault =
+                spriteComp.sortOrder == 0 &&
+                (spriteComp.layerID == Layers::World::Midground.value ||
+                 spriteComp.layerID == Layers::UI::Default.value ||
+                 spriteComp.layerID == 0u);
+            if (needsWorldDefault) {
                 SpriteRenderLayer::ApplyLayer("world.midground", spriteComp, 0);
             }
         }
@@ -2313,6 +2322,10 @@ void SpriteRenderSystem::Update(float deltaTime) {
 
     size_t submittedSprites = 0;
 
+    auto& layerRegistry = m_renderer->GetLayerRegistry();
+    const uint32_t uiDefaultLayer = Layers::UI::Default.value;
+    const uint32_t worldMidLayer = Layers::World::Midground.value;
+
     for (const auto& entity : entities) {
         auto& transform = m_world->GetComponent<TransformComponent>(entity);
         auto& spriteComp = m_world->GetComponent<SpriteRenderComponent>(entity);
@@ -2321,15 +2334,25 @@ void SpriteRenderSystem::Update(float deltaTime) {
             continue;
         }
 
+        const RenderLayerId currentLayerId(spriteComp.layerID);
+        const bool layerRegistered = currentLayerId.IsValid() && layerRegistry.HasLayer(currentLayerId);
+
         // 若保持默认层配置，则自动映射到命名层，保证排序一致性
         if (spriteComp.screenSpace) {
-            if (spriteComp.layerID == 800u && spriteComp.sortOrder == 0) {
+            const bool needsUiDefault =
+                spriteComp.sortOrder == 0 &&
+                (!layerRegistered || spriteComp.layerID == uiDefaultLayer || spriteComp.layerID == 0u);
+            if (needsUiDefault) {
                 SpriteRenderLayer::ApplyLayer("ui.default", spriteComp, 0);
             }
         } else {
-            const bool hasWorldDefaultLayer =
-                (spriteComp.layerID == 800u || spriteComp.layerID == 300u || spriteComp.layerID == 0u);
-            if (hasWorldDefaultLayer && spriteComp.sortOrder == 0) {
+            const bool needsWorldDefault =
+                spriteComp.sortOrder == 0 &&
+                (!layerRegistered ||
+                 spriteComp.layerID == worldMidLayer ||
+                 spriteComp.layerID == uiDefaultLayer ||
+                 spriteComp.layerID == 0u);
+            if (needsWorldDefault) {
                 SpriteRenderLayer::ApplyLayer("world.midground", spriteComp, 0);
             }
         }
@@ -2580,6 +2603,16 @@ void SpriteRenderSystem::Update(float deltaTime) {
                 overrideHash = HashCombine(overrideHash, static_cast<uint32_t>(ptrValue & 0xFFFFFFFFu));
                 overrideHash = HashCombine(overrideHash, static_cast<uint32_t>((ptrValue >> 32) & 0xFFFFFFFFu));
             }
+
+            Logger::GetInstance().DebugFormat(
+                "[LayerMaskDebug][SpriteBatch] index=%zu layer=%u screenSpace=%s instances=%u sortOrder=%d blend=%d textureValid=%s",
+                i,
+                batchInfo.layer,
+                batchInfo.screenSpace ? "true" : "false",
+                batchInfo.instanceCount,
+                batchInfo.sortOrder,
+                static_cast<int>(batchInfo.blendMode),
+                (batchInfo.texture && batchInfo.texture->IsValid()) ? "true" : "false");
 
             uint32_t pipelineFlags = MaterialPipelineFlags_None;
             if (batchInfo.screenSpace) {
@@ -3084,6 +3117,18 @@ void UniformSystem::Update(float deltaTime) {
 void UniformSystem::SetCameraUniforms() {
     if (!m_cameraSystem) {
         return;
+    }
+    
+    uint32_t layerMask = 0xFFFFFFFFu;
+    if (m_world) {
+        EntityID mainCameraEntity = m_cameraSystem->GetMainCamera();
+        if (mainCameraEntity.IsValid() && m_world->HasComponent<CameraComponent>(mainCameraEntity)) {
+            const auto& cameraComp = m_world->GetComponent<CameraComponent>(mainCameraEntity);
+            layerMask = cameraComp.layerMask;
+        }
+    }
+    if (m_renderer) {
+        m_renderer->SetActiveLayerMask(layerMask);
     }
     
     Camera* camera = m_cameraSystem->GetMainCameraObject();

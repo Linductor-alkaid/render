@@ -2,6 +2,7 @@
 
 #include "render/transform.h"
 #include "render/types.h"
+#include "render/render_layer.h"
 #include "render/model_loader.h"
 #include "entity.h"  // 需要 EntityID 定义
 #include <string>
@@ -293,7 +294,7 @@ struct MeshRenderComponent {
     bool visible = true;           ///< 是否可见
     bool castShadows = true;       ///< 是否投射阴影
     bool receiveShadows = true;    ///< 是否接收阴影
-    uint32_t layerID = 300;        ///< 渲染层级（默认 WORLD_GEOMETRY）
+    uint32_t layerID = Layers::World::Midground.value;        ///< 渲染层级（默认 WORLD_MIDGROUND）
     int32_t renderPriority = 0;    ///< 渲染优先级
     
     // ==================== 材质属性覆盖 ====================
@@ -374,7 +375,7 @@ struct ModelComponent {
     bool visible = true;
     bool castShadows = true;
     bool receiveShadows = true;
-    uint32_t layerID = 300;
+    uint32_t layerID = Layers::World::Midground.value;
     int32_t renderPriority = 0;
 
     bool resourcesLoaded = false;
@@ -418,7 +419,7 @@ struct SpriteRenderComponent {
     Color tintColor{1, 1, 1, 1};   ///< 着色
     
     bool visible = true;
-    uint32_t layerID = 800;        ///< UI_LAYER
+    uint32_t layerID = Layers::UI::Default.value;        ///< UI_LAYER
     int32_t sortOrder = 0;         ///< 渲染优先级（同层内排序，可为负）
     bool screenSpace = true;       ///< 是否使用屏幕空间坐标（正交投影）
     SpriteUI::NineSliceSettings nineSlice{}; ///< 九宫格配置

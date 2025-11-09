@@ -315,6 +315,12 @@ void SpriteBatcher::DrawBatch(size_t index, RenderState* renderState) {
     }
 
     shader->Unuse();
+
+    // Restore default render state for subsequent layers/renderables.
+    renderState->SetBlendMode(BlendMode::None);
+    renderState->SetDepthTest(true);
+    renderState->SetDepthWrite(true);
+    renderState->SetCullFace(CullFace::Back);
 }
 
 bool SpriteBatcher::GetBatchInfo(size_t index, SpriteBatchInfo& outInfo) const {

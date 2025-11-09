@@ -26,6 +26,12 @@
   - 预期输出：
     - 控制台列出骨骼结构
     - 子骨骼世界矩阵与 Skinning palette 矩阵最后一列应为 `(1, 0, 0, 1)`。
+- **层级遮罩单元测试**：`renderer_layer_mask_test`
+  - 运行方式：`ctest -R renderer_layer_mask_test` 或直接执行 `renderer_layer_mask_test`
+  - 验证内容：`CameraComponent::layerMask` 通过 `Renderer::SetActiveLayerMask()` 正确过滤 `Layers::World::Midground` 与 `Layers::UI::Default` 渲染提交队列。
+- **层级遮罩集成示例**：`51_layer_mask_demo`
+  - 说明：运行示例后，可通过按键 `1`（仅世界层）、`2`（仅 UI 层）、`3`（两层同时）、`U`（切换 UI 可见性）验证遮罩与状态覆写是否正确生效。
+  - 日志关注 `[LayerMaskDebug]` 输出，确认世界层继续启用深度测试/写入，UI 层关闭深度并使用 Alpha 混合，切换后不再出现黑色三角。
 
 - **模型渲染渲染管线**：`examples/48_model_render_test`
   - 验证材质 `RegisterTextureUniform` 接入路径是否正常设置 `diffuseMap` / `normalMap`。
@@ -65,6 +71,8 @@
    - 计划在 Phase 1 末期扩展 `tests/` 目录：
      - 基于 `Render::Mesh` 单元测试法线/切线重建函数。
      - 引入截图对比或缓冲区采样脚本，验证法线贴图影响。
+     - 新增渲染层级场景验证脚本（待 `RenderLayerRegistry` 完整上线后），覆盖多层启用/禁用、屏幕空间与世界空间排序结果。
+     - 增补 UI/世界精灵回归案例（结合 `SpriteRenderSystem`/`SpriteAnimationSystem`），确认默认层 ID 映射与排序策略一致，并验证 `CameraComponent::layerMask` 对渲染结果的过滤效果。
    - 与 CI/CD 整合后，将上述示例编译后在本地运行并收集日志断言。
 
 ---
@@ -76,4 +84,5 @@
 | 2025-11-09 | 46_normal_map_test | ✅ | 漫反射/法线贴图切换正常，日志输出纹理尺寸 |
 | 2025-11-09 | model_loader_regression_test | ✅ | PMX 模型导入回归通过，遍历骨骼与材质输出正确 |
 | 2025-11-09 | 50_geometry_catalog_test | ✅ | 预置几何体渲染正常，线框切换和旋转动画运行稳定 |
+| 2025-11-10 | 51_layer_mask_demo | ✅ | 遮罩切换 + 状态覆写验证通过，世界层/ UI 层交替渲染无黑色伪影，`U` 键可切换 UI 可见性 |
 | 2025-11-09 | mesh_tangent_test | ✅ | Mesh::RecalculateTangents 正交性自检通过，便于自动化集成 |

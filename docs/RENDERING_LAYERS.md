@@ -28,7 +28,7 @@
 | 类型 | 作用 | 关键字段 |
 | --- | --- | --- |
 | `RenderLayerId` | 层级 ID 包装（强类型） | `uint32_t value`、比较/哈希 |
-| `RenderLayerDescriptor` | 静态定义 | `name`、`priority`、`type`、`defaultSortMode`、`defaultState` |
+| `RenderLayerDescriptor` | 静态定义 | `name`、`priority`、`type`、`defaultSortMode`、`defaultState`、`maskIndex` |
 | `RenderLayerState` | 运行时开关/覆写 | `enabled`、`overrideState`、`viewport`、`scissor` |
 | `RenderLayerRegistry` | 单例/Renderer 成员 | 注册、查询、遍历层定义与状态 |
 | `LayeredRenderQueue` | 帧内数据结构 | `std::vector<LayerBucket>`，每个 bucket 持有渲染对象列表与层缓存 |
@@ -59,6 +59,8 @@ struct RenderLayerDescriptor {
     LayerSortPolicy sortPolicy;
     RenderStateOverrides defaultState;
     bool enableByDefault = true;
+    int32_t defaultSortBias = 0;
+    uint8_t maskIndex = 0;        // 对应 CameraComponent::layerMask 的比特索引（0-31）
 };
 
 class RenderLayerRegistry {
@@ -76,6 +78,7 @@ public:
 
 - `RenderStateOverrides` 复用现有 `RenderState` 能力，允许选择性设置 `depthTest`, `depthWrite`, `blendMode`, `cullFace`, `stencil` 等。
 - 注册流程在引擎初始化时集中完成，并提供 JSON/TOML 扩展点。
+- `maskIndex` 用于与 `CameraComponent::layerMask` 对齐（0-31），`FlushRenderQueue()` 会按相机遮罩过滤对应层。
 
 ### 4.2 Renderer 扩展
 
@@ -137,6 +140,20 @@ public:
 - 在 `guides/2D_UI_Guide.md` 链接本手册章节，说明 UI 层级注册方式。
 - 于 `CMakeLists.txt` 注册新增源码文件，保持与资源管理约定一致。
 - 提供示例配置文件模板（可放置于 `configs/render_layers.json`），便于团队覆盖默认层。
+
+## 8. 当前落地进展（2025-11-09）
+
+- ✅ `RenderLayerRegistry` 与默认层描述注册完毕，提供线程安全的注册/查询与状态覆写接口。
+- ✅ Renderer 已切换至按层收集的 `LayeredRenderQueue`，`SubmitRenderable` 会在层未注册时回退到 `world.midground` 并跳过禁用层。
+- ✅ 每层排序策略初步生效：
+  - `OpaqueMaterialFirst`：延续旧有材质优先排序，并在同层内分离透明对象。
+  - `TransparentDepth`：依据深度提示降序排列，辅以材质键与渲染优先级兜底。
+  - `ScreenSpaceStable`：以 `defaultSortBias + RenderPriority` 为主序，保持提交顺序稳定。
+- ✅ ECS Mesh/Model/Sprite 组件默认层 ID 已与命名层同步，SpriteAnimationSystem / SpriteRenderSystem 自动层映射时会查询 `RenderLayerRegistry` 并在缺失时应用默认层。
+- ✅ `CameraComponent::layerMask` 现由 `UniformSystem` 驱动 `Renderer::SetActiveLayerMask()`，`FlushRenderQueue()` 会基于 `maskIndex` 过滤层级，支持按相机分层渲染。
+- ✅ 渲染统计扩展为记录排序前/后的材质切换次数，方便后续性能分析。
+- ✅ 层级遮罩与渲染状态覆写已在批处理阶段重放：`Renderer::FlushRenderQueue()` 会在每个 `Renderable` 进入 `BatchManager` 前重新应用所属层的覆写，`SpriteBatcher` 也会在提交 UI 批次后恢复深度/混合等状态，避免跨层污染。
+- ✅ `examples/51_layer_mask_demo` 展示世界层与 UI 层遮罩切换，支持按键 `1/2/3` 切换可见层级、`U` 切换 UI 可见性，并在日志中输出 `[LayerMaskDebug]` 状态，便于排查 LayerMask 行为。
 
 ---
 

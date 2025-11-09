@@ -52,6 +52,7 @@ set(EXAMPLES
     48_model_render_test
     49_miku_model_test
     50_geometry_catalog_test
+    51_layer_mask_demo
 )
 
 # 批量创建示例程序
