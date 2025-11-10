@@ -14,6 +14,9 @@
 #include <functional>
 #include <cmath>
 #include <unordered_map>
+#include <limits>
+#include <chrono>
+#include <type_traits>
 
 namespace Render {
 
@@ -106,6 +109,22 @@ const char* ToString(const std::optional<DepthFunc>& value) {
         return "default";
     }
     return ToString(value.value());
+}
+
+uint32_t EncodeOptionalBool(const std::optional<bool>& value) {
+    if (!value.has_value()) {
+        return 0u;
+    }
+    return value.value() ? 2u : 1u;
+}
+
+template <typename Enum>
+uint32_t EncodeOptionalEnum(const std::optional<Enum>& value) {
+    if (!value.has_value()) {
+        return 0u;
+    }
+    using Underlying = std::underlying_type_t<Enum>;
+    return static_cast<uint32_t>(static_cast<Underlying>(value.value())) + 1u;
 }
 
 MaterialSortKey BuildMeshRenderableSortKey(MeshRenderable* meshRenderable) {
@@ -785,19 +804,55 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
 }
 
 void Renderer::FlushRenderQueue() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    
-    const size_t pendingCount = CountPendingRenderables();
-    if (pendingCount == 0) {
-        return;
+    std::vector<LayerBucket> bucketsSnapshot;
+    std::vector<RenderLayerRecord> layerRecords;
+    uint32_t activeLayerMask = 0;
+    size_t pendingCount = 0;
+    BatchingMode currentBatchingMode = BatchingMode::Disabled;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        pendingCount = CountPendingRenderables();
+        if (pendingCount == 0) {
+            return;
+        }
+
+        activeLayerMask = m_activeLayerMask.load();
+        currentBatchingMode = m_batchingMode;
+        layerRecords = m_layerRegistry.ListLayers();
+
+        bucketsSnapshot = std::move(m_layerBuckets);
+        m_layerBuckets.clear();
+        m_layerBucketLookup.clear();
+        m_submissionCounter = 0;
     }
 
-    const uint32_t activeLayerMask = m_activeLayerMask.load();
-    Logger::GetInstance().DebugFormat("[LayerMaskDebug] Active layer mask = 0x%08X (%u)", activeLayerMask, activeLayerMask);
+    static uint32_t s_prevActiveLayerMask = std::numeric_limits<uint32_t>::max();
+    static std::chrono::steady_clock::time_point s_lastActiveMaskLog{};
+    constexpr auto kActiveMaskLogInterval = std::chrono::seconds(2);
+
+    const auto activeMaskNow = std::chrono::steady_clock::now();
+    const bool activeMaskChanged = (activeLayerMask != s_prevActiveLayerMask);
+    const bool activeMaskLogExpired =
+        (s_lastActiveMaskLog.time_since_epoch().count() == 0) ||
+        (activeMaskNow - s_lastActiveMaskLog) >= kActiveMaskLogInterval;
+
+    if (activeMaskChanged || activeMaskLogExpired) {
+        Logger::GetInstance().DebugFormat("[LayerMaskDebug] Active layer mask = 0x%08X (%u)", activeLayerMask, activeLayerMask);
+        s_prevActiveLayerMask = activeLayerMask;
+        s_lastActiveMaskLog = activeMaskNow;
+    }
+
+    std::unordered_map<uint32_t, size_t> snapshotLookup;
+    snapshotLookup.reserve(bucketsSnapshot.size());
+    for (size_t i = 0; i < bucketsSnapshot.size(); ++i) {
+        snapshotLookup.emplace(bucketsSnapshot[i].id.value, i);
+    }
 
     std::vector<LayerItem*> submissionOrder;
     submissionOrder.reserve(pendingCount);
-    for (auto& bucket : m_layerBuckets) {
+    for (auto& bucket : bucketsSnapshot) {
         const bool maskAllows =
             (bucket.maskIndex >= 32) ||
             ((activeLayerMask >> bucket.maskIndex) & 0x1u);
@@ -821,36 +876,39 @@ void Renderer::FlushRenderQueue() {
 
     const auto originalSwitchMetrics = ComputeMaterialSwitchMetrics(originalQueue);
 
-    m_batchManager.SetMode(m_batchingMode);
-    m_batchManager.Reset();
-
     std::vector<Renderable*> sortedQueue;
     sortedQueue.reserve(pendingCount);
 
-    const auto layerRecords = m_layerRegistry.ListLayers();
     std::unordered_map<uint32_t, const RenderLayerRecord*> layerRecordLookup;
     layerRecordLookup.reserve(layerRecords.size());
     for (const auto& record : layerRecords) {
         layerRecordLookup.emplace(record.descriptor.id.value, &record);
     }
-    std::vector<bool> processedBuckets(m_layerBuckets.size(), false);
+    std::vector<bool> processedBuckets(bucketsSnapshot.size(), false);
 
     std::optional<uint32_t> previousViewport;
     bool previousScissorEnabled = false;
     std::optional<RenderLayerViewport> previousScissorRect;
 
+    struct LayerLogState {
+        uint32_t lastHash = 0u;
+        std::chrono::steady_clock::time_point lastLogTime{};
+    };
+    static std::unordered_map<uint32_t, LayerLogState> s_layerLogStates;
+    constexpr auto kLayerLogInterval = std::chrono::seconds(2);
+
     for (const auto& record : layerRecords) {
-        auto lookupIt = m_layerBucketLookup.find(record.descriptor.id.value);
-        if (lookupIt == m_layerBucketLookup.end()) {
+        auto lookupIt = snapshotLookup.find(record.descriptor.id.value);
+        if (lookupIt == snapshotLookup.end()) {
             continue;
         }
 
         const size_t bucketIndex = lookupIt->second;
-        if (bucketIndex >= m_layerBuckets.size()) {
+        if (bucketIndex >= bucketsSnapshot.size()) {
             continue;
         }
 
-        LayerBucket& bucket = m_layerBuckets[bucketIndex];
+        LayerBucket& bucket = bucketsSnapshot[bucketIndex];
         processedBuckets[bucketIndex] = true;
 
         if (bucket.items.empty()) {
@@ -861,24 +919,56 @@ void Renderer::FlushRenderQueue() {
             (record.descriptor.maskIndex >= 32) ||
             ((activeLayerMask >> record.descriptor.maskIndex) & 0x1u);
 
-        Logger::GetInstance().DebugFormat(
-            "[LayerMaskDebug] Processing layer '%s' (id=%u, priority=%u, maskIndex=%u, enabled=%s, items=%zu, maskAllows=%s)",
-            record.descriptor.name.c_str(),
-            record.descriptor.id.value,
-            record.descriptor.priority,
-            record.descriptor.maskIndex,
-            record.state.enabled ? "true" : "false",
-            bucket.items.size(),
-            maskAllows ? "true" : "false");
+        auto& layerLogState = s_layerLogStates[record.descriptor.id.value];
+        uint32_t layerHash = 0u;
+        layerHash = HashCombine(layerHash, record.descriptor.id.value);
+        layerHash = HashCombine(layerHash, record.descriptor.priority);
+        layerHash = HashCombine(layerHash, record.descriptor.maskIndex);
+        layerHash = HashCombine(layerHash, static_cast<uint32_t>(record.descriptor.sortPolicy));
+        layerHash = HashCombine(layerHash, static_cast<uint32_t>(record.descriptor.defaultSortBias));
+        layerHash = HashCombine(layerHash, record.state.enabled ? 1u : 0u);
+        layerHash = HashCombine(layerHash, maskAllows ? 1u : 0u);
+        const uint64_t itemCount = bucket.items.size();
+        layerHash = HashCombine(layerHash, static_cast<uint32_t>(itemCount & 0xFFFFFFFFu));
+        layerHash = HashCombine(layerHash, static_cast<uint32_t>((itemCount >> 32) & 0xFFFFFFFFu));
 
-        Logger::GetInstance().DebugFormat(
-            "[LayerMaskDebug] Overrides -> depthTest=%s, depthWrite=%s, depthFunc=%s, blend=%s, cull=%s, scissorTest=%s",
-            ToString(record.state.overrides.depthTest),
-            ToString(record.state.overrides.depthWrite),
-            ToString(record.state.overrides.depthFunc),
-            ToString(record.state.overrides.blendMode),
-            ToString(record.state.overrides.cullFace),
-            ToString(record.state.overrides.scissorTest));
+        const auto& overrides = record.state.overrides;
+        layerHash = HashCombine(layerHash, EncodeOptionalBool(overrides.depthTest));
+        layerHash = HashCombine(layerHash, EncodeOptionalBool(overrides.depthWrite));
+        layerHash = HashCombine(layerHash, EncodeOptionalEnum(overrides.depthFunc));
+        layerHash = HashCombine(layerHash, EncodeOptionalEnum(overrides.blendMode));
+        layerHash = HashCombine(layerHash, EncodeOptionalEnum(overrides.cullFace));
+        layerHash = HashCombine(layerHash, EncodeOptionalBool(overrides.scissorTest));
+
+        const auto layerLogNow = std::chrono::steady_clock::now();
+        const bool layerLogExpired =
+            (layerLogState.lastLogTime.time_since_epoch().count() == 0) ||
+            (layerLogNow - layerLogState.lastLogTime) >= kLayerLogInterval;
+        const bool layerHashChanged = (layerHash != layerLogState.lastHash);
+
+        if (layerHashChanged || layerLogExpired) {
+            Logger::GetInstance().DebugFormat(
+                "[LayerMaskDebug] Processing layer '%s' (id=%u, priority=%u, maskIndex=%u, enabled=%s, items=%zu, maskAllows=%s)",
+                record.descriptor.name.c_str(),
+                record.descriptor.id.value,
+                record.descriptor.priority,
+                record.descriptor.maskIndex,
+                record.state.enabled ? "true" : "false",
+                bucket.items.size(),
+                maskAllows ? "true" : "false");
+
+            Logger::GetInstance().DebugFormat(
+                "[LayerMaskDebug] Overrides -> depthTest=%s, depthWrite=%s, depthFunc=%s, blend=%s, cull=%s, scissorTest=%s",
+                ToString(record.state.overrides.depthTest),
+                ToString(record.state.overrides.depthWrite),
+                ToString(record.state.overrides.depthFunc),
+                ToString(record.state.overrides.blendMode),
+                ToString(record.state.overrides.cullFace),
+                ToString(record.state.overrides.scissorTest));
+
+            layerLogState.lastHash = layerHash;
+            layerLogState.lastLogTime = layerLogNow;
+        }
 
         if (!record.state.enabled || !maskAllows) {
             bucket.items.clear();
@@ -913,120 +1003,130 @@ void Renderer::FlushRenderQueue() {
         bucket.items.clear();
     }
 
-    for (size_t i = 0; i < m_layerBuckets.size(); ++i) {
+    for (size_t i = 0; i < bucketsSnapshot.size(); ++i) {
         if (!processedBuckets[i]) {
-            m_layerBuckets[i].items.clear();
+            bucketsSnapshot[i].items.clear();
         }
     }
-
-    m_layerBuckets.clear();
-    m_layerBucketLookup.clear();
-    m_submissionCounter = 0;
 
     const auto sortedSwitchMetrics = ComputeMaterialSwitchMetrics(sortedQueue);
 
-    m_stats.materialSwitchesOriginal = originalSwitchMetrics.switches;
-    m_stats.materialSwitchesSorted = sortedSwitchMetrics.switches;
-    m_stats.materialSortKeyReady = std::max(originalSwitchMetrics.keyReady, sortedSwitchMetrics.keyReady);
-    m_stats.materialSortKeyMissing = std::max(originalSwitchMetrics.keyMissing, sortedSwitchMetrics.keyMissing);
-    
-    m_stats.originalDrawCalls = static_cast<uint32_t>(originalQueue.size());
+    struct FlushLogInfo {
+        bool shouldLog = false;
+        BatchManager::FlushResult result{};
+    } logInfo;
 
-    if (sortedQueue.empty()) {
-        return;
-    }
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
 
-    RenderLayerId activeDrawLayer = RenderLayerId::Invalid();
-    RenderLayerRecord fallbackLayerRecord{};
+        m_stats.materialSwitchesOriginal = originalSwitchMetrics.switches;
+        m_stats.materialSwitchesSorted = sortedSwitchMetrics.switches;
+        m_stats.materialSortKeyReady = std::max(originalSwitchMetrics.keyReady, sortedSwitchMetrics.keyReady);
+        m_stats.materialSortKeyMissing = std::max(originalSwitchMetrics.keyMissing, sortedSwitchMetrics.keyMissing);
+        m_stats.originalDrawCalls = static_cast<uint32_t>(originalQueue.size());
 
-    for (auto* renderable : sortedQueue) {
-        if (!renderable || !renderable->IsVisible()) {
-            continue;
+        if (sortedQueue.empty()) {
+            m_batchManager.Reset();
+            return;
         }
 
-        RenderLayerId renderLayer(static_cast<uint32_t>(renderable->GetLayerID()));
-        if (renderLayer.IsValid() && renderLayer != activeDrawLayer) {
-            activeDrawLayer = renderLayer;
+        m_batchManager.SetMode(currentBatchingMode);
+        m_batchManager.Reset();
 
-            const RenderLayerRecord* recordPtr = nullptr;
-            if (auto it = layerRecordLookup.find(renderLayer.value); it != layerRecordLookup.end()) {
-                recordPtr = it->second;
-            } else {
-                auto descriptorOpt = m_layerRegistry.GetDescriptor(renderLayer);
-                auto stateOpt = m_layerRegistry.GetState(renderLayer);
+        RenderLayerId activeDrawLayer = RenderLayerId::Invalid();
+        RenderLayerRecord fallbackLayerRecord{};
 
-                fallbackLayerRecord.descriptor = RenderLayerDescriptor{};
-                fallbackLayerRecord.descriptor.id = renderLayer;
-                fallbackLayerRecord.descriptor.name = descriptorOpt.has_value() ? descriptorOpt->name : "unregistered";
-                fallbackLayerRecord.descriptor.priority = descriptorOpt.has_value() ? descriptorOpt->priority : 0u;
-                fallbackLayerRecord.descriptor.sortPolicy = descriptorOpt.has_value() ? descriptorOpt->sortPolicy : LayerSortPolicy::OpaqueMaterialFirst;
-                fallbackLayerRecord.descriptor.defaultState = descriptorOpt.has_value() ? descriptorOpt->defaultState : RenderStateOverrides{};
-                fallbackLayerRecord.descriptor.enableByDefault = descriptorOpt.has_value() ? descriptorOpt->enableByDefault : true;
-                fallbackLayerRecord.descriptor.defaultSortBias = descriptorOpt.has_value() ? descriptorOpt->defaultSortBias : 0;
-                fallbackLayerRecord.descriptor.maskIndex = descriptorOpt.has_value() ? descriptorOpt->maskIndex : 0;
-
-                fallbackLayerRecord.state = stateOpt.has_value() ? stateOpt.value() : RenderLayerState{};
-                recordPtr = &fallbackLayerRecord;
+        for (auto* renderable : sortedQueue) {
+            if (!renderable || !renderable->IsVisible()) {
+                continue;
             }
 
-            if (recordPtr) {
-                ApplyLayerOverrides(recordPtr->descriptor, recordPtr->state);
+            RenderLayerId renderLayer(static_cast<uint32_t>(renderable->GetLayerID()));
+            if (renderLayer.IsValid() && renderLayer != activeDrawLayer) {
+                activeDrawLayer = renderLayer;
+
+                const RenderLayerRecord* recordPtr = nullptr;
+                if (auto it = layerRecordLookup.find(renderLayer.value); it != layerRecordLookup.end()) {
+                    recordPtr = it->second;
+                } else {
+                    auto descriptorOpt = m_layerRegistry.GetDescriptor(renderLayer);
+                    auto stateOpt = m_layerRegistry.GetState(renderLayer);
+
+                    fallbackLayerRecord.descriptor = RenderLayerDescriptor{};
+                    fallbackLayerRecord.descriptor.id = renderLayer;
+                    fallbackLayerRecord.descriptor.name = descriptorOpt.has_value() ? descriptorOpt->name : "unregistered";
+                    fallbackLayerRecord.descriptor.priority = descriptorOpt.has_value() ? descriptorOpt->priority : 0u;
+                    fallbackLayerRecord.descriptor.sortPolicy = descriptorOpt.has_value() ? descriptorOpt->sortPolicy : LayerSortPolicy::OpaqueMaterialFirst;
+                    fallbackLayerRecord.descriptor.defaultState = descriptorOpt.has_value() ? descriptorOpt->defaultState : RenderStateOverrides{};
+                    fallbackLayerRecord.descriptor.enableByDefault = descriptorOpt.has_value() ? descriptorOpt->enableByDefault : true;
+                    fallbackLayerRecord.descriptor.defaultSortBias = descriptorOpt.has_value() ? descriptorOpt->defaultSortBias : 0;
+                    fallbackLayerRecord.descriptor.maskIndex = descriptorOpt.has_value() ? descriptorOpt->maskIndex : 0;
+
+                    fallbackLayerRecord.state = stateOpt.has_value() ? stateOpt.value() : RenderLayerState{};
+                    recordPtr = &fallbackLayerRecord;
+                }
+
+                if (recordPtr) {
+                    ApplyLayerOverrides(recordPtr->descriptor, recordPtr->state);
+                }
             }
+
+            m_batchManager.AddItem(CreateBatchableItem(renderable));
         }
 
-        m_batchManager.AddItem(CreateBatchableItem(renderable));
-    }
+        auto flushResult = m_batchManager.Flush(m_renderState.get());
+        logInfo.result = flushResult;
+        m_stats.drawCalls += flushResult.drawCalls;
+        m_stats.batchCount += flushResult.batchCount;
+        m_stats.batchedDrawCalls += flushResult.batchedDrawCalls;
+        m_stats.fallbackDrawCalls += flushResult.fallbackDrawCalls;
+        m_stats.batchedTriangles += flushResult.batchedTriangles;
+        m_stats.batchedVertices += flushResult.batchedVertices;
+        m_stats.fallbackBatches += flushResult.fallbackBatches;
+        m_stats.instancedInstances += flushResult.instancedInstances;
+        m_stats.workerProcessed += flushResult.workerProcessed;
+        m_stats.workerMaxQueueDepth = std::max(m_stats.workerMaxQueueDepth, flushResult.workerMaxQueueDepth);
+        m_stats.workerWaitTimeMs += flushResult.workerWaitTimeMs;
 
-    auto flushResult = m_batchManager.Flush(m_renderState.get());
-    m_stats.drawCalls += flushResult.drawCalls;
-    m_stats.batchCount += flushResult.batchCount;
-    m_stats.batchedDrawCalls += flushResult.batchedDrawCalls;
-    m_stats.fallbackDrawCalls += flushResult.fallbackDrawCalls;
-    m_stats.batchedTriangles += flushResult.batchedTriangles;
-    m_stats.batchedVertices += flushResult.batchedVertices;
-    m_stats.fallbackBatches += flushResult.fallbackBatches;
-    m_stats.instancedInstances += flushResult.instancedInstances;
-    m_stats.workerProcessed += flushResult.workerProcessed;
-    m_stats.workerMaxQueueDepth = std::max(m_stats.workerMaxQueueDepth, flushResult.workerMaxQueueDepth);
-    m_stats.workerWaitTimeMs += flushResult.workerWaitTimeMs;
+        if (currentBatchingMode == BatchingMode::GpuInstancing) {
+            m_stats.instancedDrawCalls += flushResult.instancedDrawCalls;
+        }
 
-    if (m_batchingMode == BatchingMode::GpuInstancing) {
-        m_stats.instancedDrawCalls += flushResult.instancedDrawCalls;
-    }
+        if (flushResult.batchCount > 0 || flushResult.fallbackBatches > 0) {
+            static uint32_t s_batchFlushLogCounter = 0;
+            constexpr uint32_t kBatchLogInterval = 120;
+            ++s_batchFlushLogCounter;
 
-    if (flushResult.batchCount > 0 || flushResult.fallbackBatches > 0) {
-        static uint32_t s_batchFlushLogCounter = 0;
-        constexpr uint32_t kBatchLogInterval = 120;
-        ++s_batchFlushLogCounter;
-
-        const bool hasFallback = (flushResult.fallbackDrawCalls > 0 || flushResult.fallbackBatches > 0);
-        const bool intervalReached = (s_batchFlushLogCounter >= kBatchLogInterval);
-        const bool shouldLog = hasFallback || intervalReached;
-
-        if (shouldLog) {
-            Logger::GetInstance().DebugFormat(
-                "[Renderer] Batch flush: batches=%u, batchedDraw=%u, instancedDraw=%u, instances=%u, fallbackDraw=%u, fallbackBatches=%u, triangles=%u, vertices=%u, workerProcessed=%u, workerMaxQueue=%u, workerWaitMs=%.3f, matSwitchBefore=%u, matSwitchAfter=%u, matKeysReady=%u, matKeysMissing=%u",
-                flushResult.batchCount,
-                flushResult.batchedDrawCalls,
-                flushResult.instancedDrawCalls,
-                flushResult.instancedInstances,
-                flushResult.fallbackDrawCalls,
-                flushResult.fallbackBatches,
-                flushResult.batchedTriangles,
-                flushResult.batchedVertices,
-                flushResult.workerProcessed,
-                flushResult.workerMaxQueueDepth,
-                flushResult.workerWaitTimeMs,
-                m_stats.materialSwitchesOriginal,
-                m_stats.materialSwitchesSorted,
-                m_stats.materialSortKeyReady,
-                m_stats.materialSortKeyMissing
-            );
+            const bool hasFallback = (flushResult.fallbackDrawCalls > 0 || flushResult.fallbackBatches > 0);
+            const bool intervalReached = (s_batchFlushLogCounter >= kBatchLogInterval);
+            logInfo.shouldLog = hasFallback || intervalReached;
 
             if (intervalReached) {
                 s_batchFlushLogCounter = 0;
             }
         }
+    }
+
+    if (logInfo.shouldLog) {
+        const auto& flushResult = logInfo.result;
+        Logger::GetInstance().DebugFormat(
+            "[Renderer] Batch flush: batches=%u, batchedDraw=%u, instancedDraw=%u, instances=%u, fallbackDraw=%u, fallbackBatches=%u, triangles=%u, vertices=%u, workerProcessed=%u, workerMaxQueue=%u, workerWaitMs=%.3f, matSwitchBefore=%u, matSwitchAfter=%u, matKeysReady=%u, matKeysMissing=%u",
+            flushResult.batchCount,
+            flushResult.batchedDrawCalls,
+            flushResult.instancedDrawCalls,
+            flushResult.instancedInstances,
+            flushResult.fallbackDrawCalls,
+            flushResult.fallbackBatches,
+            flushResult.batchedTriangles,
+            flushResult.batchedVertices,
+            flushResult.workerProcessed,
+            flushResult.workerMaxQueueDepth,
+            flushResult.workerWaitTimeMs,
+            m_stats.materialSwitchesOriginal,
+            m_stats.materialSwitchesSorted,
+            m_stats.materialSortKeyReady,
+            m_stats.materialSortKeyMissing
+        );
     }
 
     // 清空累积统计

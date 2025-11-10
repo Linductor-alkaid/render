@@ -74,6 +74,8 @@ Material::Material(Material&& other) noexcept {
     m_depthWrite = other.m_depthWrite;
     m_stableID = other.m_stableID;
     other.m_stableID = 0;
+    m_cacheDirty = true;
+    m_cachedState.reset();
 }
 
 Material& Material::operator=(Material&& other) noexcept {
@@ -105,7 +107,85 @@ Material& Material::operator=(Material&& other) noexcept {
         m_stableID = other.m_stableID;
         other.m_stableID = 0;
     }
+    m_cacheDirty = true;
+    m_cachedState.reset();
     return *this;
+}
+
+void Material::InvalidateCacheLocked() {
+    m_cachedState.reset();
+    m_cacheDirty = true;
+}
+
+std::shared_ptr<Material::CachedState> Material::EnsureCachedStateLocked() {
+    if (!m_cacheDirty && m_cachedState) {
+        return m_cachedState;
+    }
+
+    auto snapshot = std::make_shared<CachedState>();
+    snapshot->shader = m_shader;
+    snapshot->ambientColor = m_ambientColor;
+    snapshot->diffuseColor = m_diffuseColor;
+    snapshot->specularColor = m_specularColor;
+    snapshot->emissiveColor = m_emissiveColor;
+    snapshot->shininess = m_shininess;
+    snapshot->opacity = m_opacity;
+    snapshot->metallic = m_metallic;
+    snapshot->roughness = m_roughness;
+    snapshot->blendMode = m_blendMode;
+    snapshot->cullFace = m_cullFace;
+    snapshot->depthTest = m_depthTest;
+    snapshot->depthWrite = m_depthWrite;
+    snapshot->name = m_name;
+
+    snapshot->textures.reserve(m_textures.size());
+    for (const auto& entry : m_textures) {
+        snapshot->textures.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->intParams.reserve(m_intParams.size());
+    for (const auto& entry : m_intParams) {
+        snapshot->intParams.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->floatParams.reserve(m_floatParams.size());
+    for (const auto& entry : m_floatParams) {
+        snapshot->floatParams.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->vector2Params.reserve(m_vector2Params.size());
+    for (const auto& entry : m_vector2Params) {
+        snapshot->vector2Params.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->vector3Params.reserve(m_vector3Params.size());
+    for (const auto& entry : m_vector3Params) {
+        snapshot->vector3Params.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->vector4Params.reserve(m_vector4Params.size());
+    for (const auto& entry : m_vector4Params) {
+        snapshot->vector4Params.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->matrix4Params.reserve(m_matrix4Params.size());
+    for (const auto& entry : m_matrix4Params) {
+        snapshot->matrix4Params.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->vector2ArrayParams.reserve(m_vector2ArrayParams.size());
+    for (const auto& entry : m_vector2ArrayParams) {
+        snapshot->vector2ArrayParams.emplace_back(entry.first, entry.second);
+    }
+
+    snapshot->colorArrayParams.reserve(m_colorArrayParams.size());
+    for (const auto& entry : m_colorArrayParams) {
+        snapshot->colorArrayParams.emplace_back(entry.first, entry.second);
+    }
+
+    m_cachedState = snapshot;
+    m_cacheDirty = false;
+    return m_cachedState;
 }
 
 // ============================================================================
@@ -115,6 +195,7 @@ Material& Material::operator=(Material&& other) noexcept {
 void Material::SetName(const std::string& name) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_name = name;
+    InvalidateCacheLocked();
 }
 
 std::string Material::GetName() const {
@@ -135,6 +216,7 @@ void Material::SetShader(std::shared_ptr<Shader> shader) {
     
     std::lock_guard<std::mutex> lock(m_mutex);
     m_shader = shader;
+    InvalidateCacheLocked();
 }
 
 std::shared_ptr<Shader> Material::GetShader() const {
@@ -149,6 +231,7 @@ std::shared_ptr<Shader> Material::GetShader() const {
 void Material::SetAmbientColor(const Color& color) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_ambientColor = color;
+    InvalidateCacheLocked();
 }
 
 Color Material::GetAmbientColor() const {
@@ -159,6 +242,7 @@ Color Material::GetAmbientColor() const {
 void Material::SetDiffuseColor(const Color& color) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_diffuseColor = color;
+    InvalidateCacheLocked();
 }
 
 Color Material::GetDiffuseColor() const {
@@ -169,6 +253,7 @@ Color Material::GetDiffuseColor() const {
 void Material::SetSpecularColor(const Color& color) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_specularColor = color;
+    InvalidateCacheLocked();
 }
 
 Color Material::GetSpecularColor() const {
@@ -179,6 +264,7 @@ Color Material::GetSpecularColor() const {
 void Material::SetEmissiveColor(const Color& color) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_emissiveColor = color;
+    InvalidateCacheLocked();
 }
 
 Color Material::GetEmissiveColor() const {
@@ -193,6 +279,7 @@ Color Material::GetEmissiveColor() const {
 void Material::SetShininess(float shininess) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_shininess = shininess;
+    InvalidateCacheLocked();
 }
 
 float Material::GetShininess() const {
@@ -203,6 +290,7 @@ float Material::GetShininess() const {
 void Material::SetOpacity(float opacity) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_opacity = opacity;
+    InvalidateCacheLocked();
 }
 
 float Material::GetOpacity() const {
@@ -213,6 +301,7 @@ float Material::GetOpacity() const {
 void Material::SetMetallic(float metallic) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_metallic = metallic;
+    InvalidateCacheLocked();
 }
 
 float Material::GetMetallic() const {
@@ -223,6 +312,7 @@ float Material::GetMetallic() const {
 void Material::SetRoughness(float roughness) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_roughness = roughness;
+    InvalidateCacheLocked();
 }
 
 float Material::GetRoughness() const {
@@ -241,6 +331,7 @@ void Material::SetTexture(const std::string& name, std::shared_ptr<Texture> text
     } else {
         LOG_WARNING("Attempting to set invalid texture '" + name + "' to material '" + m_name + "'");
     }
+    InvalidateCacheLocked();
 }
 
 std::shared_ptr<Texture> Material::GetTexture(const std::string& name) const {
@@ -260,11 +351,13 @@ bool Material::HasTexture(const std::string& name) const {
 void Material::RemoveTexture(const std::string& name) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_textures.erase(name);
+    InvalidateCacheLocked();
 }
 
 void Material::ClearTextures() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_textures.clear();
+    InvalidateCacheLocked();
 }
 
 std::vector<std::string> Material::GetTextureNames() const {
@@ -295,37 +388,44 @@ void Material::ForEachTexture(std::function<void(const std::string&, const Ref<T
 void Material::SetInt(const std::string& name, int value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_intParams[name] = value;
+    InvalidateCacheLocked();
 }
 
 void Material::SetFloat(const std::string& name, float value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_floatParams[name] = value;
+    InvalidateCacheLocked();
 }
 
 void Material::SetVector2(const std::string& name, const Vector2& value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_vector2Params[name] = value;
+    InvalidateCacheLocked();
 }
 
 void Material::SetVector3(const std::string& name, const Vector3& value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_vector3Params[name] = value;
+    InvalidateCacheLocked();
 }
 
 void Material::SetVector4(const std::string& name, const Vector4& value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_vector4Params[name] = value;
+    InvalidateCacheLocked();
 }
 
 void Material::SetColor(const std::string& name, const Color& value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_vector4Params[name] = value.ToVector4();
+    InvalidateCacheLocked();
 }
 
 void Material::SetVector2Array(const std::string& name, const std::vector<Vector2>& values) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (values.empty()) {
         m_vector2ArrayParams.erase(name);
+        InvalidateCacheLocked();
         return;
     }
 
@@ -336,12 +436,14 @@ void Material::SetVector2Array(const std::string& name, const std::vector<Vector
     } else {
         m_vector2ArrayParams[name] = values;
     }
+    InvalidateCacheLocked();
 }
 
 void Material::SetColorArray(const std::string& name, const std::vector<Color>& values) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (values.empty()) {
         m_colorArrayParams.erase(name);
+        InvalidateCacheLocked();
         return;
     }
 
@@ -352,11 +454,13 @@ void Material::SetColorArray(const std::string& name, const std::vector<Color>& 
     } else {
         m_colorArrayParams[name] = values;
     }
+    InvalidateCacheLocked();
 }
 
 void Material::SetMatrix4(const std::string& name, const Matrix4& value) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_matrix4Params[name] = value;
+    InvalidateCacheLocked();
 }
 
 // ============================================================================
@@ -364,262 +468,206 @@ void Material::SetMatrix4(const std::string& name, const Matrix4& value) {
 // ============================================================================
 
 void Material::Bind(RenderState* renderState) {
-    // 在锁内快速验证和拷贝数据
-    Ref<Shader> shader;
-    Color ambientColor, diffuseColor, specularColor, emissiveColor;
-    float shininess, opacity, metallic, roughness;
-    std::unordered_map<std::string, Ref<Texture>> textures;
-    std::unordered_map<std::string, int> intParams;
-    std::unordered_map<std::string, float> floatParams;
-    std::unordered_map<std::string, Vector2> vector2Params;
-    std::unordered_map<std::string, Vector3> vector3Params;
-    std::unordered_map<std::string, Vector4> vector4Params;
-    std::unordered_map<std::string, Matrix4> matrix4Params;
-    std::unordered_map<std::string, std::vector<Vector2>> vector2ArrayParams;
-    std::unordered_map<std::string, std::vector<Color>> colorArrayParams;
-    std::string name;
-    // ✅ 拷贝渲染状态（避免后续重复加锁）
-    BlendMode blendMode;
-    CullFace cullFace;
-    bool depthTest, depthWrite;
-    
+    std::shared_ptr<CachedState> snapshot;
+
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        
+
         if (!m_shader) {
-            HANDLE_ERROR(RENDER_WARNING(ErrorCode::NullPointer, 
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::NullPointer,
                                        "Material::Bind: 材质 '" + m_name + "' 没有着色器"));
             return;
         }
-        
+
         if (!m_shader->IsValid()) {
-            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState, 
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
                                        "Material::Bind: 材质 '" + m_name + "' 的着色器无效"));
             return;
         }
-        
-        // 拷贝所有需要的数据
-        shader = m_shader;
-        ambientColor = m_ambientColor;
-        diffuseColor = m_diffuseColor;
-        specularColor = m_specularColor;
-        emissiveColor = m_emissiveColor;
-        shininess = m_shininess;
-        opacity = m_opacity;
-        metallic = m_metallic;
-        roughness = m_roughness;
-        textures = m_textures;
-        intParams = m_intParams;
-        floatParams = m_floatParams;
-        vector2Params = m_vector2Params;
-        vector3Params = m_vector3Params;
-        vector4Params = m_vector4Params;
-        matrix4Params = m_matrix4Params;
-        vector2ArrayParams = m_vector2ArrayParams;
-        colorArrayParams = m_colorArrayParams;
-        name = m_name;
-        // ✅ 拷贝渲染状态
-        blendMode = m_blendMode;
-        cullFace = m_cullFace;
-        depthTest = m_depthTest;
-        depthWrite = m_depthWrite;
+
+        snapshot = EnsureCachedStateLocked();
     }
-    
-    // 在锁外执行OpenGL调用
-    // 1. ✅ 检查着色器是否有效
-    if (!shader->IsValid()) {
-        LOG_ERROR("Shader is invalid for material '" + name + "'");
+
+    if (!snapshot || !snapshot->shader) {
+        LOG_ERROR("Material::Bind: 缺少有效的着色器快照");
         return;
     }
-    
-    // 2. 激活着色器
-    shader->Use();
-    
-    // 3. ✅ 应用材质的渲染状态设置（如果提供了 RenderState）
-    if (renderState) {
-        renderState->SetBlendMode(blendMode);
-        renderState->SetCullFace(cullFace);
-        renderState->SetDepthTest(depthTest);
-        renderState->SetDepthWrite(depthWrite);
+
+    if (!snapshot->shader->IsValid()) {
+        LOG_ERROR("Shader is invalid for material '" + snapshot->name + "'");
+        return;
     }
-    
-    // 4. 获取 UniformManager 并进行安全检查
+
+    auto shader = snapshot->shader;
+    shader->Use();
+
+    if (renderState) {
+        renderState->SetBlendMode(snapshot->blendMode);
+        renderState->SetCullFace(snapshot->cullFace);
+        renderState->SetDepthTest(snapshot->depthTest);
+        renderState->SetDepthWrite(snapshot->depthWrite);
+    }
+
     auto* uniformMgr = shader->GetUniformManager();
     if (!uniformMgr) {
-        LOG_ERROR("UniformManager is null for material '" + name + "'");
+        LOG_ERROR("UniformManager is null for material '" + snapshot->name + "'");
         return;
     }
-    
-    // 5. ✅ 使用异常保护设置材质属性（统一使用u前缀）
+
     try {
-        // Phong着色器形式（material_phong.frag使用，带u前缀）
         if (uniformMgr->HasUniform("uAmbientColor")) {
-            uniformMgr->SetColor("uAmbientColor", ambientColor);
+            uniformMgr->SetColor("uAmbientColor", snapshot->ambientColor);
         }
         if (uniformMgr->HasUniform("uDiffuseColor")) {
-            uniformMgr->SetColor("uDiffuseColor", diffuseColor);
+            uniformMgr->SetColor("uDiffuseColor", snapshot->diffuseColor);
         }
         if (uniformMgr->HasUniform("uSpecularColor")) {
-            uniformMgr->SetColor("uSpecularColor", specularColor);
+            uniformMgr->SetColor("uSpecularColor", snapshot->specularColor);
         }
         if (uniformMgr->HasUniform("uShininess")) {
-            uniformMgr->SetFloat("uShininess", shininess);
+            uniformMgr->SetFloat("uShininess", snapshot->shininess);
         }
-        
-        // 结构体形式（某些高级着色器可能使用）
+
         if (uniformMgr->HasUniform("material.ambient")) {
-            uniformMgr->SetColor("material.ambient", ambientColor);
+            uniformMgr->SetColor("material.ambient", snapshot->ambientColor);
         }
         if (uniformMgr->HasUniform("material.diffuse")) {
-            uniformMgr->SetColor("material.diffuse", diffuseColor);
+            uniformMgr->SetColor("material.diffuse", snapshot->diffuseColor);
         }
         if (uniformMgr->HasUniform("material.specular")) {
-            uniformMgr->SetColor("material.specular", specularColor);
+            uniformMgr->SetColor("material.specular", snapshot->specularColor);
         }
         if (uniformMgr->HasUniform("material.emissive")) {
-            uniformMgr->SetColor("material.emissive", emissiveColor);
+            uniformMgr->SetColor("material.emissive", snapshot->emissiveColor);
         }
         if (uniformMgr->HasUniform("material.shininess")) {
-            uniformMgr->SetFloat("material.shininess", shininess);
+            uniformMgr->SetFloat("material.shininess", snapshot->shininess);
         }
         if (uniformMgr->HasUniform("material.opacity")) {
-            uniformMgr->SetFloat("material.opacity", opacity);
+            uniformMgr->SetFloat("material.opacity", snapshot->opacity);
         }
         if (uniformMgr->HasUniform("material.metallic")) {
-            uniformMgr->SetFloat("material.metallic", metallic);
+            uniformMgr->SetFloat("material.metallic", snapshot->metallic);
         }
         if (uniformMgr->HasUniform("material.roughness")) {
-            uniformMgr->SetFloat("material.roughness", roughness);
+            uniformMgr->SetFloat("material.roughness", snapshot->roughness);
         }
-        
-        // 简单形式（basic.frag使用）
+
         if (uniformMgr->HasUniform("uColor")) {
-            uniformMgr->SetColor("uColor", diffuseColor);
+            uniformMgr->SetColor("uColor", snapshot->diffuseColor);
         }
-        
-        // 设置纹理和顶点颜色标志
+
         if (uniformMgr->HasUniform("uUseTexture")) {
-            bool hasTexture = (textures.find("diffuseMap") != textures.end() || 
-                             textures.find("uTexture0") != textures.end());
+            const bool hasTexture = std::any_of(snapshot->textures.begin(), snapshot->textures.end(),
+                [](const auto& pair) {
+                    return pair.first == "diffuseMap" || pair.first == "uTexture0";
+                });
             uniformMgr->SetBool("uUseTexture", hasTexture);
         }
-        
+
         if (uniformMgr->HasUniform("uUseVertexColor")) {
             uniformMgr->SetBool("uUseVertexColor", true);
         }
-        
     } catch (const std::exception& e) {
         LOG_ERROR("Exception setting material properties: " + std::string(e.what()));
         return;
     }
-    
-    // 6. ✅ 使用异常保护绑定纹理和自定义参数
+
     try {
         std::array<bool, 32> usedUnits{};
         bool hasDiffuse = false;
         bool hasNormal = false;
-        
-        for (const auto& pair : textures) {
+
+        for (const auto& pair : snapshot->textures) {
             const std::string& texName = pair.first;
-            auto texture = pair.second;
-            
-            if (texture && texture->IsValid()) {
-                int bindUnit = -1;
-                int cachedUnit = -1;
-                
-                if (uniformMgr->TryGetTextureUnit(texName, cachedUnit)) {
-                    bindUnit = std::clamp(cachedUnit, 0, 31);
-                    uniformMgr->RegisterTextureUniform(texName, bindUnit);
-                } else {
-                    auto it = std::find(usedUnits.begin(), usedUnits.end(), false);
-                    if (it == usedUnits.end()) {
-                        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
-                            "Material::Bind: 可用纹理单元耗尽，无法绑定 '" + texName + "'"));
-                        continue;
-                    }
-                    bindUnit = static_cast<int>(std::distance(usedUnits.begin(), it));
-                    uniformMgr->RegisterTextureUniform(texName, bindUnit);
+            const auto& texture = pair.second;
+
+            if (!texture || !texture->IsValid()) {
+                continue;
+            }
+
+            int bindUnit = -1;
+            int cachedUnit = -1;
+
+            if (uniformMgr->TryGetTextureUnit(texName, cachedUnit)) {
+                bindUnit = std::clamp(cachedUnit, 0, 31);
+                uniformMgr->RegisterTextureUniform(texName, bindUnit);
+            } else {
+                auto it = std::find(usedUnits.begin(), usedUnits.end(), false);
+                if (it == usedUnits.end()) {
+                    HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidState,
+                        "Material::Bind: 可用纹理单元耗尽，无法绑定 '" + texName + "'"));
+                    continue;
                 }
-                
-                if (bindUnit >= 0 && bindUnit < static_cast<int>(usedUnits.size())) {
-                    usedUnits[bindUnit] = true;
-                }
-                texture->Bind(bindUnit);
-                
-                // 标记纹理类型
-                if (texName == "diffuseMap") {
-                    hasDiffuse = true;
-                } else if (texName == "normalMap") {
-                    hasNormal = true;
-                }
+                bindUnit = static_cast<int>(std::distance(usedUnits.begin(), it));
+                uniformMgr->RegisterTextureUniform(texName, bindUnit);
+            }
+
+            if (bindUnit >= 0 && bindUnit < static_cast<int>(usedUnits.size())) {
+                usedUnits[bindUnit] = true;
+            }
+
+            texture->Bind(bindUnit);
+
+            if (texName == "diffuseMap") {
+                hasDiffuse = true;
+            } else if (texName == "normalMap") {
+                hasNormal = true;
             }
         }
-        
-        // 设置纹理存在标志
+
         if (uniformMgr->HasUniform("hasDiffuseMap")) {
             uniformMgr->SetBool("hasDiffuseMap", hasDiffuse);
         }
         if (uniformMgr->HasUniform("hasNormalMap")) {
             uniformMgr->SetBool("hasNormalMap", hasNormal);
         }
-        
-        // 设置自定义整型参数
-        for (const auto& pair : intParams) {
+
+        for (const auto& pair : snapshot->intParams) {
             if (uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetInt(pair.first, pair.second);
             }
         }
-        
-        // 设置自定义浮点参数
-        for (const auto& pair : floatParams) {
+
+        for (const auto& pair : snapshot->floatParams) {
             if (uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetFloat(pair.first, pair.second);
             }
         }
-        
-        // 设置自定义向量2参数
-        for (const auto& pair : vector2Params) {
+
+        for (const auto& pair : snapshot->vector2Params) {
             if (uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetVector2(pair.first, pair.second);
             }
         }
-        
-        // 设置自定义向量3参数
-        for (const auto& pair : vector3Params) {
+
+        for (const auto& pair : snapshot->vector3Params) {
             if (uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetVector3(pair.first, pair.second);
             }
         }
-        
-        // 设置自定义向量4参数
-        for (const auto& pair : vector4Params) {
+
+        for (const auto& pair : snapshot->vector4Params) {
             if (uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetVector4(pair.first, pair.second);
             }
         }
-        
-        // 设置自定义矩阵4参数
-        for (const auto& pair : matrix4Params) {
+
+        for (const auto& pair : snapshot->matrix4Params) {
             if (uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetMatrix4(pair.first, pair.second);
             }
         }
 
-        for (const auto& pair : vector2ArrayParams) {
-            if (pair.second.empty()) {
-                continue;
-            }
-            if (uniformMgr->HasUniform(pair.first)) {
+        for (const auto& pair : snapshot->vector2ArrayParams) {
+            if (!pair.second.empty() && uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetVector2Array(pair.first, pair.second.data(),
                     static_cast<uint32_t>(pair.second.size()));
             }
         }
 
-        for (const auto& pair : colorArrayParams) {
-            if (pair.second.empty()) {
-                continue;
-            }
-            if (uniformMgr->HasUniform(pair.first)) {
+        for (const auto& pair : snapshot->colorArrayParams) {
+            if (!pair.second.empty() && uniformMgr->HasUniform(pair.first)) {
                 uniformMgr->SetColorArray(pair.first, pair.second.data(),
                     static_cast<uint32_t>(pair.second.size()));
             }
@@ -660,6 +708,7 @@ bool Material::IsValid() const {
 void Material::SetBlendMode(BlendMode mode) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_blendMode = mode;
+    InvalidateCacheLocked();
 }
 
 BlendMode Material::GetBlendMode() const {
@@ -670,6 +719,7 @@ BlendMode Material::GetBlendMode() const {
 void Material::SetCullFace(CullFace mode) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_cullFace = mode;
+    InvalidateCacheLocked();
 }
 
 CullFace Material::GetCullFace() const {
@@ -680,6 +730,7 @@ CullFace Material::GetCullFace() const {
 void Material::SetDepthTest(bool enable) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_depthTest = enable;
+    InvalidateCacheLocked();
 }
 
 bool Material::GetDepthTest() const {
@@ -690,6 +741,7 @@ bool Material::GetDepthTest() const {
 void Material::SetDepthWrite(bool enable) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_depthWrite = enable;
+    InvalidateCacheLocked();
 }
 
 bool Material::GetDepthWrite() const {

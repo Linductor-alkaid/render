@@ -212,6 +212,9 @@ int main(int argc, char* argv[]) {
             uniformMgr->SetColor("uDiffuseColor", sceneConfig.diffuseColor);
             uniformMgr->SetColor("uSpecularColor", sceneConfig.specularColor);
             uniformMgr->SetFloat("uShininess", sceneConfig.shininess);
+            if (uniformMgr->HasUniform("uUseVertexColor")) {
+                uniformMgr->SetBool("uUseVertexColor", false);
+            }
         }
 
         world->Update(deltaTime);

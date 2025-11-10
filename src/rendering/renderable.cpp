@@ -688,65 +688,49 @@ void ModelRenderable::Render(RenderState* renderState) {
                 part.mesh->Upload();
             }
 
-            if (part.extraData) {
-                std::vector<Vector2> extraUVScales;
-                extraUVScales.reserve(kMaxExtraUVSets);
-                if (part.extraData->uvChannels.size() > 1) {
-                    for (size_t channel = 1; channel < part.extraData->uvChannels.size() && extraUVScales.size() < kMaxExtraUVSets; ++channel) {
-                        const auto& channelData = part.extraData->uvChannels[channel];
-                        if (channelData.empty()) {
-                            continue;
-                        }
-                        Vector2 minUV(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-                        Vector2 maxUV(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
-                        for (const auto& uv : channelData) {
-                            minUV.x() = std::min(minUV.x(), uv.x());
-                            minUV.y() = std::min(minUV.y(), uv.y());
-                            maxUV.x() = std::max(maxUV.x(), uv.x());
-                            maxUV.y() = std::max(maxUV.y(), uv.y());
-                        }
-                        Vector2 scale = maxUV - minUV;
-                        if (std::abs(scale.x()) < std::numeric_limits<float>::epsilon()) {
-                            scale.x() = 1.0f;
-                        }
-                        if (std::abs(scale.y()) < std::numeric_limits<float>::epsilon()) {
-                            scale.y() = 1.0f;
-                        }
-                        extraUVScales.push_back(scale);
-                    }
-                }
-                part.material->SetVector2Array("uExtraUVSetScales[0]", extraUVScales);
-                part.material->SetInt("uExtraUVSetCount", static_cast<int>(extraUVScales.size()));
+            std::vector<Vector2> extraUVScales;
+            const bool enableUvScaling =
+                part.extraData && part.extraData->enableUvChannelScaling &&
+                part.extraData->uvChannels.size() > 1;
 
-                std::vector<Color> extraColorSets;
-                extraColorSets.reserve(kMaxExtraColorSets);
-                for (size_t channel = 0; channel < part.extraData->colorChannels.size() && extraColorSets.size() < kMaxExtraColorSets; ++channel) {
-                    const auto& channelData = part.extraData->colorChannels[channel];
+            if (enableUvScaling) {
+                extraUVScales.reserve(kMaxExtraUVSets);
+                for (size_t channel = 1;
+                     channel < part.extraData->uvChannels.size() && extraUVScales.size() < kMaxExtraUVSets;
+                     ++channel) {
+                    const auto& channelData = part.extraData->uvChannels[channel];
                     if (channelData.empty()) {
                         continue;
                     }
-                    Color accum(0.0f, 0.0f, 0.0f, 0.0f);
-                    for (const auto& c : channelData) {
-                        accum.r += c.r;
-                        accum.g += c.g;
-                        accum.b += c.b;
-                        accum.a += c.a;
+                    Vector2 minUV(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+                    Vector2 maxUV(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+                    for (const auto& uv : channelData) {
+                        minUV.x() = std::min(minUV.x(), uv.x());
+                        minUV.y() = std::min(minUV.y(), uv.y());
+                        maxUV.x() = std::max(maxUV.x(), uv.x());
+                        maxUV.y() = std::max(maxUV.y(), uv.y());
                     }
-                    float inv = 1.0f / static_cast<float>(channelData.size());
-                    accum.r *= inv;
-                    accum.g *= inv;
-                    accum.b *= inv;
-                    accum.a *= inv;
-                    extraColorSets.push_back(accum);
+                    Vector2 scale = maxUV - minUV;
+                    if (std::abs(scale.x()) < std::numeric_limits<float>::epsilon()) {
+                        scale.x() = 1.0f;
+                    }
+                    if (std::abs(scale.y()) < std::numeric_limits<float>::epsilon()) {
+                        scale.y() = 1.0f;
+                    }
+                    extraUVScales.push_back(scale);
                 }
-                part.material->SetColorArray("uExtraColorSets[0]", extraColorSets);
-                part.material->SetInt("uExtraColorSetCount", static_cast<int>(extraColorSets.size()));
+            }
+
+            if (!extraUVScales.empty()) {
+                part.material->SetVector2Array("uExtraUVSetScales[0]", extraUVScales);
+                part.material->SetInt("uExtraUVSetCount", static_cast<int>(extraUVScales.size()));
             } else {
                 part.material->SetVector2Array("uExtraUVSetScales[0]", {});
                 part.material->SetInt("uExtraUVSetCount", 0);
-                part.material->SetColorArray("uExtraColorSets[0]", {});
-                part.material->SetInt("uExtraColorSetCount", 0);
             }
+
+            part.material->SetColorArray("uExtraColorSets[0]", {});
+            part.material->SetInt("uExtraColorSetCount", 0);
 
             auto& stateCache = MaterialStateCache::Get();
             part.material->Bind(renderState);

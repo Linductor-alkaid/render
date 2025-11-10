@@ -34,6 +34,38 @@ RenderState::RenderState()
     // Reset() 将在 Renderer::Initialize() 中调用
 }
 
+RenderState::ScopedStateGuard::ScopedStateGuard(RenderState* state)
+    : m_state(state)
+    , m_blendMode(BlendMode::None)
+    , m_cullFace(CullFace::Back)
+    , m_depthTest(true)
+    , m_depthWrite(true)
+    , m_active(false) {
+    if (!m_state) {
+        return;
+    }
+
+    m_blendMode = m_state->GetBlendMode();
+    m_cullFace = m_state->GetCullFace();
+    m_depthTest = m_state->GetDepthTest();
+    m_depthWrite = m_state->GetDepthWrite();
+    m_active = true;
+}
+
+RenderState::ScopedStateGuard::~ScopedStateGuard() {
+    if (m_active && m_state) {
+        m_state->SetBlendMode(m_blendMode);
+        m_state->SetCullFace(m_cullFace);
+        m_state->SetDepthTest(m_depthTest);
+        m_state->SetDepthWrite(m_depthWrite);
+    }
+}
+
+void RenderState::ScopedStateGuard::Release() {
+    m_active = false;
+    m_state = nullptr;
+}
+
 void RenderState::SetDepthTest(bool enable) {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
     if (m_depthTest != enable || m_strictMode) {
@@ -140,6 +172,16 @@ BlendMode RenderState::GetBlendMode() const {
 CullFace RenderState::GetCullFace() const {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_cullFace;
+}
+
+bool RenderState::GetDepthTest() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_depthTest;
+}
+
+bool RenderState::GetDepthWrite() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_depthWrite;
 }
 
 uint32_t RenderState::GetBoundVertexArray() const {

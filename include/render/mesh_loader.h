@@ -80,6 +80,7 @@ struct MeshExtraData {
     Matrix4 localTransform = Matrix4::Identity();   ///< 节点局部变换
     Matrix4 worldTransform = Matrix4::Identity();   ///< 节点世界变换
     uint32_t assimpMeshIndex = 0;                   ///< 对应的 Assimp 网格索引
+    bool enableUvChannelScaling = false;            ///< 是否将附加 UV 通道作为缩放系数应用
 
     std::vector<std::vector<Vector2>> uvChannels;   ///< 多套 UV 坐标
     std::vector<std::vector<Color>> colorChannels;  ///< 多套颜色数据

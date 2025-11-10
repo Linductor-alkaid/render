@@ -23,6 +23,7 @@ uniform sampler2D diffuseMap;
 uniform bool hasDiffuseMap;
 uniform sampler2D normalMap;
 uniform bool hasNormalMap;
+uniform bool uUseVertexColor;
 
 const int MAX_EXTRA_COLOR_SETS = 4;
 uniform int uExtraColorSetCount;
@@ -164,7 +165,9 @@ void main() {
         baseColor = texColor * uDiffuseColor;
         baseColor.rgb = clamp(baseColor.rgb, 0.0, 1.0);
     }
-    baseColor *= VertexColor;
+    if (uUseVertexColor) {
+        baseColor *= VertexColor;
+    }
     for (int i = 0; i < uExtraColorSetCount && i < MAX_EXTRA_COLOR_SETS; ++i) {
         baseColor *= uExtraColorSets[i];
     }

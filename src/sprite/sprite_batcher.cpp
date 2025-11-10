@@ -2,6 +2,7 @@
 #include "render/logger.h"
 #include "render/mesh.h"
 #include "render/renderable.h"
+#include "render/render_state.h"
 #include "render/renderer.h"
 #include "render/shader.h"
 #include "render/math_utils.h"
@@ -232,6 +233,7 @@ void SpriteBatcher::DrawBatch(size_t index, RenderState* renderState) {
         return;
     }
 
+    RenderState::ScopedStateGuard stateGuard(renderState);
     renderState->SetBlendMode(batch.key.blendMode);
     renderState->SetDepthTest(false);
     renderState->SetDepthWrite(false);
@@ -315,12 +317,6 @@ void SpriteBatcher::DrawBatch(size_t index, RenderState* renderState) {
     }
 
     shader->Unuse();
-
-    // Restore default render state for subsequent layers/renderables.
-    renderState->SetBlendMode(BlendMode::None);
-    renderState->SetDepthTest(true);
-    renderState->SetDepthWrite(true);
-    renderState->SetCullFace(CullFace::Back);
 }
 
 bool SpriteBatcher::GetBatchInfo(size_t index, SpriteBatchInfo& outInfo) const {

@@ -64,6 +64,26 @@ enum class BufferTarget {
  */
 class RenderState {
 public:
+    class ScopedStateGuard {
+    public:
+        explicit ScopedStateGuard(RenderState* state);
+        ScopedStateGuard(const ScopedStateGuard&) = delete;
+        ScopedStateGuard& operator=(const ScopedStateGuard&) = delete;
+        ScopedStateGuard(ScopedStateGuard&&) = delete;
+        ScopedStateGuard& operator=(ScopedStateGuard&&) = delete;
+        ~ScopedStateGuard();
+
+        void Release();
+
+    private:
+        RenderState* m_state;
+        BlendMode m_blendMode;
+        CullFace m_cullFace;
+        bool m_depthTest;
+        bool m_depthWrite;
+        bool m_active;
+    };
+
     RenderState();
     
     /**
@@ -135,6 +155,16 @@ public:
      * @brief 获取当前面剔除模式
      */
     CullFace GetCullFace() const;
+
+    /**
+     * @brief 获取深度测试是否启用
+     */
+    bool GetDepthTest() const;
+
+    /**
+     * @brief 获取深度写入是否启用
+     */
+    bool GetDepthWrite() const;
     
     // ========================================================================
     // 缓存同步管理

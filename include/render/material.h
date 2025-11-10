@@ -426,6 +426,32 @@ public:
     uint32_t GetStableID() const noexcept { return m_stableID; }
     
 private:
+    struct CachedState {
+        std::shared_ptr<Shader> shader;
+        Color ambientColor;
+        Color diffuseColor;
+        Color specularColor;
+        Color emissiveColor;
+        float shininess = 0.0f;
+        float opacity = 1.0f;
+        float metallic = 0.0f;
+        float roughness = 0.5f;
+        std::vector<std::pair<std::string, Ref<Texture>>> textures;
+        std::vector<std::pair<std::string, int>> intParams;
+        std::vector<std::pair<std::string, float>> floatParams;
+        std::vector<std::pair<std::string, Vector2>> vector2Params;
+        std::vector<std::pair<std::string, Vector3>> vector3Params;
+        std::vector<std::pair<std::string, Vector4>> vector4Params;
+        std::vector<std::pair<std::string, Matrix4>> matrix4Params;
+        std::vector<std::pair<std::string, std::vector<Vector2>>> vector2ArrayParams;
+        std::vector<std::pair<std::string, std::vector<Color>>> colorArrayParams;
+        BlendMode blendMode = BlendMode::None;
+        CullFace cullFace = CullFace::Back;
+        bool depthTest = true;
+        bool depthWrite = true;
+        std::string name;
+    };
+
     std::string m_name;                     ///< 材质名称
     std::shared_ptr<Shader> m_shader;       ///< 着色器
     
@@ -465,6 +491,11 @@ private:
     static std::atomic<uint32_t> s_nextStableID;
     
     mutable std::mutex m_mutex;             ///< 互斥锁，保护所有成员变量
+    mutable std::shared_ptr<CachedState> m_cachedState;
+    mutable bool m_cacheDirty = true;
+
+    void InvalidateCacheLocked();
+    std::shared_ptr<CachedState> EnsureCachedStateLocked();
 };
 
 // 类型别名
