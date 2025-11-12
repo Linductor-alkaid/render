@@ -483,6 +483,24 @@ layers.SetDefaultLayers(RenderLayerDefaults::CreateDefaultDescriptors());
 layers.ResetToDefaults();
 ```
 
+#### 默认层级（`RenderLayerDefaults::CreateDefaultDescriptors()`）
+
+| 名称 | layerID | maskIndex | 优先级 | 用途 |
+| --- | --- | --- | --- | --- |
+| `world.background` | 680 | 0 | 100 | 世界背景元素（禁用深度写入） |
+| `world.midground` | 700 | 1 | 200 | 世界主体，标准深度/剔除设置 |
+| `world.foreground` | 720 | 2 | 300 | 世界前景特效（透明排序） |
+| `ui.background` | 780 | 3 | 700 | UI 背景板（屏幕空间） |
+| `ui.panel` | 790 | 4 | 720 | UI 面板容器 |
+| `ui.default` | 800 | 5 | 740 | 通用 UI 控件 |
+| `ui.foreground` | 810 | 6 | 760 | UI 高亮 / 前景特效 |
+| `ui.overlay` | 900 | 7 | 800 | UI 模态叠加层（弹窗、遮罩） |
+| `hud.overlay` | 905 | 10 | 810 | HUD 常驻面板 / 性能信息 |
+| `ui.tooltip` | 910 | 8 | 820 | 提示 / 光标 |
+| `debug.overlay` | 999 | 9 | 900 | 调试覆盖层 |
+
+> `maskIndex` 与 `CameraComponent::layerMask` 的位序一一对应。若项目需要扩展，可在初始化阶段调用 `RegisterLayer()` 或覆盖默认描述。
+
 ---
 
 ### SetActiveLayerMask / GetActiveLayerMask

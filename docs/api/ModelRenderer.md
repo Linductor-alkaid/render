@@ -20,6 +20,7 @@
 - ✅ **多部件渲染**：遍历 `ModelPart`，对缺失材质/网格进行容错处理。  
 - ✅ **材质排序键**：通过 `Renderer::BuildModelRenderableSortKey()` 生成稳定的 `MaterialSortKey`，减少状态切换。  
 - ✅ **UniformManager 驱动**：统一设置 `uModel`、`uView`、`uProjection` 等矩阵以及 `hasDiffuseMap`/`hasNormalMap` 标志，满足用户统一 Uniform 管理要求。  
+- ✅ **附加 UV 缩放开关**：仅当 `ModelPart::extraData->enableUvChannelScaling` 为 `true` 时才会推送 `uExtraUVSetScales`，避免默认对模型主贴图产生影响。
 - ✅ **裁剪优化**：缓存模型整体包围盒，并在 `ModelRenderSystem` 中结合 `CameraSystem` 视锥体进行裁剪。  
 - ✅ **线程安全**：公共方法使用互斥量保护，支持在 ECS 提交流程与渲染线程之间安全访问。
 

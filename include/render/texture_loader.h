@@ -6,6 +6,8 @@
 #include <memory>
 #include <future>
 #include <mutex>
+#include <vector>
+#include <cstdint>
 
 namespace Render {
 
@@ -26,6 +28,24 @@ struct AsyncTextureResult {
  */
 class TextureLoader {
 public:
+    /**
+     * @brief CPU 预处理阶段输出的数据
+     *
+     * 拆分纹理解码与 GPU 上传，以便在工作线程完成文件 IO，
+     * 并在拥有 OpenGL 上下文的线程执行最终上传。
+     */
+    struct TextureStagingData {
+        std::vector<std::uint8_t> pixels;
+        int width = 0;
+        int height = 0;
+        TextureFormat format = TextureFormat::RGBA;
+        bool generateMipmap = true;
+
+        bool IsValid() const {
+            return width > 0 && height > 0 && !pixels.empty();
+        }
+    };
+
     /**
      * @brief 获取单例实例
      */
@@ -131,6 +151,28 @@ public:
      * @return 内存字节数
      */
     size_t GetTotalMemoryUsage() const;
+
+    /**
+     * @brief 将纹理文件解码为 staging 数据（无 OpenGL 调用）
+     * @param filepath 纹理文件路径
+     * @param generateMipmap 是否在上传阶段生成 Mipmap
+     * @param outData 输出的 staging 数据
+     * @param errorMessage 若失败，填充错误描述
+     * @return 成功返回 true
+     */
+    bool DecodeTextureToStaging(const std::string& filepath,
+                                bool generateMipmap,
+                                TextureStagingData* outData,
+                                std::string* errorMessage = nullptr);
+
+    /**
+     * @brief 上传 staging 纹理到 GPU
+     * @param name 纹理名称（用于缓存；为空则不缓存）
+     * @param stagingData 预处理数据（上传后被清空）
+     * @return 纹理指针，失败返回 nullptr
+     */
+    TexturePtr UploadStagedTexture(const std::string& name,
+                                   TextureStagingData&& stagingData);
 
 private:
     TextureLoader() = default;

@@ -424,7 +424,10 @@ static Ref<Texture> LoadMaterialTexture(
     aiMaterial* mat,
     aiTextureType type,
     const std::string& basePath,
-    const std::string& textureName)
+    const std::string& textureName,
+    const std::string& slotName,
+    bool autoUpload,
+    std::vector<MaterialTextureRequest>* pendingRequests)
 {
     if (mat->GetTextureCount(type) == 0) {
         return nullptr;
@@ -447,6 +450,19 @@ static Ref<Texture> LoadMaterialTexture(
     }
     
     // 使用 TextureLoader 加载纹理（带缓存）
+    if (!autoUpload) {
+        if (pendingRequests) {
+            MaterialTextureRequest request;
+            request.slotName = slotName;
+            request.textureName = textureName;
+            request.filePath = fullPathStr;
+            request.generateMipmap = true;
+            pendingRequests->push_back(std::move(request));
+            Logger::GetInstance().Info("Queued texture for deferred upload: " + fullPathStr);
+        }
+        return nullptr;
+    }
+
     auto texture = TextureLoader::GetInstance().LoadTexture(textureName, fullPathStr);
     
     if (texture) {
@@ -466,7 +482,9 @@ static Ref<Material> ProcessAssimpMaterial(
     const aiScene* scene,
     const std::string& basePath,
     Ref<Shader> shader,
-    uint32_t materialIndex)
+    uint32_t materialIndex,
+    bool autoUpload,
+    std::vector<MaterialTextureRequest>* pendingRequests)
 {
     auto material = CreateRef<Material>();
     
@@ -551,41 +569,77 @@ static Ref<Material> ProcessAssimpMaterial(
         diffuseTexName = basePath + "/" + texPathStr;
     }
     
-    auto diffuseMap = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE, basePath, 
-                                          diffuseTexName.empty() ? (matNameStr + "_diffuse") : diffuseTexName);
+    auto diffuseMap = LoadMaterialTexture(
+        aiMat,
+        aiTextureType_DIFFUSE,
+        basePath,
+        diffuseTexName.empty() ? (matNameStr + "_diffuse") : diffuseTexName,
+        "diffuseMap",
+        autoUpload,
+        pendingRequests);
     if (diffuseMap) {
         material->SetTexture("diffuseMap", diffuseMap);
     }
     
     // 镜面反射贴图
-    auto specularMap = LoadMaterialTexture(aiMat, aiTextureType_SPECULAR, basePath,
-                                           matNameStr + "_specular");
+    auto specularMap = LoadMaterialTexture(
+        aiMat,
+        aiTextureType_SPECULAR,
+        basePath,
+        matNameStr + "_specular",
+        "specularMap",
+        autoUpload,
+        pendingRequests);
     if (specularMap) {
         material->SetTexture("specularMap", specularMap);
     }
     
     // 法线贴图
-    auto normalMap = LoadMaterialTexture(aiMat, aiTextureType_NORMALS, basePath,
-                                         matNameStr + "_normal");
+    auto normalMap = LoadMaterialTexture(
+        aiMat,
+        aiTextureType_NORMALS,
+        basePath,
+        matNameStr + "_normal",
+        "normalMap",
+        autoUpload,
+        pendingRequests);
     if (!normalMap) {
         // 有些格式使用 HEIGHT 代替 NORMALS
-        normalMap = LoadMaterialTexture(aiMat, aiTextureType_HEIGHT, basePath,
-                                       matNameStr + "_normal");
+        normalMap = LoadMaterialTexture(
+            aiMat,
+            aiTextureType_HEIGHT,
+            basePath,
+            matNameStr + "_normal",
+            "normalMap",
+            autoUpload,
+            pendingRequests);
     }
     if (normalMap) {
         material->SetTexture("normalMap", normalMap);
     }
     
     // 环境遮蔽贴图
-    auto aoMap = LoadMaterialTexture(aiMat, aiTextureType_AMBIENT_OCCLUSION, basePath,
-                                     matNameStr + "_ao");
+    auto aoMap = LoadMaterialTexture(
+        aiMat,
+        aiTextureType_AMBIENT_OCCLUSION,
+        basePath,
+        matNameStr + "_ao",
+        "aoMap",
+        autoUpload,
+        pendingRequests);
     if (aoMap) {
         material->SetTexture("aoMap", aoMap);
     }
     
     // 自发光贴图
-    auto emissiveMap = LoadMaterialTexture(aiMat, aiTextureType_EMISSIVE, basePath,
-                                           matNameStr + "_emissive");
+    auto emissiveMap = LoadMaterialTexture(
+        aiMat,
+        aiTextureType_EMISSIVE,
+        basePath,
+        matNameStr + "_emissive",
+        "emissiveMap",
+        autoUpload,
+        pendingRequests);
     if (emissiveMap) {
         material->SetTexture("emissiveMap", emissiveMap);
     }
@@ -617,8 +671,14 @@ static void ProcessAssimpNodeWithMaterials(
         if (assimpMesh->mMaterialIndex >= 0 && 
             assimpMesh->mMaterialIndex < scene->mNumMaterials) {
             aiMaterial* aiMat = scene->mMaterials[assimpMesh->mMaterialIndex];
-            material = ProcessAssimpMaterial(aiMat, scene, basePath, shader, 
-                                             assimpMesh->mMaterialIndex);
+            material = ProcessAssimpMaterial(
+                aiMat,
+                scene,
+                basePath,
+                shader,
+                assimpMesh->mMaterialIndex,
+                true,
+                nullptr);
         }
         
         // 获取网格名称
@@ -670,7 +730,9 @@ static void ProcessAssimpNodeDetailed(
                 scene,
                 basePath,
                 shader,
-                assimpMesh->mMaterialIndex
+                assimpMesh->mMaterialIndex,
+                options.autoUpload,
+                &extra.pendingTextureRequests
             );
         }
 

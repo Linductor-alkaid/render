@@ -53,6 +53,8 @@ set(EXAMPLES
     49_miku_model_test
     50_geometry_catalog_test
     51_layer_mask_demo
+    52_application_boot_demo
+    60_ui_framework_showcase
 )
 
 # 批量创建示例程序

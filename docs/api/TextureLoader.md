@@ -27,6 +27,14 @@ public:
     TexturePtr CreateTexture(const std::string& name, const void* data, int width, int height,
                             TextureFormat format = TextureFormat::RGBA, bool generateMipmap = true);
     
+    // 两阶段接口
+    bool DecodeTextureToStaging(const std::string& filepath,
+                                bool generateMipmap,
+                                TextureStagingData* outData,
+                                std::string* errorMessage = nullptr);
+    TexturePtr UploadStagedTexture(const std::string& name,
+                                   TextureStagingData&& stagingData);
+    
     // 异步加载
     std::future<AsyncTextureResult> LoadTextureAsync(const std::string& name,
                                                      const std::string& filepath,
@@ -63,6 +71,25 @@ struct AsyncTextureResult {
     bool success;           // 是否加载成功
     TexturePtr texture;     // 纹理指针
     std::string error;      // 错误信息（如果失败）
+};
+```
+
+### TextureStagingData （v0.13+）
+
+`DecodeTextureToStaging()` 的输出结构，封装 CPU 解码后的像素数据。  
+在工作线程可安全创建，随后通过 `UploadStagedTexture()` 在主线程完成 GPU 上传。
+
+```cpp
+struct TextureStagingData {
+    std::vector<std::uint8_t> pixels; // RGBA32 原始像素
+    int width = 0;
+    int height = 0;
+    TextureFormat format = TextureFormat::RGBA;
+    bool generateMipmap = true;
+
+    bool IsValid() const {
+        return width > 0 && height > 0 && !pixels.empty();
+    }
 };
 ```
 
@@ -161,6 +188,54 @@ auto texture = loader.CreateTexture("checkerboard",
 
 ---
 
+## 两阶段接口
+
+### `DecodeTextureToStaging()`
+
+在 **任意线程** 将纹理文件解码为 `TextureStagingData`，不产生任何 OpenGL 调用。
+
+```cpp
+bool DecodeTextureToStaging(const std::string& filepath,
+                            bool generateMipmap,
+                            TextureStagingData* outData,
+                            std::string* errorMessage = nullptr)
+```
+
+**用途**:
+- 配合 `AsyncResourceLoader`，在后台线程执行磁盘 I/O 与像素转换。
+- 可以根据 `generateMipmap` 标志决定是否在上传阶段生成 mipmap。
+
+**注意**:
+- `outData` 必须非空；函数内部会填充 `pixels / width / height / format`。
+- 若返回 `false`，`errorMessage`（若提供）会包含详细错误信息，同时日志会记录具体原因。
+
+### `UploadStagedTexture()`
+
+在 **拥有 OpenGL 上下文的线程** 将 staging 数据上传至 GPU，并加入缓存。
+
+```cpp
+TexturePtr UploadStagedTexture(const std::string& name,
+                               TextureStagingData&& stagingData)
+```
+
+**行为**:
+- 如果 `name` 非空且缓存中已存在同名纹理，会直接返回缓存中的纹理并跳过上传。
+- 上传成功后会将纹理放入缓存，供 `ResourceManager` 或其他系统复用。
+- 失败时返回 `nullptr` 并记录错误。
+
+**典型流程**:
+```cpp
+TextureLoader::TextureStagingData staging;
+if (TextureLoader::GetInstance().DecodeTextureToStaging("textures/stone.png", true, &staging)) {
+    auto texture = TextureLoader::GetInstance().UploadStagedTexture("stone", std::move(staging));
+    if (texture) {
+        ResourceManager::GetInstance().RegisterTexture("stone", texture);
+    }
+}
+```
+
+---
+
 ## 异步加载
 
 ### `LoadTextureAsync()`
@@ -181,8 +256,9 @@ std::future<AsyncTextureResult> LoadTextureAsync(const std::string& name,
 **返回值**: `std::future<AsyncTextureResult>` 对象
 
 **行为**:
-- 如果纹理已缓存，立即返回已缓存的纹理
-- 如果未缓存，在后台线程中加载
+- 如果纹理已缓存，返回一个 `std::future`（deferred）立即提供缓存结果。
+- 如果未缓存，返回的 `future` 会在调用 `get()` 时触发同步加载。由于内部需要在主线程执行 `UploadStagedTexture()`，请确保在拥有 OpenGL 上下文的线程调用 `future.get()`。
+- 在更复杂的场景中推荐使用 `AsyncResourceLoader::LoadTextureAsync()`，该接口已经整合 staged pipeline 与主线程上传。
 
 **示例**:
 ```cpp
@@ -204,7 +280,10 @@ if (result.success) {
 }
 ```
 
-**注意**: 异步加载的纹理需要在主线程（OpenGL 上下文线程）中创建 OpenGL 对象。当前实现是简化版，实际应用中可能需要更复杂的上下文管理。
+**注意**:
+- `future` 使用 `std::launch::deferred`，不会自动启动后台线程。
+- 调用 `future.get()` 时所在的线程必须持有 OpenGL 上下文，否则会触发 `GL_THREAD_CHECK` 断言。
+- 对于真正的后台加载，请优先使用 `AsyncResourceLoader`。
 
 ---
 

@@ -239,6 +239,21 @@ set(RENDER_SOURCES
     src/rendering/geometry_preset.cpp
     src/ecs/sprite_animation_script_registry.cpp
 
+    # Application
+    src/application/app_context.cpp
+    src/application/app_module.cpp
+    src/application/application_host.cpp
+    src/application/event_bus.cpp
+    src/application/module_registry.cpp
+    src/application/modules/core_render_module.cpp
+    src/application/modules/debug_hud_module.cpp
+    src/application/modules/input_module.cpp
+    src/application/modules/ui_runtime_module.cpp
+    src/application/scene_manager.cpp
+    src/application/scene_graph.cpp
+    src/application/scenes/boot_scene.cpp
+    src/application/scene_types.cpp
+
     # Debug
     src/debug/sprite_animation_debugger.cpp
     src/debug/sprite_animation_debug_panel.cpp
@@ -257,6 +272,17 @@ set(RENDER_SOURCES
     src/text/font.cpp
     src/text/text.cpp
     src/text/text_renderer.cpp
+
+    # UI
+    src/ui/uicanvas.cpp
+    src/ui/ui_layout.cpp
+    src/ui/ui_render_commands.cpp
+    src/ui/ui_input_router.cpp
+    src/ui/ui_renderer_bridge.cpp
+    src/ui/ui_widget.cpp
+    src/ui/ui_widget_tree.cpp
+    src/ui/widgets/ui_button.cpp
+    src/ui/widgets/ui_text_field.cpp
 
     # Shaders
     shaders/sprite.vert
@@ -299,6 +325,25 @@ set(RENDER_HEADERS
     include/render/ecs/systems.h
     include/render/ecs/world.h
     include/render/ecs/sprite_animation_script_registry.h
+
+    # Application
+    include/render/application/app_context.h
+    include/render/application/app_module.h
+    include/render/application/application_host.h
+    include/render/application/event_bus.h
+    include/render/application/events/frame_events.h
+    include/render/application/events/input_events.h
+    include/render/application/events/scene_events.h
+    include/render/application/module_registry.h
+    include/render/application/modules/core_render_module.h
+    include/render/application/modules/debug_hud_module.h
+    include/render/application/modules/input_module.h
+    include/render/application/modules/ui_runtime_module.h
+    include/render/application/scene.h
+    include/render/application/scene_manager.h
+    include/render/application/scene_graph.h
+    include/render/application/scene_types.h
+    include/render/application/scenes/boot_scene.h
     
     # Rendering
     include/render/shader.h
@@ -337,6 +382,19 @@ set(RENDER_HEADERS
     include/render/text/font.h
     include/render/text/text.h
     include/render/text/text_renderer.h
+
+    # UI
+    include/render/ui/uicanvas.h
+    include/render/ui/ui_layout.h
+    include/render/ui/ui_render_commands.h
+    include/render/ui/ui_debug_config.h
+    include/render/ui/ui_input_router.h
+    include/render/ui/ui_renderer_bridge.h
+    include/render/ui/ui_types.h
+    include/render/ui/ui_widget.h
+    include/render/ui/ui_widget_tree.h
+    include/render/ui/widgets/ui_button.h
+    include/render/ui/widgets/ui_text_field.h
     
     # Utils
     include/render/logger.h

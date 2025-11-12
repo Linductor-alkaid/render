@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <unordered_set>
+#include <unordered_map>
 
 namespace Render {
 
@@ -313,27 +314,35 @@ std::shared_ptr<TextureLoadTask> AsyncResourceLoader::LoadTextureAsync(
     task->callback = callback;
     
     // 定义加载函数（工作线程）
-    task->loadFunc = [filepath, generateMipmap]() -> Ref<Texture> {
-        Logger::GetInstance().Debug("工作线程：加载纹理数据 " + filepath);
-        
-        // 创建纹理对象（不上传）
-        auto texture = std::make_shared<Texture>();
-        
-        // 加载文件数据（在工作线程，不涉及OpenGL）
-        // 注意：Texture::LoadFromFile内部会调用OpenGL，需要修改
-        // 临时方案：使用TextureLoader但不上传
-        auto loadedTexture = TextureLoader::GetInstance().LoadTexture(filepath, filepath, generateMipmap);
-        
-        return loadedTexture;
+    task->loadFunc = [filepath, generateMipmap]() -> std::unique_ptr<TextureLoader::TextureStagingData> {
+        Logger::GetInstance().Debug("工作线程：解码纹理数据 " + filepath);
+
+        auto staging = std::make_unique<TextureLoader::TextureStagingData>();
+        std::string errorMessage;
+        if (!TextureLoader::GetInstance().DecodeTextureToStaging(
+                filepath,
+                generateMipmap,
+                staging.get(),
+                &errorMessage)) {
+            if (errorMessage.empty()) {
+                errorMessage = "工作线程：纹理解码失败 " + filepath;
+            }
+            throw std::runtime_error(errorMessage);
+        }
+
+        return staging;
     };
     
     // 定义上传函数（主线程）
-    task->uploadFunc = [](Ref<Texture> texture) {
-        if (texture) {
-            GL_THREAD_CHECK();
-            Logger::GetInstance().Debug("主线程：纹理已通过TextureLoader上传");
-            // TextureLoader已经上传，这里不需要额外操作
+    const std::string resolvedName = task->name;
+    task->uploadFunc = [resolvedName, filepath](TextureLoader::TextureStagingData&& staging)
+        -> Ref<Texture> {
+        std::string cacheName = resolvedName.empty() ? filepath : resolvedName;
+        auto texture = TextureLoader::GetInstance().UploadStagedTexture(cacheName, std::move(staging));
+        if (!texture) {
+            throw std::runtime_error("主线程：上传纹理失败 " + cacheName);
         }
+        return texture;
     };
     
     // 提交任务
@@ -406,6 +415,64 @@ std::shared_ptr<ModelLoadTask> AsyncResourceLoader::LoadModelAsync(
                 }
             });
         }
+
+        // ✅ 处理延迟纹理加载（必须在主线程执行）
+        TextureLoader& textureLoader = TextureLoader::GetInstance();
+        std::unordered_map<std::string, Ref<Texture>> textureCache;
+        output.model->ModifyParts([&](std::vector<ModelPart>& parts) {
+            for (auto& part : parts) {
+                if (!part.material || !part.extraData) {
+                    continue;
+                }
+
+                auto& pending = part.extraData->pendingTextureRequests;
+                if (pending.empty()) {
+                    continue;
+                }
+
+                for (const auto& request : pending) {
+                    if (request.filePath.empty()) {
+                        continue;
+                    }
+
+                    const std::string cacheKey = request.textureName.empty()
+                        ? request.filePath
+                        : request.textureName;
+
+                    Ref<Texture> texture;
+                    if (auto cacheIt = textureCache.find(cacheKey); cacheIt != textureCache.end()) {
+                        texture = cacheIt->second;
+                    } else {
+                        try {
+                            texture = textureLoader.LoadTexture(
+                                cacheKey,
+                                request.filePath,
+                                request.generateMipmap);
+                        } catch (const std::exception& e) {
+                            Logger::GetInstance().WarningFormat(
+                                "[AsyncResourceLoader] Failed to load deferred texture '%s': %s",
+                                request.filePath.c_str(),
+                                e.what());
+                        }
+
+                        if (texture) {
+                            textureCache.emplace(cacheKey, texture);
+                        }
+                    }
+
+                    if (texture) {
+                        part.material->SetTexture(request.slotName, texture);
+                    } else {
+                        Logger::GetInstance().WarningFormat(
+                            "[AsyncResourceLoader] Deferred texture unavailable: slot=%s path=%s",
+                            request.slotName.c_str(),
+                            request.filePath.c_str());
+                    }
+                }
+
+                pending.clear();
+            }
+        });
 
         if (options.registerModel || options.registerMeshes || options.registerMaterials) {
             ModelLoader::RegisterResources(

@@ -245,7 +245,7 @@ RenderStateOverrides MakeScreenSpaceOverrides() {
 
 std::vector<RenderLayerDescriptor> CreateDefaultDescriptors() {
     std::vector<RenderLayerDescriptor> descriptors;
-    descriptors.reserve(10);
+    descriptors.reserve(11);
 
     descriptors.push_back(RenderLayerDescriptor{
         Layers::World::Background,
@@ -341,6 +341,18 @@ std::vector<RenderLayerDescriptor> CreateDefaultDescriptors() {
         true,
         0,
         static_cast<uint8_t>(7)
+    });
+
+    descriptors.push_back(RenderLayerDescriptor{
+        Layers::HUD::Overlay,
+        "hud.overlay",
+        810,
+        RenderLayerType::Overlay,
+        LayerSortPolicy::ScreenSpaceStable,
+        MakeScreenSpaceOverrides(),
+        true,
+        200,
+        static_cast<uint8_t>(10)
     });
 
     descriptors.push_back(RenderLayerDescriptor{

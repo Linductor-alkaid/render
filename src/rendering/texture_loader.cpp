@@ -1,13 +1,94 @@
 #include "render/texture_loader.h"
 #include "render/logger.h"
 #include "render/error.h"
+#include "render/gl_thread_checker.h"
 #include <algorithm>
+#include <cstring>
+#include <SDL3_image/SDL_image.h>
+#include <SDL3/SDL.h>
 
 namespace Render {
 
 TextureLoader& TextureLoader::GetInstance() {
     static TextureLoader instance;
     return instance;
+}
+
+bool TextureLoader::DecodeTextureToStaging(const std::string& filepath,
+                                           bool generateMipmap,
+                                           TextureStagingData* outData,
+                                           std::string* errorMessage) {
+    if (!outData) {
+        if (errorMessage) {
+            *errorMessage = "TextureLoader::DecodeTextureToStaging: outData 为空";
+        }
+        return false;
+    }
+
+    SDL_Surface* surface = IMG_Load(filepath.c_str());
+    if (!surface) {
+        std::string message = "TextureLoader: 无法读取纹理文件: " + filepath +
+                              " - " + std::string(SDL_GetError());
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::FileOpenFailed, message));
+        if (errorMessage) {
+            *errorMessage = message;
+        }
+        return false;
+    }
+
+    SDL_Surface* convertedSurface = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+    if (!convertedSurface) {
+        std::string message = "TextureLoader: 转换纹理为 RGBA32 失败: " + filepath +
+                              " - " + std::string(SDL_GetError());
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceInvalidFormat, message));
+        SDL_DestroySurface(surface);
+        if (errorMessage) {
+            *errorMessage = message;
+        }
+        return false;
+    }
+
+    if (convertedSurface != surface) {
+        SDL_DestroySurface(surface);
+        surface = convertedSurface;
+    }
+
+    const int width = surface->w;
+    const int height = surface->h;
+    const size_t bytesPerPixel = static_cast<size_t>(SDL_BYTESPERPIXEL(surface->format));
+    const size_t rowBytes = static_cast<size_t>(width) * bytesPerPixel;
+    const size_t totalBytes = static_cast<size_t>(height) * rowBytes;
+
+    if (width <= 0 || height <= 0 || bytesPerPixel == 0) {
+        std::string message = "TextureLoader: 非法纹理尺寸或格式: " + filepath;
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument, message));
+        SDL_DestroySurface(surface);
+        if (errorMessage) {
+            *errorMessage = message;
+        }
+        return false;
+    }
+
+    outData->pixels.resize(totalBytes);
+    outData->width = width;
+    outData->height = height;
+    outData->format = TextureFormat::RGBA;
+    outData->generateMipmap = generateMipmap;
+
+    const std::uint8_t* src = static_cast<const std::uint8_t*>(surface->pixels);
+    std::uint8_t* dst = outData->pixels.data();
+    const size_t pitch = static_cast<size_t>(surface->pitch);
+
+    if (pitch == rowBytes) {
+        std::memcpy(dst, src, totalBytes);
+    } else {
+        for (int y = 0; y < height; ++y) {
+            std::memcpy(dst + rowBytes * y, src + pitch * y, rowBytes);
+        }
+    }
+
+    SDL_DestroySurface(surface);
+    return true;
 }
 
 TexturePtr TextureLoader::LoadTexture(const std::string& name,
@@ -24,31 +105,67 @@ TexturePtr TextureLoader::LoadTexture(const std::string& name,
         }
     }
     
-    // 在锁外加载纹理（避免长时间持锁）
-    Logger::GetInstance().Info("加载新纹理: " + name + " (路径: " + filepath + ")");
-    
-    auto texture = LoadTextureInternal(filepath, generateMipmap);
-    if (!texture) {
-        HANDLE_ERROR(RENDER_ERROR(ErrorCode::TextureUploadFailed, 
-                                 "TextureLoader: 加载纹理失败: " + name));
+    // 在锁外加载纹理数据（无 OpenGL）
+    Logger::GetInstance().Info("加载新纹理数据: " + name + " (路径: " + filepath + ")");
+
+    TextureStagingData staging;
+    std::string errorMessage;
+    if (!DecodeTextureToStaging(filepath, generateMipmap, &staging, &errorMessage)) {
+        if (errorMessage.empty()) {
+            errorMessage = "TextureLoader: 加载纹理失败: " + name;
+        }
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::TextureUploadFailed, errorMessage));
         return nullptr;
     }
-    
-    // 第二次检查并添加到缓存（双重检查锁定模式）
-    {
+
+    return UploadStagedTexture(name, std::move(staging));
+}
+
+TexturePtr TextureLoader::UploadStagedTexture(const std::string& name,
+                                              TextureStagingData&& stagingData) {
+    if (!stagingData.IsValid()) {
+        HANDLE_ERROR(RENDER_ERROR(
+            ErrorCode::InvalidArgument,
+            "TextureLoader: 上传失败，staging 数据无效"));
+        return nullptr;
+    }
+
+    // 快速检查是否已有缓存
+    if (!name.empty()) {
         std::lock_guard<std::mutex> lock(m_mutex);
-        
-        // 再次检查是否已被其他线程添加
         auto it = m_textures.find(name);
         if (it != m_textures.end()) {
-            Logger::GetInstance().Info("纹理 '" + name + "' 已被其他线程加载");
+            Logger::GetInstance().Info("纹理 '" + name + "' 已缓存，跳过上传");
             return it->second;
         }
-        
-        m_textures[name] = texture;
-        Logger::GetInstance().Info("纹理 '" + name + "' 缓存成功");
     }
-    
+
+    GL_THREAD_CHECK();
+
+    auto texture = std::make_shared<Texture>();
+    if (!texture->CreateFromData(
+            stagingData.pixels.data(),
+            stagingData.width,
+            stagingData.height,
+            stagingData.format,
+            stagingData.generateMipmap)) {
+        HANDLE_ERROR(RENDER_ERROR(
+            ErrorCode::TextureUploadFailed,
+            "TextureLoader: 纹理上传失败"));
+        return nullptr;
+    }
+
+    if (!name.empty()) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto [it, inserted] = m_textures.emplace(name, texture);
+        if (!inserted) {
+            Logger::GetInstance().Info("纹理 '" + name + "' 在上传过程中被其他线程缓存");
+            return it->second;
+        }
+
+        Logger::GetInstance().Info("纹理 '" + name + "' 上传并加入缓存");
+    }
+
     return texture;
 }
 
@@ -118,41 +235,21 @@ std::future<AsyncTextureResult> TextureLoader::LoadTextureAsync(const std::strin
         }
     }
     
-    // 异步加载
-    Logger::GetInstance().Info("开始异步加载纹理: " + name + " (路径: " + filepath + ")");
+    Logger::GetInstance().Info("开始延迟加载纹理（在拥有 OpenGL 上下文的线程获取结果）: " +
+                               name + " (路径: " + filepath + ")");
     
-    return std::async(std::launch::async, [this, name, filepath, generateMipmap]() {
+    return std::async(std::launch::deferred, [this, name, filepath, generateMipmap]() {
         AsyncTextureResult result;
-        
-        // 加载纹理
-        auto texture = LoadTextureInternal(filepath, generateMipmap);
-        
+        auto texture = LoadTexture(name, filepath, generateMipmap);
         if (texture) {
-            // 添加到缓存（需要加锁）
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                
-                // 再次检查是否已被其他线程添加
-                auto it = m_textures.find(name);
-                if (it != m_textures.end()) {
-                    Logger::GetInstance().Info("纹理 '" + name + "' 已被其他线程加载");
-                    result.texture = it->second;
-                } else {
-                    m_textures[name] = texture;
-                    result.texture = texture;
-                    Logger::GetInstance().Info("纹理 '" + name + "' 异步加载完成并缓存");
-                }
-            }
-            
             result.success = true;
-            result.error = "";
+            result.texture = texture;
+            result.error.clear();
         } else {
             result.success = false;
             result.texture = nullptr;
             result.error = "无法加载纹理文件: " + filepath;
-            Logger::GetInstance().Error("异步加载纹理失败: " + name);
         }
-        
         return result;
     });
 }
@@ -329,13 +426,12 @@ size_t TextureLoader::GetTotalMemoryUsage() const {
 }
 
 TexturePtr TextureLoader::LoadTextureInternal(const std::string& filepath, bool generateMipmap) {
-    auto texture = std::make_shared<Texture>();
-    
-    if (!texture->LoadFromFile(filepath, generateMipmap)) {
+    TextureStagingData staging;
+    if (!DecodeTextureToStaging(filepath, generateMipmap, &staging, nullptr)) {
         return nullptr;
     }
-    
-    return texture;
+
+    return UploadStagedTexture("", std::move(staging));
 }
 
 } // namespace Render

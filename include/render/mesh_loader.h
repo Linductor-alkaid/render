@@ -73,6 +73,16 @@ struct MeshSkinningData {
 };
 
 /**
+ * @brief 材质纹理请求（用于延迟加载）
+ */
+struct MaterialTextureRequest {
+    std::string slotName;      ///< 在材质中的槽位名称（如 diffuseMap）
+    std::string textureName;   ///< 注册到 TextureLoader / ResourceManager 的纹理名称
+    std::string filePath;      ///< 纹理文件路径
+    bool generateMipmap = true;///< 是否生成 mipmap
+};
+
+/**
  * @brief 额外导入数据（多 UV/颜色通道、蒙皮信息等）
  */
 struct MeshExtraData {
@@ -85,6 +95,7 @@ struct MeshExtraData {
     std::vector<std::vector<Vector2>> uvChannels;   ///< 多套 UV 坐标
     std::vector<std::vector<Color>> colorChannels;  ///< 多套颜色数据
     MeshSkinningData skinning;                      ///< 蒙皮数据
+    std::vector<MaterialTextureRequest> pendingTextureRequests; ///< 延迟加载的纹理请求
 };
 
 /**

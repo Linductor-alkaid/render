@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <deque>
 #include <unordered_map>
 
@@ -92,6 +93,28 @@ public:
      * @return 光栅化结果（纹理 + 尺寸），失败时 texture 为空
      */
     [[nodiscard]] RasterizedText RenderText(const std::string& text, int wrapWidth = 0) const;
+
+    /**
+     * @brief 测量 UTF-8 文本的宽度
+     * @param text UTF-8 文本视图
+     * @param maxWidth 限制宽度（像素），传入 INT_MAX 表示不限制
+     * @param measuredWidth 实际测量宽度
+     * @param measuredLength 实际测量的字符数量（字节数）
+     * @return 成功返回 true
+     */
+    bool MeasureString(std::string_view text,
+                       int maxWidth,
+                       int& measuredWidth,
+                       size_t& measuredLength) const;
+
+    /**
+     * @brief 测量 UTF-8 文本的宽度（原始指针版本，避免复制）
+     */
+    bool MeasureString(const char* text,
+                       size_t length,
+                       int maxWidth,
+                       int& measuredWidth,
+                       size_t& measuredLength) const;
 
 private:
     [[nodiscard]] RasterizedText RenderInternal(const std::string& text, int wrapWidth) const;

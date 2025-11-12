@@ -55,6 +55,7 @@ struct ModelPart {
 - `localTransform`：Assimp 等导入器提供的节点局部变换，可与 `Transform` 组件组合。
 - `localBounds`：部件局部空间包围盒，`Model` 会在需要时转换到世界空间。
 - `extraData`：包含多 UV 通道、顶点颜色、骨骼权重、原始 Assimp 索引等导入信息；为空表示无额外数据。
+  - `enableUvChannelScaling`：默认为 `false`，仅在明确希望把附加 UV 通道用于材质缩放时设为 `true`；`ModelRenderable` 会据此决定是否写入 `uExtraUVSetScales`。
 - `HasSkinning()` / `GetSkinningData()`：便于快速判断模型是否携带蒙皮数据。
 
 ### ModelStatistics

@@ -6,9 +6,11 @@
 
 ## 概述
 
-`AsyncResourceLoader` 是一个单例类，提供后台线程异步资源加载功能。它支持在工作线程加载文件和解析数据，在主线程执行GPU上传，避免阻塞渲染循环。
+`AsyncResourceLoader` 是一个单例类，提供后台线程异步资源加载功能。它支持在工作线程加载文件和解析数据，在主线程执行GPU上传，避免阻塞渲染循环。  
+自 v0.13 起，纹理加载采用 **CPU 解码 + GPU 上传分离** 的两阶段模型：工作线程仅将纹理解码为 `TextureLoader::TextureStagingData`，主线程在 `ProcessCompletedTasks()` 中消耗 staging 数据并调用 `UploadStagedTexture()` 创建真正的 OpenGL 资源。  
+自 v0.14 起，模型材质的纹理也改为 **延迟绑定**：解析阶段仅记录 `MaterialTextureRequest`，所有纹理加载与 `Material::SetTexture()` 操作统一在主线程的 `ProcessCompletedTasks()` 内完成，彻底杜绝后台线程触碰 OpenGL。
 
-**版本**: v0.12.0  
+**版本**: v0.14.0  
 **头文件**: `<render/async_resource_loader.h>`  
 **命名空间**: `Render`
 
@@ -294,16 +296,22 @@ std::shared_ptr<TextureLoadTask> LoadTextureAsync(
 );
 ```
 
-**说明**: 异步加载纹理文件
+**说明**: 异步加载纹理文件。  
+工作线程只负责调用 `TextureLoader::DecodeTextureToStaging()` 解码像素数据，不会触发任何 OpenGL 调用；主线程在 `ProcessCompletedTasks()` 中把 staging 数据交给 `TextureLoader::UploadStagedTexture()` 完成 GPU 上传与缓存登记。
 
 **参数**:
 - `filepath`: 纹理文件路径 (支持 .png, .jpg, .bmp 等)
-- `name`: 资源名称
-- `generateMipmap`: 是否生成mipmap
-- `callback`: 完成回调
+- `name`: 资源名称（为空时使用 `filepath` 作为缓存键）
+- `generateMipmap`: 是否在上传阶段生成 mipmap
+- `callback`: 完成回调（在主线程执行，保证纹理已上传、可安全注册到 `ResourceManager`）
 - `priority`: 优先级
 
-**返回值**: 任务句柄
+**返回值**: 任务句柄。`task->result` 仅在上传完成后可用。
+
+**使用约束**:
+- **必须** 在拥有 OpenGL 上下文的线程周期性调用 `ProcessCompletedTasks()`，否则 staging 数据不会被消费。
+- 回调与结果访问发生在主线程，确保可以直接绑定纹理或更新材质。
+- 如果需要手动上传，请确保调用 `ProcessCompletedTasks()` 前，渲染上下文已准备好。
 
 **示例**:
 
@@ -339,6 +347,7 @@ std::shared_ptr<ModelLoadTask> LoadModelAsync(
 **关键点**:
 - 工作线程中默认禁用 GPU 上传与资源注册，解析结果存放在 `ModelLoadOutput`。  
 - 主线程在 `ProcessCompletedTasks()` 阶段根据 `options.autoUpload` 对所有 `ModelPart` 触发 `mesh->Upload()`。  
+- 如果解析阶段发现材质纹理，工作线程只会生成 `MaterialTextureRequest`；主线程在 `ProcessCompletedTasks()` 内统一调用 `TextureLoader::LoadTexture()` 并执行 `Material::SetTexture()`，保证 OpenGL 调用只发生在拥有上下文的线程。  
 - 根据 `options.registerModel / registerMeshes / registerMaterials` 决定是否调用 `ModelLoader::RegisterResources()`，并更新依赖关系。  
 - 回调得到 `ModelLoadResult`，可直接访问 `ModelPtr` 以及实际注册的资源名称列表。
 
@@ -380,7 +389,11 @@ loader.LoadModelAsync(
 size_t ProcessCompletedTasks(size_t maxTasks = 10);
 ```
 
-**说明**: 处理已完成的加载任务（执行GPU上传）
+**说明**: 处理已完成的加载任务（执行GPU上传）。函数会先调用 `GL_THREAD_CHECK()` 确认运行在拥有 OpenGL 上下文的线程，然后依次完成以下工作：
+
+- 对纹理任务，消费 staging 数据并调用 `TextureLoader::UploadStagedTexture()`；
+- 对模型任务，批量上传所有 `Mesh`，并处理解析阶段收集的 `MaterialTextureRequest`；
+- 分发完成回调，确保回调获得的资源已经完全可用。
 
 **参数**:
 - `maxTasks`: 本帧最多处理的任务数（默认10）

@@ -7,6 +7,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <algorithm>
+#include <limits>
 #include <mutex>
 
 namespace Render {
@@ -236,6 +237,39 @@ RasterizedText Font::RenderInternal(const std::string& text, int wrapWidth) cons
     result.texture = std::move(texture);
     result.size = textureSize;
     return result;
+}
+
+bool Font::MeasureString(const char* text,
+                         size_t length,
+                         int maxWidth,
+                         int& measuredWidth,
+                         size_t& measuredLength) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_font) {
+        Logger::GetInstance().Warning("[Font] MeasureString called on invalid font");
+        return false;
+    }
+    const char* source = text ? text : "";
+    if (maxWidth <= 0) {
+        maxWidth = std::numeric_limits<int>::max();
+    }
+    if (!TTF_MeasureString(m_font,
+                           source,
+                           length,
+                           maxWidth,
+                           &measuredWidth,
+                           &measuredLength)) {
+        Logger::GetInstance().WarningFormat("[Font] Failed to measure text: %s", SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+bool Font::MeasureString(std::string_view text,
+                         int maxWidth,
+                         int& measuredWidth,
+                         size_t& measuredLength) const {
+    return MeasureString(text.data(), text.size(), maxWidth, measuredWidth, measuredLength);
 }
 
 Ref<Texture> Font::CreateTextureFromSurface(SDL_Surface* surface, Vector2& outSize) const {

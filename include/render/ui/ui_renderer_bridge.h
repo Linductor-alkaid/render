@@ -1,0 +1,80 @@
+#pragma once
+
+#include <cstdint>
+
+#include "render/types.h"
+#include "render/ui/ui_render_commands.h"
+#include "render/ui/ui_debug_config.h"
+#include "render/sprite/sprite_atlas.h"
+
+namespace Render::Application {
+struct AppContext;
+struct FrameUpdateArgs;
+} // namespace Render::Application
+
+namespace Render {
+class SpriteRenderable;
+class SpriteAtlas;
+class Font;
+} // namespace Render
+
+namespace Render::UI {
+
+class UICanvas;
+class UIWidget;
+class UIWidgetTree;
+
+class UIRendererBridge {
+public:
+    UIRendererBridge() = default;
+    ~UIRendererBridge() = default;
+
+    void Initialize(Render::Application::AppContext& ctx);
+    void Shutdown(Render::Application::AppContext& ctx);
+
+    void SetDebugConfig(const UIDebugConfig* config) { m_debugConfig = config; }
+
+    void PrepareFrame(const Render::Application::FrameUpdateArgs& frame,
+                      UICanvas& canvas,
+                      UIWidgetTree& tree,
+                      Render::Application::AppContext& ctx);
+
+    void Flush(const Render::Application::FrameUpdateArgs& frame,
+               UICanvas& canvas,
+               UIWidgetTree& tree,
+               Render::Application::AppContext& ctx);
+
+private:
+    void UploadPerFrameUniforms(const Render::Application::FrameUpdateArgs& frame,
+                                UICanvas& canvas,
+                                Render::Application::AppContext& ctx);
+
+    void EnsureAtlas(Render::Application::AppContext& ctx);
+    void EnsureTextResources(Render::Application::AppContext& ctx);
+    void EnsureDebugTexture();
+    void EnsureSolidTexture();
+    void DrawDebugRect(const UIDebugRectCommand& cmd,
+                       const Matrix4& projection,
+                       Render::Application::AppContext& ctx);
+    void BuildCommands(UICanvas& canvas,
+                       UIWidgetTree& tree,
+                       Render::Application::AppContext& ctx);
+
+    bool m_initialized = false;
+    bool m_loggedMissingAtlas = false;
+    bool m_loggedMissingFont = false;
+    bool m_debugTextureValid = false;
+    SpriteAtlasPtr m_uiAtlas;
+    Ref<Render::Font> m_defaultFont;
+    bool m_loggedDebugRectShader = false;
+    Ref<Render::Texture> m_debugTexture;
+    Ref<Render::Texture> m_solidTexture;
+    bool m_loggedSolidTexture = false;
+    const UIDebugConfig* m_debugConfig = nullptr;
+
+    UIRenderCommandBuffer m_commandBuffer;
+};
+
+} // namespace Render::UI
+
+

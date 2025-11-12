@@ -33,7 +33,6 @@
 
 #include "render/renderer.h"
 #include "render/shader_cache.h"
-#include "render/mesh_loader.h"
 #include "render/material.h"
 #include "render/logger.h"
 #include "render/resource_manager.h"
@@ -252,8 +251,6 @@ int main(int argc, char* argv[]) {
         "../models/miku/v4c5.0.pmx"
     };
     
-    std::vector<std::string> meshNames;
-    std::vector<std::string> materialNames;
     std::string selectedModelPath;
     std::string textureBasePath;
     
@@ -285,9 +282,15 @@ int main(int argc, char* argv[]) {
         std::string modelPath;
         std::string texturePath;
         Ref<Shader> shader;
-        std::vector<MeshWithMaterial> parts;
+        ModelPtr model;
+        std::shared_ptr<ModelLoadTask> task;
+        std::vector<std::string> meshNames;
+        std::vector<std::string> materialNames;
         bool loadStarted = false;
+        bool resourcesReady = false;
         bool loadComplete = false;
+        bool loadFailed = false;
+        std::string errorMessage;
         size_t partsLoaded = 0;
     };
     auto loadState = std::make_shared<ProgressiveLoadState>();
@@ -446,160 +449,220 @@ int main(int argc, char* argv[]) {
     bool entitiesCreated = false;
     
     while (running) {
-        // ==================== 渐进式加载模型（在主线程中分帧加载） ====================
-        if (!entitiesCreated && !loadState->loadComplete) {
-            // 开始加载
+        // ==================== 处理异步任务 ====================
+        size_t processedTasks = asyncLoader.ProcessCompletedTasks(20);
+        if (processedTasks > 0) {
+            Logger::GetInstance().DebugFormat("本帧处理异步任务: %zu", processedTasks);
+        }
+        
+        // ==================== 异步加载模型并渐进式创建实体 ====================
+        if (!entitiesCreated) {
             if (!loadState->loadStarted) {
                 Logger::GetInstance().Info("========================================");
-                Logger::GetInstance().Info("开始渐进式加载模型...");
+                Logger::GetInstance().Info("开始异步加载模型...");
                 Logger::GetInstance().Info("========================================");
                 loadState->loadStarted = true;
                 
-                // 加载模型数据（在主线程，一次性加载）
-                try {
-                    loadState->parts = MeshLoader::LoadFromFileWithMaterials(
-                        loadState->modelPath, 
-                        loadState->texturePath, 
-                        true, 
-                        loadState->shader);
-                    
-                    if (!loadState->parts.empty()) {
-                        Logger::GetInstance().InfoFormat("✓ 模型加载成功，共 %zu 个部件", loadState->parts.size());
-                        Logger::GetInstance().Info("开始创建实体...");
-                    } else {
-                        Logger::GetInstance().Error("模型加载失败");
-                        running = false;
-                    }
-                } catch (const std::exception& e) {
-                    Logger::GetInstance().ErrorFormat("加载模型异常: %s", e.what());
-                    running = false;
+                ModelLoadOptions options;
+                options.flipUVs = true;
+                options.autoUpload = true;
+                options.basePath = loadState->texturePath;
+                options.resourcePrefix = "async_miku";
+                options.shaderOverride = loadState->shader;
+                options.registerModel = true;
+                options.registerMeshes = true;
+                options.registerMaterials = true;
+                options.updateDependencyGraph = true;
+                
+                auto weakState = std::weak_ptr<ProgressiveLoadState>(loadState);
+                loadState->task = asyncLoader.LoadModelAsync(
+                    loadState->modelPath,
+                    "async_miku_model",
+                    options,
+                    [weakState](const ModelLoadResult& result) {
+                        if (auto state = weakState.lock()) {
+                            if (result.IsSuccess()) {
+                                state->model = result.resource;
+                                state->meshNames = result.meshResourceNames;
+                                state->materialNames = result.materialResourceNames;
+                                
+                                if (state->meshNames.empty() && state->model) {
+                                    Logger::GetInstance().Warning("异步加载未返回资源名称，执行手动注册");
+                                    auto& resMgr = ResourceManager::GetInstance();
+                                    size_t index = 0;
+                                    state->model->AccessParts([&](const std::vector<ModelPart>& parts) {
+                                        state->meshNames.reserve(parts.size());
+                                        state->materialNames.reserve(parts.size());
+                                        for (const auto& part : parts) {
+                                            std::string meshName = "async_miku_mesh_" + std::to_string(index);
+                                            std::string materialName = "async_miku_material_" + std::to_string(index);
+                                            
+                                            if (part.mesh) {
+                                                if (!resMgr.HasMesh(meshName)) {
+                                                    resMgr.RegisterMesh(meshName, part.mesh);
+                                                }
+                                                state->meshNames.push_back(meshName);
+                                            } else {
+                                                state->meshNames.push_back("");
+                                            }
+                                            
+                                            if (part.material) {
+                                                if (!resMgr.HasMaterial(materialName)) {
+                                                    resMgr.RegisterMaterial(materialName, part.material);
+                                                }
+                                                state->materialNames.push_back(materialName);
+                                            } else {
+                                                state->materialNames.push_back("");
+                                            }
+                                            ++index;
+                                        }
+                                    });
+                                }
+                                
+                                state->resourcesReady = true;
+                                state->partsLoaded = 0;
+                                
+                                Logger::GetInstance().InfoFormat("✓ 模型异步加载完成，共 %zu 个部件", 
+                                    state->meshNames.size());
+                            } else {
+                                state->loadFailed = true;
+                                state->errorMessage = result.errorMessage;
+                                Logger::GetInstance().ErrorFormat("异步模型加载失败: %s", 
+                                    result.errorMessage.c_str());
+                            }
+                        }
+                    },
+                    50.0f);
+                
+                if (!loadState->task) {
+                    loadState->loadFailed = true;
+                    loadState->errorMessage = "无法提交异步模型加载任务";
+                    Logger::GetInstance().Error("无法提交异步模型加载任务");
+                } else {
+                    Logger::GetInstance().InfoFormat("已提交异步模型加载任务: %s", 
+                        loadState->modelPath.c_str());
                 }
             }
             
-            // 注册资源和创建实体（在loadStarted后）
-            if (loadState->loadStarted && !loadState->parts.empty()) {
-                // 注册资源（一次性）
-                if (meshNames.empty()) {
-                    for (size_t i = 0; i < loadState->parts.size(); ++i) {
-                        auto& part = loadState->parts[i];
-                        std::string meshName = "miku_mesh_" + std::to_string(i);
-                        std::string matName = "miku_material_" + std::to_string(i);
-                        
-                        if (part.mesh) {
-                            resourceManager.RegisterMesh(meshName, part.mesh);
-                            meshNames.push_back(meshName);
+            if (loadState->loadFailed) {
+                Logger::GetInstance().ErrorFormat("模型加载失败，终止测试: %s",
+                    loadState->errorMessage.empty() ? "未知错误" : loadState->errorMessage.c_str());
+                running = false;
+            }
+            
+            if (loadState->resourcesReady && !loadState->loadComplete && running) {
+                if (!loadState->model) {
+                    Logger::GetInstance().Error("模型指针为空，无法创建实体");
+                    running = false;
+                }
+                
+                const size_t partCount = loadState->meshNames.size();
+                if (running && (partCount == 0 || loadState->materialNames.size() != partCount)) {
+                    Logger::GetInstance().Error("异步加载结果缺少资源名称，无法创建实体");
+                    running = false;
+                }
+                
+                if (running) {
+                    const size_t mikuCount = 100;
+                    const size_t partsPerFrame = 10;
+                    const size_t totalParts = partCount * mikuCount;
+                    
+                    size_t startIdx = loadState->partsLoaded;
+                    size_t endIdx = std::min(startIdx + partsPerFrame, totalParts);
+                    
+                    // 存储每个miku的位置和旋转（避免重复计算）
+                    static std::vector<Vector3> mikuPositions(mikuCount);
+                    static std::vector<float> mikuRotations(mikuCount);
+                    static bool positionsInitialized = false;
+                    
+                    if (!positionsInitialized) {
+                        for (size_t i = 0; i < mikuCount; ++i) {
+                            size_t layer = i / 20;
+                            size_t posInLayer = i % 20;
+                            float angle = (posInLayer * 360.0f / 20) * 3.14159f / 180.0f;
+                            float radius = 10.0f + layer * 15.0f + (rand() % 10);
+                            float x = radius * std::cos(angle) + (rand() % 6 - 3);
+                            float z = radius * std::sin(angle) + (rand() % 6 - 3);
+                            float y = (rand() % 5) - 2.0f;
+                            
+                            mikuPositions[i] = Vector3(x, y, z);
+                            mikuRotations[i] = (rand() % 360) * 3.14159f / 180.0f;
                         }
-                        if (part.material) {
-                            resourceManager.RegisterMaterial(matName, part.material);
-                            materialNames.push_back(matName);
-                        }
+                        positionsInitialized = true;
+                        Logger::GetInstance().Info("✓ 已初始化100个Miku的随机位置和旋转");
                     }
-                    Logger::GetInstance().InfoFormat("✓ 资源注册完成，共 %zu 个部件", meshNames.size());
-                }
-                
-                // 渐进式创建多个Miku实例（大规模压力测试）
-                const size_t mikuCount = 100;  // 创建100个Miku！
-                const size_t partsPerFrame = 10;  // 每帧创建10个部件（加快速度）
-                size_t totalParts = loadState->parts.size() * mikuCount;
-                
-                size_t startIdx = loadState->partsLoaded;
-                size_t endIdx = std::min(startIdx + partsPerFrame, totalParts);
-                
-                // 存储每个miku的位置和旋转（避免重复计算）
-                static std::vector<Vector3> mikuPositions(mikuCount);
-                static std::vector<float> mikuRotations(mikuCount);
-                static bool positionsInitialized = false;
-                
-                if (!positionsInitialized) {
-                    for (size_t i = 0; i < mikuCount; ++i) {
-                        // 随机位置（多层圆形排列 + 随机偏移）
-                        size_t layer = i / 20;  // 每层20个
-                        size_t posInLayer = i % 20;
-                        float angle = (posInLayer * 360.0f / 20) * 3.14159f / 180.0f;
-                        float radius = 10.0f + layer * 15.0f + (rand() % 10);  // 多层，半径递增
-                        float x = radius * std::cos(angle) + (rand() % 6 - 3);
-                        float z = radius * std::sin(angle) + (rand() % 6 - 3);
-                        float y = (rand() % 5) - 2.0f;  // 轻微高度变化
+                    
+                    auto createEntityForPart = [&](size_t globalIdx) {
+                        size_t mikuIdx = globalIdx / partCount;
+                        size_t partIdx = globalIdx % partCount;
                         
-                        mikuPositions[i] = Vector3(x, y, z);
-                        mikuRotations[i] = (rand() % 360) * 3.14159f / 180.0f;
-                    }
-                    positionsInitialized = true;
-                    Logger::GetInstance().Info("✓ 已初始化100个Miku的随机位置和旋转");
-                }
-                
-                for (size_t idx = startIdx; idx < endIdx; ++idx) {
-                    size_t mikuIdx = idx / loadState->parts.size();  // 第几个Miku
-                    size_t partIdx = idx % loadState->parts.size();  // 第几个部件
+                        Vector3 position = mikuPositions[mikuIdx];
+                        float rotY = mikuRotations[mikuIdx];
+                        
+                        std::string entityName = "Miku_" + std::to_string(mikuIdx) + "_Part_" + std::to_string(partIdx);
+                        EntityID mikuPart = world->CreateEntity({
+                            .name = entityName,
+                            .active = true,
+                            .tags = {"miku", "model"}
+                        });
+                        
+                        world->AddComponent<TransformComponent>(mikuPart, TransformComponent());
+                        auto& transform = world->GetComponent<TransformComponent>(mikuPart);
+                        transform.SetPosition(position);
+                        transform.SetRotation(MathUtils::FromEulerDegrees(0, rotY * 180.0f / 3.14159f, 0));
+                        transform.SetScale(0.08f);
+                        
+                        MeshRenderComponent meshComp;
+                        meshComp.meshName = loadState->meshNames[partIdx];
+                        meshComp.materialName = loadState->materialNames[partIdx];
+                        meshComp.mesh = resourceManager.GetMesh(meshComp.meshName);
+                        meshComp.material = resourceManager.GetMaterial(meshComp.materialName);
+                        meshComp.resourcesLoaded = true;
+                        meshComp.visible = true;
+                        meshComp.castShadows = true;
+                        meshComp.receiveShadows = true;
+                        world->AddComponent(mikuPart, meshComp);
+                    };
                     
-                    // 使用同一个miku的相同位置和旋转（所有部件在一起）
-                    Vector3 position = mikuPositions[mikuIdx];
-                    float rotY = mikuRotations[mikuIdx];
-                    
-                    // 创建实体
-                    std::string entityName = "Miku_" + std::to_string(mikuIdx) + "_Part_" + std::to_string(partIdx);
-                    EntityID mikuPart = world->CreateEntity({
-                        .name = entityName,
-                        .active = true,
-                        .tags = {"miku", "model"}
-                    });
-                    
-                    // 添加Transform组件（所有部件共享相同的位置和旋转）
-                    world->AddComponent<TransformComponent>(mikuPart, TransformComponent());
-                    auto& transform = world->GetComponent<TransformComponent>(mikuPart);
-                    transform.SetPosition(position);  // 相同位置
-                    transform.SetRotation(MathUtils::FromEulerDegrees(0, rotY * 180.0f / 3.14159f, 0));  // 相同旋转
-                    transform.SetScale(0.08f);  // 相同缩放
-                    
-                    // 添加MeshRender组件
-                    MeshRenderComponent meshComp;
-                    meshComp.meshName = meshNames[partIdx];
-                    meshComp.materialName = materialNames[partIdx];
-                    meshComp.mesh = resourceManager.GetMesh(meshNames[partIdx]);
-                    meshComp.material = resourceManager.GetMaterial(materialNames[partIdx]);
-                    meshComp.resourcesLoaded = true;
-                    meshComp.visible = true;
-                    meshComp.castShadows = true;
-                    meshComp.receiveShadows = true;
-                    world->AddComponent(mikuPart, meshComp);
-                    
-                    loadState->partsLoaded++;
-                }
-                
-                // 显示进度
-                Logger::GetInstance().InfoFormat("  加载进度: %zu / %zu (%.1f%%) - 创建 %zu 个Miku", 
-                    loadState->partsLoaded, totalParts,
-                    (100.0f * loadState->partsLoaded) / totalParts, mikuCount);
-                
-                // 检查是否全部加载完成
-                if (loadState->partsLoaded >= totalParts) {
-                    loadState->loadComplete = true;
-                    entitiesCreated = true;
-                    Logger::GetInstance().Info("========================================");
-                    Logger::GetInstance().InfoFormat("✓ 压力测试场景创建完成（%zu 个Miku，共 %zu 个实体）", 
-                        mikuCount, loadState->partsLoaded);
-                    
-                    // 输出调试信息
-                    auto camEntities = world->Query<CameraComponent, TransformComponent>();
-                    if (!camEntities.empty()) {
-                        auto& camTransform = world->GetComponent<TransformComponent>(camEntities[0]);
-                        Vector3 camPos = camTransform.GetPosition();
-                        Logger::GetInstance().InfoFormat("[调试] 相机位置: (%.1f, %.1f, %.1f)", 
-                            camPos.x(), camPos.y(), camPos.z());
+                    for (size_t idx = startIdx; idx < endIdx; ++idx) {
+                        createEntityForPart(idx);
+                        loadState->partsLoaded++;
                     }
                     
-                    auto lightEntities = world->Query<LightComponent, TransformComponent>();
-                    if (!lightEntities.empty()) {
-                        auto& lightTrans = world->GetComponent<TransformComponent>(lightEntities[0]);
-                        Vector3 lightPos = lightTrans.GetPosition();
-                        Logger::GetInstance().InfoFormat("[调试] 光源位置: (%.1f, %.1f, %.1f)", 
-                            lightPos.x(), lightPos.y(), lightPos.z());
-                    }
+                    Logger::GetInstance().InfoFormat("  创建进度: %zu / %zu (%.1f%%) - 实例 %zu",
+                        loadState->partsLoaded,
+                        totalParts,
+                        totalParts > 0 ? (100.0f * loadState->partsLoaded) / totalParts : 0.0f,
+                        mikuCount);
                     
-                    Logger::GetInstance().Info("========================================");
+                    if (loadState->partsLoaded >= totalParts) {
+                        loadState->loadComplete = true;
+                        entitiesCreated = true;
+                        Logger::GetInstance().Info("========================================");
+                        Logger::GetInstance().InfoFormat("✓ 压力测试场景创建完成（%zu 个Miku，共 %zu 个实体）", 
+                            mikuCount, loadState->partsLoaded);
+                        
+                        auto camEntities = world->Query<CameraComponent, TransformComponent>();
+                        if (!camEntities.empty()) {
+                            auto& camTransform = world->GetComponent<TransformComponent>(camEntities[0]);
+                            Vector3 camPos = camTransform.GetPosition();
+                            Logger::GetInstance().InfoFormat("[调试] 相机位置: (%.1f, %.1f, %.1f)", 
+                                camPos.x(), camPos.y(), camPos.z());
+                        }
+                        
+                        auto lightEntities = world->Query<LightComponent, TransformComponent>();
+                        if (!lightEntities.empty()) {
+                            auto& lightTrans = world->GetComponent<TransformComponent>(lightEntities[0]);
+                            Vector3 lightPos = lightTrans.GetPosition();
+                            Logger::GetInstance().InfoFormat("[调试] 光源位置: (%.1f, %.1f, %.1f)", 
+                                lightPos.x(), lightPos.y(), lightPos.z());
+                        }
+                        
+                        Logger::GetInstance().Info("========================================");
+                    }
                 }
-            }  // 结束 if (loadState->loadStarted && !loadState->parts.empty())
-        }  // 结束 if (!entitiesCreated && !loadState->loadComplete)
+            }
+        }
         
         // ==================== 时间计算 ====================
         uint64_t currentTime = SDL_GetPerformanceCounter();

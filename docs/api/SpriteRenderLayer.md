@@ -47,7 +47,8 @@ public:
 | `ui.panel` | 790 | -50 | UI 面板 |
 | `ui.default` | 800 | 0 | 一般 UI 控件 |
 | `ui.foreground` | 810 | +50 | 高亮按钮 / 前景特效 |
-| `ui.overlay` | 900 | 0 | 叠加层（弹窗、HUD） |
+| `ui.overlay` | 900 | 0 | UI 模态叠加层（弹窗、遮罩） |
+| `hud.overlay` | 905 | +200 | HUD 常驻面板 / 性能信息 |
 | `ui.tooltip` | 910 | +50 | 提示/光标 |
 | `debug.overlay` | 999 | 0 | 调试覆盖 |
 

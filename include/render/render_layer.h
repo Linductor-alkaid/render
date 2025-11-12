@@ -159,6 +159,10 @@ constexpr RenderLayerId Overlay{900};
 constexpr RenderLayerId Tooltip{910};
 } // namespace UI
 
+namespace HUD {
+constexpr RenderLayerId Overlay{905};
+} // namespace HUD
+
 namespace Debug {
 constexpr RenderLayerId Overlay{999};
 } // namespace Debug

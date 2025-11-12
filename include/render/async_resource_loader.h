@@ -5,6 +5,7 @@
 #include "render/texture.h"
 #include "render/material.h"
 #include "render/model_loader.h"
+#include "render/texture_loader.h"
 #include <memory>
 #include <string>
 #include <functional>
@@ -123,20 +124,27 @@ struct MeshLoadTask : public LoadTaskBase {
  * @brief 纹理加载任务
  */
 struct TextureLoadTask : public LoadTaskBase {
-    using LoadFunc = std::function<Ref<Texture>()>;
-    using UploadFunc = std::function<void(Ref<Texture>)>;
+    using LoadFunc = std::function<std::unique_ptr<TextureLoader::TextureStagingData>()>;
+    using UploadFunc = std::function<Ref<Texture>(TextureLoader::TextureStagingData&&)>;
     using CallbackFunc = std::function<void(const TextureLoadResult&)>;
     
     LoadFunc loadFunc;
     UploadFunc uploadFunc;
     CallbackFunc callback;
     
+    std::unique_ptr<TextureLoader::TextureStagingData> stagingData;
     Ref<Texture> result;
     
     void ExecuteLoad() override {
         try {
             if (loadFunc) {
-                result = loadFunc();
+                stagingData = loadFunc();
+                if (!stagingData) {
+                    status = LoadStatus::Failed;
+                    if (errorMessage.empty()) {
+                        errorMessage = "Texture staging data is empty";
+                    }
+                }
             }
         } catch (const std::exception& e) {
             errorMessage = e.what();
@@ -145,9 +153,31 @@ struct TextureLoadTask : public LoadTaskBase {
     }
     
     void ExecuteUpload() override {
+        if (status == LoadStatus::Failed) {
+            return;
+        }
+
         try {
-            if (uploadFunc && result) {
-                uploadFunc(result);
+            if (!uploadFunc) {
+                return;
+            }
+
+            if (!stagingData) {
+                status = LoadStatus::Failed;
+                if (errorMessage.empty()) {
+                    errorMessage = "Upload failed: staging data missing";
+                }
+                return;
+            }
+
+            auto data = std::move(*stagingData);
+            stagingData.reset();
+            result = uploadFunc(std::move(data));
+            if (!result) {
+                status = LoadStatus::Failed;
+                if (errorMessage.empty()) {
+                    errorMessage = "Upload failed: texture creation returned null";
+                }
             }
         } catch (const std::exception& e) {
             errorMessage = "Upload failed: " + std::string(e.what());

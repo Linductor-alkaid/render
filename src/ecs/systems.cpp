@@ -1152,6 +1152,25 @@ void ResourceLoadingSystem::OnTextureLoaded(EntityID entity, const TextureLoadRe
         return;
     }
     
+    if (result.IsSuccess() && result.resource) {
+        auto& resMgr = ResourceManager::GetInstance();
+        if (resMgr.HasTexture(result.name)) {
+            Logger::GetInstance().DebugFormat(
+                "[ResourceLoadingSystem] Texture '%s' already registered in ResourceManager",
+                result.name.c_str());
+        } else {
+            if (!resMgr.RegisterTexture(result.name, result.resource)) {
+                Logger::GetInstance().WarningFormat(
+                    "[ResourceLoadingSystem] Failed to register texture '%s' to ResourceManager (possibly duplicate)",
+                    result.name.c_str());
+            } else {
+                Logger::GetInstance().InfoFormat(
+                    "[ResourceLoadingSystem] Registered texture '%s' to ResourceManager (async)",
+                    result.name.c_str());
+            }
+        }
+    }
+    
     std::lock_guard<std::mutex> lock(m_pendingMutex);
     
     PendingTextureUpdate update;
@@ -2967,6 +2986,7 @@ void LightSystem::UpdateLightUniforms() {
         params.common.castsShadows = lightComp.castShadows;
         params.common.shadowBias = lightComp.shadowBias;
         params.common.enabled = lightComp.enabled;
+        params.common.layerID = Layers::World::Midground.value;
 
         const Vector3 position = transformComp.GetPosition();
         const float attenuationBase = std::max(0.0001f, lightComp.attenuation);

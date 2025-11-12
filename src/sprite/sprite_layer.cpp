@@ -31,6 +31,7 @@ void SpriteRenderLayer::EnsureDefaults() {
     s_layers.emplace(NormalizeKey("ui.default"), LayerInfo{800, 0});
     s_layers.emplace(NormalizeKey("ui.foreground"), LayerInfo{810, 50});
     s_layers.emplace(NormalizeKey("ui.overlay"), LayerInfo{900, 0});
+    s_layers.emplace(NormalizeKey("hud.overlay"), LayerInfo{905, 200});
     s_layers.emplace(NormalizeKey("ui.tooltip"), LayerInfo{910, 50});
 
     s_layers.emplace(NormalizeKey("debug.overlay"), LayerInfo{999, 0});
