@@ -181,10 +181,17 @@ void SceneManager::ProcessPendingTransition() {
     auto& storedEntry = m_sceneStack.back();
 
     AttachScene(storedEntry);
-    storedEntry.manifest = storedEntry.scene->BuildManifest();
-    EmitManifestEvent(storedEntry.id, storedEntry.manifest);
-
-    BeginPreload(storedEntry, transition.args);
+    
+    // 只有在场景成功attach后才构建manifest和开始预加载
+    if (storedEntry.attached && storedEntry.scene) {
+        storedEntry.manifest = storedEntry.scene->BuildManifest();
+        EmitManifestEvent(storedEntry.id, storedEntry.manifest);
+        BeginPreload(storedEntry, transition.args);
+    } else {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Failed to attach scene '%s', skipping manifest and preload",
+            storedEntry.id.c_str());
+    }
 }
 
 void SceneManager::AttachScene(SceneStackEntry& entry) {
@@ -215,9 +222,16 @@ void SceneManager::BeginPreload(SceneStackEntry& entry, SceneEnterArgs& args) {
 
     UpdatePreloadState(entry);
 
-    if (entry.preload.completed && entry.pendingEnterArgs.has_value()) {
-        EnterScene(entry, std::move(*entry.pendingEnterArgs));
-        entry.pendingEnterArgs.reset();
+    if (entry.preload.completed && entry.pendingEnterArgs.has_value() && !entry.entered) {
+        try {
+            EnterScene(entry, std::move(*entry.pendingEnterArgs));
+            // EnterScene内部会重置pendingEnterArgs，这里不需要再次重置
+        } catch (const std::exception& ex) {
+            Logger::GetInstance().ErrorFormat(
+                "[SceneManager] Failed to enter scene during BeginPreload: %s",
+                ex.what());
+            // 保留pendingEnterArgs，以便稍后重试
+        }
     }
 }
 
@@ -227,15 +241,22 @@ void SceneManager::ProcessPreloadStates() {
     }
     Logger::GetInstance().Info("[SceneManager] ProcessPreloadStates");
     for (auto& entry : m_sceneStack) {
-        if (!entry.scene || entry.entered) {
+        if (!entry.scene || !entry.attached || entry.entered) {
             continue;
         }
 
         UpdatePreloadState(entry);
 
-        if (entry.preload.completed && entry.pendingEnterArgs.has_value()) {
-            EnterScene(entry, std::move(*entry.pendingEnterArgs));
-            entry.pendingEnterArgs.reset();
+        if (entry.preload.completed && entry.pendingEnterArgs.has_value() && !entry.entered) {
+            try {
+                EnterScene(entry, std::move(*entry.pendingEnterArgs));
+                // EnterScene内部会重置pendingEnterArgs，这里不需要再次重置
+            } catch (const std::exception& ex) {
+                Logger::GetInstance().ErrorFormat(
+                    "[SceneManager] Failed to enter scene during ProcessPreloadStates: %s",
+                    ex.what());
+                // 保留pendingEnterArgs，以便稍后重试
+            }
         }
     }
 }
@@ -304,13 +325,72 @@ void SceneManager::UpdatePreloadState(SceneStackEntry& entry) {
 }
 
 void SceneManager::EnterScene(SceneStackEntry& entry, SceneEnterArgs&& args) {
-    EmitLifecycleEvent(entry.id, Events::SceneLifecycleEvent::Stage::Entering, entry.flags, &args, nullptr, nullptr);
-    if (entry.scene) {
-        entry.scene->OnEnter(args);
+    // 检查场景是否已经进入，避免重复进入
+    if (entry.entered) {
+        Logger::GetInstance().WarningFormat(
+            "[SceneManager] Scene '%s' already entered, skipping EnterScene",
+            entry.id.c_str());
+        return;
     }
-    entry.entered = true;
-    entry.pendingEnterArgs.reset();
-    EmitLifecycleEvent(entry.id, Events::SceneLifecycleEvent::Stage::Entered, entry.flags, &args, nullptr, nullptr);
+    
+    // 检查场景和上下文是否有效
+    if (!entry.scene) {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Cannot enter scene '%s': scene is null",
+            entry.id.c_str());
+        return;
+    }
+    
+    if (!entry.attached) {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Cannot enter scene '%s': scene is not attached",
+            entry.id.c_str());
+        return;
+    }
+    
+    Logger::GetInstance().InfoFormat("[SceneManager] Entering scene '%s'", entry.id.c_str());
+    
+    // 在OnEnter调用前保存args的副本，因为OnEnter可能会修改args
+    SceneEnterArgs argsCopy = args;
+    
+    EmitLifecycleEvent(entry.id, Events::SceneLifecycleEvent::Stage::Entering, entry.flags, &argsCopy, nullptr, nullptr);
+    
+    try {
+        entry.scene->OnEnter(args);
+        entry.entered = true;
+        entry.pendingEnterArgs.reset();
+        Logger::GetInstance().InfoFormat("[SceneManager] Scene '%s' entered successfully", entry.id.c_str());
+        
+        // 在EmitLifecycleEvent之前添加日志，确认执行到这里
+        Logger::GetInstance().DebugFormat("[SceneManager] About to emit Entered event for scene '%s'", entry.id.c_str());
+        try {
+            // 使用之前保存的argsCopy，而不是可能被修改的args
+            EmitLifecycleEvent(entry.id, Events::SceneLifecycleEvent::Stage::Entered, entry.flags, &argsCopy, nullptr, nullptr);
+            Logger::GetInstance().DebugFormat("[SceneManager] Entered event emitted successfully for scene '%s'", entry.id.c_str());
+        } catch (const std::exception& emitEx) {
+            Logger::GetInstance().ErrorFormat(
+                "[SceneManager] Exception while emitting Entered event for scene '%s': %s",
+                entry.id.c_str(), emitEx.what());
+            throw; // 重新抛出异常
+        } catch (...) {
+            Logger::GetInstance().ErrorFormat(
+                "[SceneManager] Unknown exception while emitting Entered event for scene '%s'",
+                entry.id.c_str());
+            throw; // 重新抛出异常
+        }
+    } catch (const std::exception& ex) {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Exception while entering scene '%s': %s",
+            entry.id.c_str(), ex.what());
+        // 不设置 entry.entered = true，让场景保持未进入状态
+        throw; // 重新抛出异常，让调用者处理
+    } catch (...) {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Unknown exception while entering scene '%s'",
+            entry.id.c_str());
+        // 不设置 entry.entered = true，让场景保持未进入状态
+        throw; // 重新抛出异常，让调用者处理
+    }
 }
 
 SceneManager::ResourceAvailability SceneManager::CheckResourceAvailability(const ResourceRequest& request) const {
@@ -416,25 +496,73 @@ void SceneManager::EmitManifestEvent(const std::string& sceneId, const SceneReso
 void SceneManager::EmitLifecycleEvent(const std::string& sceneId, Events::SceneLifecycleEvent::Stage stage,
                                       SceneFlags flags, const SceneEnterArgs* enterArgs, const SceneExitArgs* exitArgs,
                                       const SceneSnapshot* snapshot) {
-    if (!m_appContext || !m_appContext->globalEventBus) {
+    if (!m_appContext) {
+        Logger::GetInstance().Warning("[SceneManager] Cannot emit lifecycle event: m_appContext is null");
+        return;
+    }
+    
+    if (!m_appContext->globalEventBus) {
+        Logger::GetInstance().Warning("[SceneManager] Cannot emit lifecycle event: globalEventBus is null");
         return;
     }
 
-    Events::SceneLifecycleEvent event;
-    event.sceneId = sceneId;
-    event.stage = stage;
-    event.flags = flags;
-    if (enterArgs) {
-        event.enterArgs = *enterArgs;
-    }
-    if (exitArgs) {
-        event.exitArgs = *exitArgs;
-    }
-    if (snapshot) {
-        event.snapshot = *snapshot;
-    }
+    try {
+        Logger::GetInstance().DebugFormat("[SceneManager] Creating SceneLifecycleEvent for scene '%s' stage %d", 
+                                         sceneId.c_str(), static_cast<int>(stage));
+        
+        Events::SceneLifecycleEvent event;
+        Logger::GetInstance().DebugFormat("[SceneManager] Event object created");
+        
+        event.sceneId = sceneId;
+        Logger::GetInstance().DebugFormat("[SceneManager] Event sceneId set");
+        
+        event.stage = stage;
+        event.flags = flags;
+        Logger::GetInstance().DebugFormat("[SceneManager] Event stage and flags set");
+        
+        if (enterArgs) {
+            Logger::GetInstance().DebugFormat("[SceneManager] Copying enterArgs (pointer: %p)", static_cast<const void*>(enterArgs));
+            try {
+                // 先创建一个临时副本，避免直接赋值可能的问题
+                SceneEnterArgs tempArgs = *enterArgs;
+                Logger::GetInstance().DebugFormat("[SceneManager] Temporary copy created");
+                event.enterArgs = std::move(tempArgs);
+                Logger::GetInstance().DebugFormat("[SceneManager] enterArgs copied");
+            } catch (const std::exception& ex) {
+                Logger::GetInstance().ErrorFormat("[SceneManager] Exception while copying enterArgs: %s", ex.what());
+                throw;
+            } catch (...) {
+                Logger::GetInstance().ErrorFormat("[SceneManager] Unknown exception while copying enterArgs");
+                throw;
+            }
+        } else {
+            Logger::GetInstance().DebugFormat("[SceneManager] enterArgs is null, skipping copy");
+        }
+        if (exitArgs) {
+            Logger::GetInstance().DebugFormat("[SceneManager] Copying exitArgs");
+            event.exitArgs = *exitArgs;
+            Logger::GetInstance().DebugFormat("[SceneManager] exitArgs copied");
+        }
+        if (snapshot) {
+            Logger::GetInstance().DebugFormat("[SceneManager] Copying snapshot");
+            event.snapshot = *snapshot;
+            Logger::GetInstance().DebugFormat("[SceneManager] snapshot copied");
+        }
 
-    m_appContext->globalEventBus->Publish(event);
+        Logger::GetInstance().DebugFormat("[SceneManager] About to publish event");
+        m_appContext->globalEventBus->Publish(event);
+        Logger::GetInstance().DebugFormat("[SceneManager] Event published successfully");
+    } catch (const std::exception& ex) {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Exception while emitting lifecycle event for scene '%s' stage %d: %s",
+            sceneId.c_str(), static_cast<int>(stage), ex.what());
+        // 不重新抛出异常，避免中断场景流程
+    } catch (...) {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Unknown exception while emitting lifecycle event for scene '%s' stage %d",
+            sceneId.c_str(), static_cast<int>(stage));
+        // 不重新抛出异常，避免中断场景流程
+    }
 }
 
 } // namespace Render::Application
