@@ -4,11 +4,14 @@
 #include <optional>
 #include <unordered_set>
 #include <utility>
+#include <sstream>
 
 #include "render/application/module_registry.h"
 #include "render/logger.h"
 #include "render/resource_manager.h"
 #include "render/shader_cache.h"
+#include "render/async_resource_loader.h"
+#include "render/model_loader.h"
 
 namespace Render::Application {
 
@@ -98,22 +101,17 @@ std::optional<SceneSnapshot> SceneManager::PopScene(SceneExitArgs args) {
 }
 
 void SceneManager::Update(const FrameUpdateArgs& frameArgs) {
-    Logger::GetInstance().Info("[SceneManager] Update begin");
     ProcessPendingTransition();
     ProcessPreloadStates();
 
     if (m_sceneStack.empty()) {
-        Logger::GetInstance().Info("[SceneManager] No active scene");
         return;
     }
 
     auto& activeEntry = m_sceneStack.back();
     if (activeEntry.scene && activeEntry.entered) {
-        Logger::GetInstance().InfoFormat("[SceneManager] Updating scene '%s'",
-                                          activeEntry.id.c_str());
         activeEntry.scene->OnUpdate(frameArgs);
     }
-    Logger::GetInstance().Info("[SceneManager] Update end");
 }
 
 Scene* SceneManager::GetActiveScene() noexcept {
@@ -211,6 +209,10 @@ void SceneManager::DetachScene(SceneStackEntry& entry) {
 
     entry.scene->OnDetach(*m_appContext);
     entry.attached = false;
+    
+    // 释放场景资源（根据ResourceScope区分）
+    ReleaseSceneResources(entry);
+    
     EmitLifecycleEvent(entry.id, Events::SceneLifecycleEvent::Stage::Detached, entry.flags, nullptr, nullptr, nullptr);
 }
 
@@ -239,7 +241,6 @@ void SceneManager::ProcessPreloadStates() {
     if (m_sceneStack.empty()) {
         return;
     }
-    Logger::GetInstance().Info("[SceneManager] ProcessPreloadStates");
     for (auto& entry : m_sceneStack) {
         if (!entry.scene || !entry.attached || entry.entered) {
             continue;
@@ -279,6 +280,8 @@ void SceneManager::UpdatePreloadState(SceneStackEntry& entry) {
             break;
         case ResourceAvailability::Missing:
             state.missingRequired.push_back(request);
+            // 主动触发异步加载
+            BeginAsyncLoad(entry, request);
             break;
         case ResourceAvailability::Unsupported:
             state.requiredReady++;
@@ -293,6 +296,8 @@ void SceneManager::UpdatePreloadState(SceneStackEntry& entry) {
             break;
         case ResourceAvailability::Missing:
             state.missingOptional.push_back(request);
+            // 可选资源也触发异步加载（低优先级）
+            BeginAsyncLoad(entry, request);
             break;
         case ResourceAvailability::Unsupported:
             state.optionalReady++;
@@ -361,12 +366,9 @@ void SceneManager::EnterScene(SceneStackEntry& entry, SceneEnterArgs&& args) {
         entry.pendingEnterArgs.reset();
         Logger::GetInstance().InfoFormat("[SceneManager] Scene '%s' entered successfully", entry.id.c_str());
         
-        // 在EmitLifecycleEvent之前添加日志，确认执行到这里
-        Logger::GetInstance().DebugFormat("[SceneManager] About to emit Entered event for scene '%s'", entry.id.c_str());
         try {
             // 使用之前保存的argsCopy，而不是可能被修改的args
             EmitLifecycleEvent(entry.id, Events::SceneLifecycleEvent::Stage::Entered, entry.flags, &argsCopy, nullptr, nullptr);
-            Logger::GetInstance().DebugFormat("[SceneManager] Entered event emitted successfully for scene '%s'", entry.id.c_str());
         } catch (const std::exception& emitEx) {
             Logger::GetInstance().ErrorFormat(
                 "[SceneManager] Exception while emitting Entered event for scene '%s': %s",
@@ -507,27 +509,16 @@ void SceneManager::EmitLifecycleEvent(const std::string& sceneId, Events::SceneL
     }
 
     try {
-        Logger::GetInstance().DebugFormat("[SceneManager] Creating SceneLifecycleEvent for scene '%s' stage %d", 
-                                         sceneId.c_str(), static_cast<int>(stage));
-        
         Events::SceneLifecycleEvent event;
-        Logger::GetInstance().DebugFormat("[SceneManager] Event object created");
-        
         event.sceneId = sceneId;
-        Logger::GetInstance().DebugFormat("[SceneManager] Event sceneId set");
-        
         event.stage = stage;
         event.flags = flags;
-        Logger::GetInstance().DebugFormat("[SceneManager] Event stage and flags set");
         
         if (enterArgs) {
-            Logger::GetInstance().DebugFormat("[SceneManager] Copying enterArgs (pointer: %p)", static_cast<const void*>(enterArgs));
             try {
                 // 先创建一个临时副本，避免直接赋值可能的问题
                 SceneEnterArgs tempArgs = *enterArgs;
-                Logger::GetInstance().DebugFormat("[SceneManager] Temporary copy created");
                 event.enterArgs = std::move(tempArgs);
-                Logger::GetInstance().DebugFormat("[SceneManager] enterArgs copied");
             } catch (const std::exception& ex) {
                 Logger::GetInstance().ErrorFormat("[SceneManager] Exception while copying enterArgs: %s", ex.what());
                 throw;
@@ -535,23 +526,15 @@ void SceneManager::EmitLifecycleEvent(const std::string& sceneId, Events::SceneL
                 Logger::GetInstance().ErrorFormat("[SceneManager] Unknown exception while copying enterArgs");
                 throw;
             }
-        } else {
-            Logger::GetInstance().DebugFormat("[SceneManager] enterArgs is null, skipping copy");
         }
         if (exitArgs) {
-            Logger::GetInstance().DebugFormat("[SceneManager] Copying exitArgs");
             event.exitArgs = *exitArgs;
-            Logger::GetInstance().DebugFormat("[SceneManager] exitArgs copied");
         }
         if (snapshot) {
-            Logger::GetInstance().DebugFormat("[SceneManager] Copying snapshot");
             event.snapshot = *snapshot;
-            Logger::GetInstance().DebugFormat("[SceneManager] snapshot copied");
         }
 
-        Logger::GetInstance().DebugFormat("[SceneManager] About to publish event");
         m_appContext->globalEventBus->Publish(event);
-        Logger::GetInstance().DebugFormat("[SceneManager] Event published successfully");
     } catch (const std::exception& ex) {
         Logger::GetInstance().ErrorFormat(
             "[SceneManager] Exception while emitting lifecycle event for scene '%s' stage %d: %s",
@@ -562,6 +545,235 @@ void SceneManager::EmitLifecycleEvent(const std::string& sceneId, Events::SceneL
             "[SceneManager] Unknown exception while emitting lifecycle event for scene '%s' stage %d",
             sceneId.c_str(), static_cast<int>(stage));
         // 不重新抛出异常，避免中断场景流程
+    }
+}
+
+void SceneManager::BeginAsyncLoad(SceneStackEntry& entry, const ResourceRequest& request) {
+    // 检查AsyncResourceLoader是否可用
+    if (!m_appContext || !m_appContext->asyncLoader) {
+        Logger::GetInstance().WarningFormat(
+            "[SceneManager] Cannot begin async load for resource '%s': AsyncResourceLoader not available",
+            request.identifier.c_str());
+        return;
+    }
+
+    // 生成任务键，避免重复提交
+    std::string taskKey = request.type + ":" + request.identifier;
+    if (entry.preload.pendingLoadTasks.find(taskKey) != entry.preload.pendingLoadTasks.end()) {
+        // 任务已提交，跳过
+        return;
+    }
+
+    auto& loader = *m_appContext->asyncLoader;
+    
+    // 根据资源类型调用相应的加载方法
+    // 优先级：必需资源 > 可选资源
+    float priority = request.optional ? 1.0f : 10.0f;
+    
+    // 使用identifier作为文件路径（假设identifier就是文件路径）
+    std::string filepath = request.identifier;
+    std::string name = request.identifier;  // 使用identifier作为资源名称
+
+    // 使用entry.id而不是引用，避免lambda执行时entry已被销毁
+    std::string sceneId = entry.id;
+    
+    if (request.type == "mesh") {
+        auto task = loader.LoadMeshAsync(
+            filepath,
+            name,
+            [this, sceneId, taskKey](const MeshLoadResult& result) {
+                // 加载完成回调：注册到ResourceManager
+                if (result.IsSuccess() && m_appContext && m_appContext->resourceManager) {
+                    auto& resMgr = *m_appContext->resourceManager;
+                    resMgr.RegisterMesh(result.name, result.resource);
+                    Logger::GetInstance().InfoFormat(
+                        "[SceneManager] Mesh loaded and registered: %s (scene: %s)",
+                        result.name.c_str(),
+                        sceneId.c_str());
+                    
+                    // 从pendingLoadTasks中移除（需要找到对应的entry）
+                    for (auto& stackEntry : m_sceneStack) {
+                        if (stackEntry.id == sceneId) {
+                            stackEntry.preload.pendingLoadTasks.erase(taskKey);
+                            break;
+                        }
+                    }
+                } else {
+                    Logger::GetInstance().ErrorFormat(
+                        "[SceneManager] Mesh load failed: %s - %s (scene: %s)",
+                        result.name.c_str(),
+                        result.errorMessage.c_str(),
+                        sceneId.c_str());
+                    // 即使失败也要从pendingLoadTasks中移除
+                    for (auto& stackEntry : m_sceneStack) {
+                        if (stackEntry.id == sceneId) {
+                            stackEntry.preload.pendingLoadTasks.erase(taskKey);
+                            break;
+                        }
+                    }
+                }
+            },
+            priority
+        );
+        entry.preload.pendingLoadTasks.insert(taskKey);
+        Logger::GetInstance().InfoFormat(
+            "[SceneManager] Submitted async mesh load: %s (priority: %.1f)",
+            filepath.c_str(), priority);
+    }
+    else if (request.type == "texture") {
+        auto task = loader.LoadTextureAsync(
+            filepath,
+            name,
+            true,  // generateMipmap
+            [this, sceneId, taskKey](const TextureLoadResult& result) {
+                if (result.IsSuccess() && m_appContext && m_appContext->resourceManager) {
+                    auto& resMgr = *m_appContext->resourceManager;
+                    resMgr.RegisterTexture(result.name, result.resource);
+                    Logger::GetInstance().InfoFormat(
+                        "[SceneManager] Texture loaded and registered: %s (scene: %s)",
+                        result.name.c_str(),
+                        sceneId.c_str());
+                    
+                    for (auto& stackEntry : m_sceneStack) {
+                        if (stackEntry.id == sceneId) {
+                            stackEntry.preload.pendingLoadTasks.erase(taskKey);
+                            break;
+                        }
+                    }
+                } else {
+                    Logger::GetInstance().ErrorFormat(
+                        "[SceneManager] Texture load failed: %s - %s (scene: %s)",
+                        result.name.c_str(),
+                        result.errorMessage.c_str(),
+                        sceneId.c_str());
+                    for (auto& stackEntry : m_sceneStack) {
+                        if (stackEntry.id == sceneId) {
+                            stackEntry.preload.pendingLoadTasks.erase(taskKey);
+                            break;
+                        }
+                    }
+                }
+            },
+            priority
+        );
+        entry.preload.pendingLoadTasks.insert(taskKey);
+        Logger::GetInstance().InfoFormat(
+            "[SceneManager] Submitted async texture load: %s (priority: %.1f)",
+            filepath.c_str(), priority);
+    }
+    else if (request.type == "model") {
+        ModelLoadOptions options;
+        options.autoUpload = true;
+        auto task = loader.LoadModelAsync(
+            filepath,
+            name,
+            options,
+            [this, sceneId, taskKey](const ModelLoadResult& result) {
+                if (result.IsSuccess() && m_appContext && m_appContext->resourceManager) {
+                    Logger::GetInstance().InfoFormat(
+                        "[SceneManager] Model loaded: %s (%zu meshes, %zu materials) (scene: %s)",
+                        result.name.c_str(),
+                        result.meshResourceNames.size(),
+                        result.materialResourceNames.size(),
+                        sceneId.c_str());
+                } else {
+                    Logger::GetInstance().ErrorFormat(
+                        "[SceneManager] Model load failed: %s - %s (scene: %s)",
+                        result.name.c_str(),
+                        result.errorMessage.c_str(),
+                        sceneId.c_str());
+                }
+                for (auto& stackEntry : m_sceneStack) {
+                    if (stackEntry.id == sceneId) {
+                        stackEntry.preload.pendingLoadTasks.erase(taskKey);
+                        break;
+                    }
+                }
+            },
+            priority
+        );
+        entry.preload.pendingLoadTasks.insert(taskKey);
+        Logger::GetInstance().InfoFormat(
+            "[SceneManager] Submitted async model load: %s (priority: %.1f)",
+            filepath.c_str(), priority);
+    }
+    else {
+        Logger::GetInstance().WarningFormat(
+            "[SceneManager] Unsupported resource type for async loading: %s (identifier: %s)",
+            request.type.c_str(),
+            request.identifier.c_str());
+    }
+}
+
+void SceneManager::ReleaseSceneResources(SceneStackEntry& entry) {
+    if (!m_appContext || !m_appContext->resourceManager) {
+        return;
+    }
+
+    auto& resMgr = *m_appContext->resourceManager;
+    size_t releasedCount = 0;
+
+    // 遍历manifest中的所有资源，根据ResourceScope决定是否释放
+    auto releaseResource = [&](const ResourceRequest& request) {
+        if (request.scope == ResourceScope::Scene) {
+            // Scene资源：场景退出时释放
+            bool released = false;
+            if (request.type == "mesh") {
+                released = resMgr.RemoveMesh(request.identifier);
+            } else if (request.type == "texture") {
+                released = resMgr.RemoveTexture(request.identifier);
+            } else if (request.type == "material") {
+                released = resMgr.RemoveMaterial(request.identifier);
+            } else if (request.type == "model") {
+                // Model可能包含多个mesh和material，需要特殊处理
+                // 这里简化处理，只记录日志
+                Logger::GetInstance().InfoFormat(
+                    "[SceneManager] Model resource '%s' marked for cleanup (may contain multiple sub-resources)",
+                    request.identifier.c_str());
+                released = true;  // 假设已处理
+            } else if (request.type == "sprite_atlas") {
+                released = resMgr.RemoveSpriteAtlas(request.identifier);
+            } else if (request.type == "font") {
+                released = resMgr.RemoveFont(request.identifier);
+            } else if (request.type == "shader") {
+                // Shader由ShaderCache管理，这里不直接释放
+                Logger::GetInstance().InfoFormat(
+                    "[SceneManager] Shader resource '%s' is managed by ShaderCache, skipping release",
+                    request.identifier.c_str());
+                released = true;  // 假设已处理
+            }
+
+            if (released) {
+                releasedCount++;
+                Logger::GetInstance().DebugFormat(
+                    "[SceneManager] Released scene resource: %s (%s)",
+                    request.identifier.c_str(),
+                    request.type.c_str());
+            }
+        } else if (request.scope == ResourceScope::Shared) {
+            // Shared资源：保留在ResourceManager中，不释放
+            Logger::GetInstance().DebugFormat(
+                "[SceneManager] Keeping shared resource: %s (%s)",
+                request.identifier.c_str(),
+                request.type.c_str());
+        }
+    };
+
+    // 处理必需资源
+    for (const auto& request : entry.manifest.required) {
+        releaseResource(request);
+    }
+
+    // 处理可选资源
+    for (const auto& request : entry.manifest.optional) {
+        releaseResource(request);
+    }
+
+    if (releasedCount > 0) {
+        Logger::GetInstance().InfoFormat(
+            "[SceneManager] Released %zu scene-specific resources for scene '%s'",
+            releasedCount,
+            entry.id.c_str());
     }
 }
 

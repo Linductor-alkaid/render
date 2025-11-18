@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "render/application/app_context.h"
@@ -75,6 +76,8 @@ private:
             size_t lastReportedMissingOptional = std::numeric_limits<size_t>::max();
             std::vector<ResourceRequest> missingRequired;
             std::vector<ResourceRequest> missingOptional;
+            // 跟踪已提交的加载任务，避免重复提交
+            std::unordered_set<std::string> pendingLoadTasks;  // key: "type:identifier"
         } preload;
     };
 
@@ -91,7 +94,9 @@ private:
     void BeginPreload(SceneStackEntry& entry, SceneEnterArgs& args);
     void ProcessPreloadStates();
     void UpdatePreloadState(SceneStackEntry& entry);
+    void BeginAsyncLoad(SceneStackEntry& entry, const ResourceRequest& request);
     void EnterScene(SceneStackEntry& entry, SceneEnterArgs&& args);
+    void ReleaseSceneResources(SceneStackEntry& entry);
 
     enum class ResourceAvailability {
         Available,

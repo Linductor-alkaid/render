@@ -10,6 +10,8 @@ add_executable(application_boot_scene_sync_test application_boot_scene_sync_test
 add_executable(scene_graph_demo_test scene_graph_demo_test.cpp)
 add_executable(application_boot_scene_module_matrix_test application_boot_scene_module_matrix_test.cpp)
 add_executable(async_resource_loader_failure_test async_resource_loader_failure_test.cpp)
+add_executable(scene_manager_resource_test scene_manager_resource_test.cpp)
+add_executable(scene_manager_stress_test scene_manager_stress_test.cpp)
 
 target_link_libraries(mesh_tangent_test PRIVATE RenderEngine)
 target_link_libraries(model_loader_regression_test PRIVATE RenderEngine)
@@ -19,6 +21,8 @@ target_link_libraries(application_boot_scene_module_matrix_test PRIVATE RenderEn
 target_link_libraries(application_boot_scene_sync_test PRIVATE RenderEngine)
 target_link_libraries(scene_graph_demo_test PRIVATE RenderEngine)
 target_link_libraries(async_resource_loader_failure_test PRIVATE RenderEngine)
+target_link_libraries(scene_manager_resource_test PRIVATE RenderEngine)
+target_link_libraries(scene_manager_stress_test PRIVATE RenderEngine)
 
 target_compile_definitions(mesh_tangent_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(model_loader_regression_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
@@ -28,6 +32,8 @@ target_compile_definitions(application_boot_scene_module_matrix_test PRIVATE PRO
 target_compile_definitions(application_boot_scene_sync_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(scene_graph_demo_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(async_resource_loader_failure_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+target_compile_definitions(scene_manager_resource_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+target_compile_definitions(scene_manager_stress_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 
 if(MSVC)
     target_compile_options(mesh_tangent_test PRIVATE /utf-8)
@@ -38,6 +44,8 @@ if(MSVC)
     target_compile_options(application_boot_scene_sync_test PRIVATE /utf-8)
     target_compile_options(scene_graph_demo_test PRIVATE /utf-8)
     target_compile_options(async_resource_loader_failure_test PRIVATE /utf-8)
+    target_compile_options(scene_manager_resource_test PRIVATE /utf-8)
+    target_compile_options(scene_manager_stress_test PRIVATE /utf-8)
 endif()
 
 add_test(NAME mesh_tangent_test COMMAND mesh_tangent_test)
@@ -48,4 +56,6 @@ add_test(NAME application_boot_scene_module_matrix_test COMMAND application_boot
 add_test(NAME application_boot_scene_sync_test COMMAND application_boot_scene_sync_test)
 add_test(NAME scene_graph_demo_test COMMAND scene_graph_demo_test)
 add_test(NAME async_resource_loader_failure_test COMMAND async_resource_loader_failure_test)
+add_test(NAME scene_manager_resource_test COMMAND scene_manager_resource_test)
+add_test(NAME scene_manager_stress_test COMMAND scene_manager_stress_test)
 
