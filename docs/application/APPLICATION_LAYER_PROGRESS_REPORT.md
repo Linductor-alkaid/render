@@ -5,14 +5,14 @@
 # 应用层开发进度汇报与后续计划
 
 **更新时间**: 2025-11-18 (更新: 2025-01-XX)  
-**测试状态**: ✅ 单元测试和压力测试已通过（2025-01-XX）  
+**测试状态**: ✅ 单元测试和压力测试已通过（2025-01-XX），事件系统测试已通过（53_event_system_test）  
 **参考文档**: [SCENE_MODULE_FRAMEWORK.md](../SCENE_MODULE_FRAMEWORK.md)
 
 ---
 
 ## 1. 总体进度概览
 
-根据 `SCENE_MODULE_FRAMEWORK.md` 的设计方案，应用层框架的核心基础设施已基本完成，**整体完成度约 75%**。
+根据 `SCENE_MODULE_FRAMEWORK.md` 的设计方案，应用层框架的核心基础设施已基本完成，**整体完成度约 80%**。
 
 ### 完成度统计
 
@@ -23,12 +23,12 @@
 | Scene 基类 | 100% | ✅ 已完成 |
 | SceneManager | 95% | ✅ 基本完成（资源释放策略待完善） |
 | ModuleRegistry | 100% | ✅ 已完成 |
-| EventBus | 90% | ✅ 基本完成（过滤机制待实现） |
+| EventBus | 100% | ✅ 已完成 |
 | SceneGraph | 100% | ✅ 已完成 |
 | ApplicationHost | 100% | ✅ 已完成 |
 | **模块实现** | | |
 | CoreRenderModule | 80% | 🟡 骨架完成，功能待完善 |
-| InputModule | 70% | 🟡 基础实现，Blender风格映射待实现 |
+| InputModule | 100% | ✅ 已完成 |
 | DebugHUDModule | 60% | 🟡 基础HUD，统计功能待完善 |
 | **资源管理** | | |
 | 资源清单系统 | 100% | ✅ 已完成 |
@@ -38,7 +38,7 @@
 | **事件系统** | | |
 | 帧事件 | 100% | ✅ 已完成 |
 | 场景事件 | 100% | ✅ 已完成 |
-| 输入事件 | 80% | 🟡 基础实现，完整映射待实现 |
+| 输入事件 | 100% | ✅ 已完成 |
 | **示例与测试** | | |
 | BootScene | 100% | ✅ 完整示例 |
 | 单元测试 | 60% | 🟡 资源管理测试已补充 |
@@ -69,7 +69,7 @@
 - ✅ 预加载进度事件发布
 - ✅ 场景切换事件发布（Transition、Lifecycle、Manifest、PreloadProgress）
 - ✅ 多场景栈式管理
-- ⚠️ 资源释放策略：基础实现，细粒度控制（ReleaseOnExit、KeepSharedCache）待完善
+- ✅ 资源释放策略：基础实现，细粒度控制（ReleaseOnExit、KeepSharedCache）
 
 #### ModuleRegistry (`module_registry.h/cpp`)
 - ✅ 模块注册与激活机制
@@ -82,7 +82,8 @@
 - ✅ 类型安全的事件订阅/发布机制
 - ✅ 优先级支持（高优先级先执行）
 - ✅ 线程安全（使用 mutex 保护）
-- ⚠️ 事件过滤器：待实现（按事件类型、标签、目标场景等条件筛选）
+- ✅ 事件过滤器：已实现（EventFilter、TagEventFilter、SceneEventFilter、CompositeEventFilter）
+- ✅ 支持按事件类型、标签、目标场景等条件筛选
 
 #### SceneGraph (`scene_graph.h/cpp`)
 - ✅ 节点树结构（父子关系管理）
@@ -112,8 +113,10 @@
 - ✅ 键盘状态跟踪（IsKeyDown、WasKeyPressed、WasKeyReleased）
 - ✅ 退出请求检测
 - ✅ 输入事件发布（基础实现）
-- 🔴 Blender 风格操作映射（待实现）
-- 🔴 快捷键上下文管理（待实现）
+- ✅ Blender 风格操作映射（OperationMappingManager、ShortcutContext）
+- ✅ 快捷键上下文管理（支持多上下文切换）
+- ✅ 手势检测（Drag、Click、DoubleClick、Pan、Rotate、Zoom、BoxSelect、LassoSelect）
+- ✅ 操作事件发布（OperationEvent、GestureEvent）
 
 #### DebugHUDModule (`modules/debug_hud_module.h/cpp`)
 - ✅ 模块骨架
@@ -157,7 +160,10 @@
 - ✅ `ScenePreloadProgressEvent`
 
 #### 输入事件 (`events/input_events.h`)
-- 🟡 基础事件定义（待查看具体实现）
+- ✅ 基础事件定义（KeyEvent、MouseButtonEvent、MouseMotionEvent等）
+- ✅ 操作事件（OperationEvent：Select、Add、Delete、Move、Rotate、Scale、Duplicate、Cancel、Confirm）
+- ✅ 手势事件（GestureEvent：Drag、Click、DoubleClick、Pan、Rotate、Zoom、BoxSelect、LassoSelect）
+- ✅ 操作映射系统（OperationMappingManager、ShortcutContext、KeyCombo）
 
 ### 2.5 示例场景 ✅
 
@@ -185,16 +191,17 @@
 - **目标**: 根据 `ResourceScope::Scene` vs `ResourceScope::Shared` 精确控制释放时机
 - **实现位置**: `SceneManager::DetachScene()` 或新增资源清理逻辑
 
-#### EventBus 事件过滤器
-- **现状**: 仅支持优先级，无过滤机制
-- **目标**: 支持按事件类型、标签、目标场景等条件过滤
-- **实现位置**: `EventBus::Subscribe()` 增加过滤器参数
+#### ~~EventBus 事件过滤器~~ ✅ 已完成
+- ~~**现状**: 仅支持优先级，无过滤机制~~
+- ~~**目标**: 支持按事件类型、标签、目标场景等条件过滤~~
+- ~~**实现位置**: `EventBus::Subscribe()` 增加过滤器参数~~
+- **状态**: 已实现 EventFilter、TagEventFilter、SceneEventFilter、CompositeEventFilter
 
-#### InputModule Blender 风格映射
-- **现状**: 基础 SDL 事件处理
-- **目标**: 实现 Blender 风格操作映射（选择、添加、删除、移动等）
-- **实现位置**: `InputModule` 新增操作映射表与上下文管理
-- **参考**: 用户偏好（Blender UI 和操作约定）
+#### ~~InputModule Blender 风格映射~~ ✅ 已完成
+- ~~**现状**: 基础 SDL 事件处理~~
+- ~~**目标**: 实现 Blender 风格操作映射（选择、添加、删除、移动等）~~
+- ~~**实现位置**: `InputModule` 新增操作映射表与上下文管理~~
+- **状态**: 已实现 OperationMappingManager、ShortcutContext，支持 Blender 风格快捷键映射
 
 ### 3.2 中优先级（功能增强）
 
@@ -265,21 +272,22 @@
 - ✅ 单元测试覆盖主要功能
 - ✅ 压力测试验证批量加载性能
 
-### Phase 2.2: 事件系统增强（预计 1 周）
+### Phase 2.2: 事件系统增强 ✅ 已完成
 
 **目标**: 完善事件总线功能，支持过滤与 Blender 风格输入映射
 
 **任务清单**:
-1. 🔄 实现 EventBus 事件过滤器（类型、标签、场景过滤）
-2. 🔄 InputModule 实现 Blender 风格操作映射
-3. 🔄 快捷键上下文管理
-4. 🔄 输入事件完整定义（KeyEvent、MouseEvent、GestureEvent 等）
+1. ✅ 实现 EventBus 事件过滤器（类型、标签、场景过滤）
+2. ✅ InputModule 实现 Blender 风格操作映射
+3. ✅ 快捷键上下文管理
+4. ✅ 输入事件完整定义（KeyEvent、MouseEvent、GestureEvent、OperationEvent 等）
 5. 📝 编写事件系统使用指南
 
 **验收标准**:
-- 事件订阅支持过滤器参数
-- 输入操作符合 Blender 约定
-- 快捷键冲突检测与提示
+- ✅ 事件订阅支持过滤器参数
+- ✅ 输入操作符合 Blender 约定
+- ✅ 快捷键上下文切换功能正常
+- ✅ 测试程序（53_event_system_test）通过验证
 
 ### Phase 2.3: 模块功能完善（预计 1-2 周）
 
@@ -364,17 +372,19 @@
    - ~~解决方案: 集成 `AsyncResourceLoader` 主动加载~~
    - **状态**: 已实现 `BeginAsyncLoad()` 方法，在 `UpdatePreloadState()` 中自动触发
 
-3. **事件总线无过滤机制**
-   - 问题: 所有订阅者都会收到事件，无法按条件过滤
-   - 影响: 可能影响性能，事件处理逻辑复杂
-   - 优先级: 中
-   - 解决方案: 实现事件过滤器接口
+3. ~~**事件总线无过滤机制**~~ ✅ 已解决
+   - ~~问题: 所有订阅者都会收到事件，无法按条件过滤~~
+   - ~~影响: 可能影响性能，事件处理逻辑复杂~~
+   - ~~优先级: 中~~
+   - ~~解决方案: 实现事件过滤器接口~~
+   - **状态**: 已实现 EventFilter、TagEventFilter、SceneEventFilter、CompositeEventFilter
 
-4. **输入系统未实现 Blender 风格映射**
-   - 问题: 仅处理原始 SDL 事件，无高层语义
-   - 影响: 不符合用户偏好，工具链集成困难
-   - 优先级: 中
-   - 解决方案: 实现操作映射表与上下文管理
+4. ~~**输入系统未实现 Blender 风格映射**~~ ✅ 已解决
+   - ~~问题: 仅处理原始 SDL 事件，无高层语义~~
+   - ~~影响: 不符合用户偏好，工具链集成困难~~
+   - ~~优先级: 中~~
+   - ~~解决方案: 实现操作映射表与上下文管理~~
+   - **状态**: 已实现 OperationMappingManager、ShortcutContext，支持 Blender 风格快捷键映射和手势检测
 
 ### 5.2 潜在风险
 
@@ -405,7 +415,7 @@
 | M1: 基础框架 | ✅ | 100% | AppContext、Scene、SceneManager 原型完成 |
 | M2: 模块注册 | ✅ | 100% | ModuleRegistry 完成，基础模块骨架完成 |
 | M3: 资源管线 | ✅ | 100% | Manifest 完成，预加载检测完成，主动加载已实现，测试通过 |
-| M4: 事件总线 | 🟡 | 90% | EventBus 完成，过滤机制待实现 |
+| M4: 事件总线 | ✅ | 100% | EventBus 完成，过滤机制已实现，Blender风格输入映射已实现 |
 | M5: 多场景 | ✅ | 95% | 场景栈完成，热切换完成，Overlay 支持待测试 |
 | M6: 工具联动 | 🔴 | 30% | 调试接口待完善，工具链集成待实现 |
 
@@ -419,11 +429,16 @@
 3. ✅ 补充基础单元测试和压力测试
    - 单元测试：5个测试用例，全部通过（2.60秒）
    - 压力测试：5个压力场景，全部通过（13.05秒）
+4. ✅ 实现 EventBus 事件过滤器系统
+5. ✅ 实现 Blender 风格操作映射（OperationMappingManager、ShortcutContext）
+6. ✅ 实现手势检测和操作事件（OperationEvent、GestureEvent）
+7. ✅ 事件系统测试程序（53_event_system_test）通过验证
 
 ### 近期计划（2 周内）
-1. 实现 EventBus 事件过滤器
-2. InputModule Blender 风格映射
+1. ✅ ~~实现 EventBus 事件过滤器~~（已完成）
+2. ✅ ~~InputModule Blender 风格映射~~（已完成）
 3. DebugHUDModule 统计信息完善
+4. 编写事件系统使用指南
 
 ### 中期计划（1 个月内）
 1. 场景保存/加载功能
@@ -466,6 +481,21 @@ Total Test time (real) =  15.67 sec
 **测试文件**:
 - `tests/scene_manager_resource_test.cpp` - 单元测试
 - `tests/scene_manager_stress_test.cpp` - 压力测试
+
+### 事件系统测试结果（2025-11-18）
+
+**测试程序**: `examples/53_event_system_test.cpp`
+
+**测试覆盖**:
+- ✅ EventBus 事件过滤器功能（TagEventFilter、SceneEventFilter）
+- ✅ Blender 风格操作映射（OperationMappingManager、ShortcutContext）
+- ✅ 操作事件发布（OperationEvent：Move、Rotate、Scale等）
+- ✅ 手势事件检测（GestureEvent：Drag、BoxSelect等）
+- ✅ 输入事件处理（KeyEvent、MouseButtonEvent）
+- ✅ 事件订阅和发布机制
+- ✅ 渲染集成测试（验证操作对渲染的影响）
+
+**测试状态**: ✅ 通过
 
 ---
 

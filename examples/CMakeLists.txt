@@ -54,6 +54,7 @@ set(EXAMPLES
     50_geometry_catalog_test
     51_layer_mask_demo
     52_application_boot_demo
+    53_event_system_test
     60_ui_framework_showcase
 )
 

@@ -136,13 +136,13 @@ const AppModule* ModuleRegistry::GetModule(std::string_view name) const {
 }
 
 void ModuleRegistry::InvokePhase(ModulePhase phase, const FrameUpdateArgs& frameArgs) {
-    Logger::GetInstance().InfoFormat("[ModuleRegistry] InvokePhase %d begin", static_cast<int>(phase));
+    Logger::GetInstance().DebugFormat("[ModuleRegistry] InvokePhase %d begin", static_cast<int>(phase));
     const auto& sorted = (phase == ModulePhase::PreFrame) ? m_sortedPreFrame : m_sortedPostFrame;
     for (auto* module : sorted) {
         if (!module) {
             continue;
         }
-        Logger::GetInstance().InfoFormat("[ModuleRegistry] Invoke module %s phase %d",
+        Logger::GetInstance().DebugFormat("[ModuleRegistry] Invoke module %s phase %d",
                                           std::string(module->Name()).c_str(),
                                           static_cast<int>(phase));
         if (phase == ModulePhase::PreFrame) {
@@ -151,7 +151,7 @@ void ModuleRegistry::InvokePhase(ModulePhase phase, const FrameUpdateArgs& frame
             module->OnPostFrame(frameArgs, *m_context);
         }
     }
-    Logger::GetInstance().InfoFormat("[ModuleRegistry] InvokePhase %d end", static_cast<int>(phase));
+    Logger::GetInstance().DebugFormat("[ModuleRegistry] InvokePhase %d end", static_cast<int>(phase));
 }
 
 bool ModuleRegistry::CanRegister(const AppModule& module) const {

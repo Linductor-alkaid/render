@@ -82,7 +82,7 @@ public:
             Quaternion rotation = MathUtils::FromEulerDegrees(m_pitch, m_yaw, 0);
             
             // 计算移动方向（基于当前朝向）
-            Vector3 forward = rotation * Vector3(0, 0, -1);  // 前方向
+            Vector3 forward = rotation * Vector3(0, 0, 1);  // 前方向
             Vector3 right = rotation * Vector3(1, 0, 0);     // 右方向
             Vector3 up = Vector3(0, 1, 0);                   // 世界上方向
             

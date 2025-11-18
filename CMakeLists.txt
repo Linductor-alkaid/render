@@ -249,6 +249,7 @@ set(RENDER_SOURCES
     src/application/modules/debug_hud_module.cpp
     src/application/modules/input_module.cpp
     src/application/modules/ui_runtime_module.cpp
+    src/application/operation_mapping.cpp
     src/application/scene_manager.cpp
     src/application/scene_graph.cpp
     src/application/scenes/boot_scene.cpp
@@ -339,6 +340,7 @@ set(RENDER_HEADERS
     include/render/application/modules/debug_hud_module.h
     include/render/application/modules/input_module.h
     include/render/application/modules/ui_runtime_module.h
+    include/render/application/operation_mapping.h
     include/render/application/scene.h
     include/render/application/scene_manager.h
     include/render/application/scene_graph.h
