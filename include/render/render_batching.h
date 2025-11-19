@@ -197,6 +197,7 @@ public:
     [[nodiscard]] uint32_t GetTriangleCount() const noexcept { return m_cachedTriangleCount; }
     [[nodiscard]] uint32_t GetVertexCount() const noexcept { return static_cast<uint32_t>(m_cpuVertices.size()); }
     [[nodiscard]] uint32_t GetInstanceCount() const noexcept { return m_instanceCount; }
+    [[nodiscard]] uint32_t GetFallbackTriangleCount() const noexcept;
 
 private:
     RenderBatchKey m_key{};

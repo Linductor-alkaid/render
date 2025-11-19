@@ -148,6 +148,7 @@ protected:
         }
         cameraComp.depth = 0;
         cameraComp.clearColor = Color(0.05f, 0.08f, 0.12f, 1.0f);
+        cameraComp.layerMask = 0xFFFFFFFFu;  // 确保所有层都可见（包括世界层和UI层）
         world.AddComponent(*m_entity, cameraComp);
     }
 

@@ -187,10 +187,12 @@ public:
     
     /**
      * @brief 获取渲染统计信息（返回副本以保证线程安全）
+     * 注意：返回的是上一帧的统计数据，因为HUD在PostFrame阶段读取，
+     * 而PostFrame在FlushRenderQueue之前调用，所以这里返回上一帧的数据是合理的
      */
     RenderStats GetStats() const { 
         std::lock_guard<std::mutex> lock(m_mutex);
-        return m_stats; 
+        return m_lastFrameStats; 
     }
     
     /**
@@ -301,6 +303,7 @@ private:
     
     std::atomic<bool> m_initialized;
     RenderStats m_stats;
+    RenderStats m_lastFrameStats;  // 上一帧的统计数据，供HUD显示
     
     // 时间统计
     float m_deltaTime;

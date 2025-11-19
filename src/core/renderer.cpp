@@ -670,6 +670,10 @@ void Renderer::EndFrame() {
     
     // 更新统计信息
     UpdateStats();
+    
+    // 保存上一帧的统计数据，供HUD显示（HUD在PostFrame阶段读取，此时读取的是上一帧的数据）
+    m_lastFrameStats = m_stats;
+    
     m_frameCount++;
 }
 
@@ -911,6 +915,15 @@ void Renderer::FlushRenderQueue() {
         LayerBucket& bucket = bucketsSnapshot[bucketIndex];
         processedBuckets[bucketIndex] = true;
 
+        // 调试信息：检查world.midground层的items数量
+        if (record.descriptor.id == Layers::World::Midground) {
+            Logger::GetInstance().DebugFormat(
+                "[LayerMaskDebug] World layer bucket check: id=%u, items=%zu, enabled=%s",
+                record.descriptor.id.value,
+                bucket.items.size(),
+                record.state.enabled ? "true" : "false");
+        }
+
         if (bucket.items.empty()) {
             continue;
         }
@@ -1083,6 +1096,9 @@ void Renderer::FlushRenderQueue() {
         m_stats.batchedTriangles += flushResult.batchedTriangles;
         m_stats.batchedVertices += flushResult.batchedVertices;
         m_stats.fallbackBatches += flushResult.fallbackBatches;
+        // 更新总的triangles和vertices统计
+        m_stats.triangles += flushResult.batchedTriangles;
+        m_stats.vertices += flushResult.batchedVertices;
         m_stats.instancedInstances += flushResult.instancedInstances;
         m_stats.workerProcessed += flushResult.workerProcessed;
         m_stats.workerMaxQueueDepth = std::max(m_stats.workerMaxQueueDepth, flushResult.workerMaxQueueDepth);
@@ -1170,6 +1186,7 @@ void Renderer::ApplyLayerOverrides(const RenderLayerDescriptor& descriptor,
         return;
     }
 
+    // 使用state.overrides（在RegisterLayer时会从descriptor.defaultState复制）
     const RenderStateOverrides& overrides = state.overrides;
 
     if (overrides.depthTest.has_value()) {

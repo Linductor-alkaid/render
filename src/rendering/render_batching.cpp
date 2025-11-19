@@ -727,6 +727,41 @@ void BatchManager::ProcessWorkItem(const WorkItem& workItem) {
     m_recordingStorage.batches[batchIndex].AddItem(workItem.item);
 }
 
+namespace {
+    // 辅助函数：从 Renderable 获取三角形数
+    uint32_t GetRenderableTriangleCount(Renderable* renderable) {
+        if (!renderable || !renderable->IsVisible()) {
+            return 0;
+        }
+        
+        switch (renderable->GetType()) {
+            case RenderableType::Mesh: {
+                auto* meshRenderable = static_cast<MeshRenderable*>(renderable);
+                auto mesh = meshRenderable->GetMesh();
+                if (mesh) {
+                    const auto indexCount = mesh->GetIndexCount();
+                    if (indexCount > 0) {
+                        return static_cast<uint32_t>(indexCount / 3);
+                    }
+                }
+                return 0;
+            }
+            case RenderableType::Model: {
+                // ModelRenderable 可能包含多个部件，这里简化处理
+                // 如果需要精确计算，可以遍历所有部件
+                return 0; // 暂时返回0，因为ModelRenderable通常走批处理路径
+            }
+            case RenderableType::Sprite:
+            case RenderableType::Text: {
+                // Sprite 和 Text 通常是四边形（2个三角形）
+                return 2;
+            }
+            default:
+                return 0;
+        }
+    }
+}
+
 BatchManager::FlushResult BatchManager::Flush(RenderState* renderState) {
     FlushResult result{};
 
@@ -751,6 +786,8 @@ BatchManager::FlushResult BatchManager::Flush(RenderState* renderState) {
                 command.renderable->Render(renderState);
                 ++result.drawCalls;
                 ++result.fallbackDrawCalls;
+                // 计算 Immediate 命令的三角形数
+                result.batchedTriangles += GetRenderableTriangleCount(command.renderable);
             }
             ++result.fallbackBatches;
             continue;
@@ -801,6 +838,9 @@ BatchManager::FlushResult BatchManager::Flush(RenderState* renderState) {
                 batch.Draw(renderState, result.drawCalls, BatchingMode::Disabled);
                 result.fallbackDrawCalls += (result.drawCalls - drawCallsBefore);
                 ++result.fallbackBatches;
+                
+                // 在fallback模式下也计算triangles
+                result.batchedTriangles += batch.GetFallbackTriangleCount();
                 break;
             }
             default:
@@ -810,6 +850,23 @@ BatchManager::FlushResult BatchManager::Flush(RenderState* renderState) {
 
     Reset();
     return result;
+}
+
+uint32_t RenderBatch::GetFallbackTriangleCount() const noexcept {
+    uint32_t totalTriangles = 0;
+    for (const auto& item : m_items) {
+        if (!item.renderable || !item.renderable->IsVisible()) {
+            continue;
+        }
+        
+        if (item.type == BatchItemType::Mesh && item.meshData.mesh) {
+            const auto indexCount = item.meshData.mesh->GetIndexCount();
+            if (indexCount > 0) {
+                totalTriangles += static_cast<uint32_t>(indexCount / 3);
+            }
+        }
+    }
+    return totalTriangles;
 }
 
 size_t BatchManager::GetPendingItemCount() const noexcept {

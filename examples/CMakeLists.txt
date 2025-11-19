@@ -55,6 +55,7 @@ set(EXAMPLES
     51_layer_mask_demo
     52_application_boot_demo
     53_event_system_test
+    54_module_hud_test
     60_ui_framework_showcase
 )
 

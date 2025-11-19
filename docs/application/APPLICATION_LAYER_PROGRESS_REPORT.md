@@ -105,8 +105,10 @@
 #### CoreRenderModule (`modules/core_render_module.h/cpp`)
 - ✅ 模块骨架与注册机制
 - ✅ PreFrame/PostFrame 钩子
-- 🟡 异步加载任务限制配置（已声明，实现待完善）
-- 🔴 渲染系统自动注册（待实现）
+- ✅ 异步加载任务限制配置（已实现）
+- ✅ 渲染系统自动注册（已实现）
+  - 自动注册核心ECS组件（TransformComponent、MeshRenderComponent、ModelComponent、SpriteRenderComponent、CameraComponent、LightComponent、GeometryComponent）
+  - 自动注册核心渲染系统（WindowSystem、CameraSystem、TransformSystem、GeometrySystem、ResourceLoadingSystem、LightSystem、UniformSystem、MeshRenderSystem、ModelRenderSystem、SpriteAnimationSystem、SpriteRenderSystem、ResourceCleanupSystem）
 
 #### InputModule (`modules/input_module.h/cpp`)
 - ✅ SDL 事件处理
@@ -120,10 +122,14 @@
 
 #### DebugHUDModule (`modules/debug_hud_module.h/cpp`)
 - ✅ 模块骨架
-- ✅ FPS 计算与显示（基础实现）
-- 🔴 完整统计信息（Draw Call、批次数、内存使用等）
-- 🔴 渲染层级可视化开关
-- 🔴 Uniform/材质状态检查
+- ✅ FPS 计算与显示（使用文本渲染）
+- ✅ 完整统计信息显示（Draw Call、批次数、内存使用等）
+  - 性能统计：FPS、帧时间
+  - 渲染统计：Draw Calls（原始/批处理/实例化）、批次数、三角形数、顶点数
+  - 资源统计：纹理、网格、材质、着色器数量
+  - 内存统计：总内存、纹理内存、网格内存（MB）
+- 🟡 渲染层级可视化开关（待实现）
+- 🟡 Uniform/材质状态检查（待实现）
 
 ### 2.3 资源管理 🟡
 
@@ -294,16 +300,16 @@
 **目标**: 完善核心模块功能，增强调试工具
 
 **任务清单**:
-1. 🔄 CoreRenderModule 自动注册渲染系统
-2. 🔄 DebugHUDModule 完整统计信息显示
+1. ✅ CoreRenderModule 自动注册渲染系统（已完成）
+2. ✅ DebugHUDModule 完整统计信息显示（已完成）
 3. 🔄 DebugHUDModule 渲染层级可视化
 4. 🔄 DebugHUDModule Uniform/材质状态检查
 5. 📝 编写模块开发指南
 
 **验收标准**:
-- 核心模块功能完整可用
-- HUD 显示完整统计信息
-- 调试工具可实时查看渲染状态
+- ✅ 核心模块功能完整可用（已完成）
+- ✅ HUD 显示完整统计信息（已完成）
+- 🔄 调试工具可实时查看渲染状态（部分完成）
 
 ### Phase 2.4: 场景系统增强（预计 1 周）
 
@@ -437,8 +443,10 @@
 ### 近期计划（2 周内）
 1. ✅ ~~实现 EventBus 事件过滤器~~（已完成）
 2. ✅ ~~InputModule Blender 风格映射~~（已完成）
-3. DebugHUDModule 统计信息完善
-4. 编写事件系统使用指南
+3. ✅ ~~DebugHUDModule 统计信息完善~~（已完成）
+4. 🔄 DebugHUDModule 渲染层级可视化开关
+5. 🔄 DebugHUDModule Uniform/材质状态检查
+6. 📝 编写事件系统使用指南
 
 ### 中期计划（1 个月内）
 1. 场景保存/加载功能
