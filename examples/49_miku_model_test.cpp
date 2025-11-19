@@ -189,8 +189,8 @@ int main(int argc, char* argv[]) {
 
         if (keyboard[SDL_SCANCODE_W]) cameraPosition -= front * moveSpeed;
         if (keyboard[SDL_SCANCODE_S]) cameraPosition += front * moveSpeed;
-        if (keyboard[SDL_SCANCODE_A]) cameraPosition -= right * moveSpeed;
-        if (keyboard[SDL_SCANCODE_D]) cameraPosition += right * moveSpeed;
+        if (keyboard[SDL_SCANCODE_A]) cameraPosition += right * moveSpeed;
+        if (keyboard[SDL_SCANCODE_D]) cameraPosition -= right * moveSpeed;
         if (keyboard[SDL_SCANCODE_Q]) cameraPosition -= Vector3::UnitY() * moveSpeed;
         if (keyboard[SDL_SCANCODE_E]) cameraPosition += Vector3::UnitY() * moveSpeed;
 

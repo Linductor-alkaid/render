@@ -150,33 +150,33 @@ int main(int argc, char* argv[]) {
         Logger::GetInstance().Info("[ApplicationBootDemo] Press ESC or close window to exit.");
 
         // Demo 专用事件监听暂时关闭，以缩小排查范围
-        // auto& eventBus = host.GetEventBus();
-        // DemoEventSubscriptions subscriptions(eventBus);
-        // subscriptions.frameBeginListener =
-        //     eventBus.Subscribe<FrameBeginEvent>([](const FrameBeginEvent& evt) {
-        //         if (evt.frame.frameIndex % 120 == 0) {
-        //             Logger::GetInstance().InfoFormat("[EventBus] FrameBegin index=%llu time=%.2fs",
-        //                                              static_cast<unsigned long long>(evt.frame.frameIndex),
-        //                                              evt.frame.absoluteTime);
-        //         }
-        //     });
-        // subscriptions.frameTickListener = eventBus.Subscribe<FrameTickEvent>([](const FrameTickEvent&) {
-        //     // 可以在此处理游戏逻辑事件
-        // });
-        // subscriptions.frameEndListener =
-        //     eventBus.Subscribe<FrameEndEvent>([](const FrameEndEvent& evt) {
-        //         if (evt.frame.frameIndex % 240 == 0) {
-        //             Logger::GetInstance().InfoFormat("[EventBus] FrameEnd index=%llu dt=%.4f",
-        //                                              static_cast<unsigned long long>(evt.frame.frameIndex),
-        //                                              evt.frame.deltaTime);
-        //         }
-        //     });
-        // subscriptions.sceneLifecycleListener =
-        //     eventBus.Subscribe<SceneLifecycleEvent>([](const SceneLifecycleEvent& evt) {
-        //         Logger::GetInstance().DebugFormat("[EventBus] Scene '%s' stage %d",
-        //                                           evt.sceneId.c_str(),
-        //                                           static_cast<int>(evt.stage));
-        //     });
+        auto& eventBus = host.GetEventBus();
+        DemoEventSubscriptions subscriptions(eventBus);
+        subscriptions.frameBeginListener =
+            eventBus.Subscribe<FrameBeginEvent>([](const FrameBeginEvent& evt) {
+                if (evt.frame.frameIndex % 120 == 0) {
+                    Logger::GetInstance().InfoFormat("[EventBus] FrameBegin index=%llu time=%.2fs",
+                                                     static_cast<unsigned long long>(evt.frame.frameIndex),
+                                                     evt.frame.absoluteTime);
+                }
+            });
+        subscriptions.frameTickListener = eventBus.Subscribe<FrameTickEvent>([](const FrameTickEvent&) {
+            // 可以在此处理游戏逻辑事件
+        });
+        subscriptions.frameEndListener =
+            eventBus.Subscribe<FrameEndEvent>([](const FrameEndEvent& evt) {
+                if (evt.frame.frameIndex % 240 == 0) {
+                    Logger::GetInstance().InfoFormat("[EventBus] FrameEnd index=%llu dt=%.4f",
+                                                     static_cast<unsigned long long>(evt.frame.frameIndex),
+                                                     evt.frame.deltaTime);
+                }
+            });
+        subscriptions.sceneLifecycleListener =
+            eventBus.Subscribe<SceneLifecycleEvent>([](const SceneLifecycleEvent& evt) {
+                Logger::GetInstance().DebugFormat("[EventBus] Scene '%s' stage %d",
+                                                  evt.sceneId.c_str(),
+                                                  static_cast<int>(evt.stage));
+            });
 
         auto* inputModule = static_cast<InputModule*>(moduleRegistry.GetModule("InputModule"));
 

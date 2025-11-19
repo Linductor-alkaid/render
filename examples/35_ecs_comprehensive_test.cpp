@@ -91,8 +91,8 @@ public:
             // WASD移动（参考20测试：W前进，S后退）
             if (m_moveForward) velocity += forward;
             if (m_moveBackward) velocity -= forward;
-            if (m_moveLeft) velocity -= right;
-            if (m_moveRight) velocity += right;
+            if (m_moveLeft) velocity += right;
+            if (m_moveRight) velocity -= right;
             
             // QE上下移动
             if (m_moveUp) velocity += up;

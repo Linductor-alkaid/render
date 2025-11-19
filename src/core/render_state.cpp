@@ -26,6 +26,10 @@ RenderState::RenderState()
     , m_boundUniformBuffer(0)
     , m_boundShaderStorageBuffer(0)
     , m_currentProgram(0)
+    , m_viewMatrix(Matrix4::Identity())
+    , m_projectionMatrix(Matrix4::Identity())
+    , m_viewMatrixSet(false)
+    , m_projectionMatrixSet(false)
     , m_strictMode(false) {  // 默认使用缓存优化
     // 初始化纹理绑定数组
     m_boundTextures.fill(0);
@@ -225,6 +229,10 @@ void RenderState::Reset() {
     m_boundUniformBuffer = 0;
     m_boundShaderStorageBuffer = 0;
     m_currentProgram = 0;
+    
+    // 重置相机矩阵（不清除矩阵值，只清除标志，以便后续可以检查是否已设置）
+    m_viewMatrixSet = false;
+    m_projectionMatrixSet = false;
 }
 
 void RenderState::ApplyDepthTest() {
@@ -658,6 +666,42 @@ void RenderState::SetStrictMode(bool enable) {
 bool RenderState::IsStrictMode() const {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     return m_strictMode;
+}
+
+// ============================================================================
+// 相机矩阵管理
+// ============================================================================
+
+void RenderState::SetViewMatrix(const Matrix4& viewMatrix) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    m_viewMatrix = viewMatrix;
+    m_viewMatrixSet = true;
+}
+
+void RenderState::SetProjectionMatrix(const Matrix4& projectionMatrix) {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    m_projectionMatrix = projectionMatrix;
+    m_projectionMatrixSet = true;
+}
+
+Matrix4 RenderState::GetViewMatrix() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_viewMatrix;
+}
+
+Matrix4 RenderState::GetProjectionMatrix() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_projectionMatrix;
+}
+
+bool RenderState::IsViewMatrixSet() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_viewMatrixSet;
+}
+
+bool RenderState::IsProjectionMatrixSet() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return m_projectionMatrixSet;
 }
 
 } // namespace Render

@@ -3162,6 +3162,15 @@ void UniformSystem::SetCameraUniforms() {
     Vector3 cameraPos = camera->GetPosition();
     m_lastCameraPosition = cameraPos;
     
+    // ✅ 将相机矩阵存储到 RenderState，供 MeshRenderable::Render() 使用
+    if (m_renderer) {
+        auto renderState = m_renderer->GetRenderState();
+        if (renderState) {
+            renderState->SetViewMatrix(viewMatrix);
+            renderState->SetProjectionMatrix(projectionMatrix);
+        }
+    }
+    
     // 遍历所有 MeshRenderComponent，为每个材质的着色器设置 uniform
     auto entities = m_world->Query<MeshRenderComponent>();
     std::unordered_set<Shader*> processedShaders;  // 避免重复设置同一着色器

@@ -290,6 +290,40 @@ public:
      */
     uint32_t GetCurrentProgram() const;
     
+    // ========================================================================
+    // 相机矩阵管理
+    // ========================================================================
+    
+    /**
+     * @brief 设置当前视图矩阵
+     */
+    void SetViewMatrix(const Matrix4& viewMatrix);
+    
+    /**
+     * @brief 设置当前投影矩阵
+     */
+    void SetProjectionMatrix(const Matrix4& projectionMatrix);
+    
+    /**
+     * @brief 获取当前视图矩阵
+     */
+    Matrix4 GetViewMatrix() const;
+    
+    /**
+     * @brief 获取当前投影矩阵
+     */
+    Matrix4 GetProjectionMatrix() const;
+    
+    /**
+     * @brief 检查视图矩阵是否已设置
+     */
+    bool IsViewMatrixSet() const;
+    
+    /**
+     * @brief 检查投影矩阵是否已设置
+     */
+    bool IsProjectionMatrixSet() const;
+
 private:
     void ApplyDepthTest();
     void ApplyDepthFunc();
@@ -338,6 +372,14 @@ private:
     // 着色器程序状态
     // ========================================================================
     uint32_t m_currentProgram;
+    
+    // ========================================================================
+    // 相机矩阵状态
+    // ========================================================================
+    Matrix4 m_viewMatrix;
+    Matrix4 m_projectionMatrix;
+    bool m_viewMatrixSet;
+    bool m_projectionMatrixSet;
     
     // ========================================================================
     // 缓存同步控制

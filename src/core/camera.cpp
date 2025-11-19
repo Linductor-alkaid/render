@@ -643,8 +643,8 @@ void FirstPersonCameraController::Update(float deltaTime) {
     
     if (m_moveForward) movement -= m_camera.GetForward();
     if (m_moveBackward) movement += m_camera.GetForward();
-    if (m_moveRight) movement += m_camera.GetRight();
-    if (m_moveLeft) movement -= m_camera.GetRight();
+    if (m_moveRight) movement -= m_camera.GetRight();
+    if (m_moveLeft) movement += m_camera.GetRight();
     if (m_moveUp) movement += Vector3::UnitY();
     if (m_moveDown) movement -= Vector3::UnitY();
     

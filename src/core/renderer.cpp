@@ -659,6 +659,20 @@ void Renderer::BeginFrame() {
     m_deltaTime = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
     
+    // 清除颜色和深度缓冲区，并设置视口
+    if (m_initialized && m_renderState) {
+        // 确保视口正确设置
+        if (m_context) {
+            int width = m_context->GetWidth();
+            int height = m_context->GetHeight();
+            if (width > 0 && height > 0) {
+                m_renderState->SetViewport(0, 0, width, height);
+            }
+        }
+        // 清除缓冲区
+        m_renderState->Clear(true, true, false);
+    }
+    
     // 重置帧统计
     m_stats.Reset();
     m_batchManager.Reset();
@@ -993,7 +1007,8 @@ void Renderer::FlushRenderQueue() {
         bucket.maskIndex = record.descriptor.maskIndex;
 
         if (m_initialized) {
-            m_renderState->Reset();
+            // 注意：Reset()会重置状态，但不应该在这里调用，因为会重置视口等
+            // 只在每个layer开始时设置视口和禁用裁剪
             if (m_context) {
                 int width = m_context->GetWidth();
                 int height = m_context->GetHeight();

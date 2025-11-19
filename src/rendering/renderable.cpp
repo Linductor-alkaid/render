@@ -9,6 +9,7 @@
 #include "render/math_utils.h"
 #include "render/material_state_cache.h"
 #include "render/text/text.h"
+#include "render/camera.h"
 
 #include <algorithm>
 #include <array>
@@ -439,6 +440,45 @@ void MeshRenderable::Render(RenderState* renderState) {
             uniformMgr->SetMatrix4("uModel", modelMatrix);
             if (uniformMgr->HasUniform("uHasInstanceData")) {
                 uniformMgr->SetBool("uHasInstanceData", false);
+            }
+            
+            // ✅ 设置视图和投影矩阵（如果着色器需要但尚未设置）
+            // 优先从RenderState获取（由相机系统设置），如果没有则使用默认Camera生成
+            // 使用静态默认Camera对象，参考53测试样例：相机在(0, 0, 5)看向原点，FOV=45度
+            // 注意：Camera不可复制，使用静态指针避免复制
+            static Camera* defaultCamera = []() -> Camera* {
+                static Camera cam;
+                static std::once_flag initFlag;
+                // 使用函数静态变量确保只初始化一次
+                std::call_once(initFlag, [](Camera* c) {
+                    c->SetPerspective(45.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+                    c->SetPosition(Vector3(0.0f, 0.0f, 5.0f));
+                    c->LookAt(Vector3(0.0f, 0.0f, 0.0f));
+                }, &cam);
+                return &cam;
+            }();
+            
+            if (uniformMgr->HasUniform("uView")) {
+                Matrix4 viewMatrix;
+                if (renderState && renderState->IsViewMatrixSet()) {
+                    // 从RenderState获取相机系统设置的视图矩阵
+                    viewMatrix = renderState->GetViewMatrix();
+                } else {
+                    // 使用默认Camera生成视图矩阵
+                    viewMatrix = defaultCamera->GetViewMatrix();
+                }
+                uniformMgr->SetMatrix4("uView", viewMatrix);
+            }
+            if (uniformMgr->HasUniform("uProjection")) {
+                Matrix4 projectionMatrix;
+                if (renderState && renderState->IsProjectionMatrixSet()) {
+                    // 从RenderState获取相机系统设置的投影矩阵
+                    projectionMatrix = renderState->GetProjectionMatrix();
+                } else {
+                    // 使用默认Camera生成投影矩阵
+                    projectionMatrix = defaultCamera->GetProjectionMatrix();
+                }
+                uniformMgr->SetMatrix4("uProjection", projectionMatrix);
             }
             
             // ==================== ✅ 应用 MaterialOverride ====================
