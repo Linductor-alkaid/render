@@ -1118,6 +1118,17 @@ void Renderer::FlushRenderQueue() {
         m_stats.workerProcessed += flushResult.workerProcessed;
         m_stats.workerMaxQueueDepth = std::max(m_stats.workerMaxQueueDepth, flushResult.workerMaxQueueDepth);
         m_stats.workerWaitTimeMs += flushResult.workerWaitTimeMs;
+        
+        // ✅ 批处理完成后，恢复世界层的默认深度测试状态
+        // 这确保UI层的状态覆盖（depthTest=false, depthWrite=false）不会影响下一帧的世界层渲染
+        if (m_initialized && m_renderState) {
+            // 恢复世界层的默认状态：depthTest=true, depthWrite=true
+            m_renderState->SetDepthTest(true);
+            m_renderState->SetDepthWrite(true);
+            m_renderState->SetDepthFunc(DepthFunc::Less);
+            m_renderState->SetBlendMode(BlendMode::None);
+            m_renderState->SetCullFace(CullFace::Back);
+        }
 
         if (currentBatchingMode == BatchingMode::GpuInstancing) {
             m_stats.instancedDrawCalls += flushResult.instancedDrawCalls;

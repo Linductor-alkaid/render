@@ -312,10 +312,10 @@ int main(int argc, char* argv[]) {
         return -1;
     }
     
-    // 创建相机（从 Z 轴正方向看向原点）
+    // 创建相机（从 Z 轴负方向看向原点）
     Camera camera;
     camera.SetPerspective(45.0f, 1280.0f / 720.0f, 0.1f, 100.0f);
-    camera.SetPosition(Vector3(0.0f, 0.0f, 5.0f));
+    camera.SetPosition(Vector3(0.0f, 0.0f, -5.0f));
     camera.LookAt(Vector3(0.0f, 0.0f, 0.0f));
     
     std::cout << "渲染资源初始化完成" << std::endl;

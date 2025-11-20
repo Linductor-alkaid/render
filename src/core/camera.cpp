@@ -325,7 +325,10 @@ void Camera::RotateAround(const Vector3& axis, float angleDegrees) {
 // ============================================================================
 
 Vector3 Camera::GetForward() const {
-    return m_transform.GetForward();
+    // 相机的前方向是相机看向的方向（-Z，OpenGL/DirectX约定）
+    // Transform 使用 +Z 作为物体的前方向，但相机需要看向 -Z
+    // 因此返回负的 Transform 前方向，与视图矩阵约定保持一致
+    return -m_transform.GetForward();
 }
 
 Vector3 Camera::GetRight() const {
@@ -554,58 +557,23 @@ void Camera::MarkProjectionDirty() {
 void Camera::UpdateViewMatrix() const {
     // 注意：调用者必须已经持有锁
     
-    // 相机的视图矩阵是其世界变换矩阵的逆矩阵
-    // 这是标准的 OpenGL 视图矩阵计算方式
-    Matrix4 worldMatrix = m_transform.GetWorldMatrix();
+    Vector3 eye = m_transform.GetWorldPosition();
     
-    // 检查世界矩阵的可逆性
-    float det = worldMatrix.determinant();
-    if (std::abs(det) < MathUtils::EPSILON) {
-        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidState,
-            "Camera::UpdateViewMatrix: 世界变换矩阵不可逆（行列式接近零），使用单位矩阵"));
-        m_viewMatrix = Matrix4::Identity();
-    } else {
-        // 对于仿射变换矩阵 M = [R T; 0 1]，其逆矩阵是 M^-1 = [R^T -R^T*T; 0 1]
-        // 手动计算以确保正确性和性能
-        
-        // 提取旋转部分（3x3 左上角）
-        Matrix3 rotation = worldMatrix.block<3, 3>(0, 0);
-        
-        // 提取平移部分（第4列的前3个元素）
-        Vector3 translation = worldMatrix.block<3, 1>(0, 3);
-        
-        // 计算逆矩阵
-        // 旋转部分的逆 = 转置（因为旋转矩阵是正交矩阵）
-        Matrix3 rotationInv = rotation.transpose();
-        
-        // 平移部分的逆 = -R^T * T
-        // 注意：对于视图矩阵，我们需要的是将世界坐标转换为相机坐标
-        // 视图矩阵的平移部分应该是 -R^T * T，但这里需要检查符号
-        // 实际上，对于 M = T * R，其逆矩阵 M^-1 = R^T * T^-1 = [R^T -R^T*t; 0 1]
-        // 但视图矩阵需要的是将世界坐标转换为相机坐标，所以平移部分应该是 R^T * (-t)
-        // 即 translationInv = rotationInv * (-translation) = -rotationInv * translation
-        // 但根据 MathUtils::LookAt 的实现，视图矩阵的平移部分应该是 f.dot(eye)
-        // 其中 f = (center - eye).normalized()，eye 是相机位置
-        // 如果 eye = (0, 0, 5)，center = (0, 0, 0)，则 f = (0, 0, -1)
-        // 所以 mat(2, 3) = (0, 0, -1) · (0, 0, 5) = -5
-        // 但我们的计算是 -R^T * T = (0, 0, 5)，符号相反
-        // 问题可能在于：MathUtils::TRS 的构建顺序是 T * R * S
-        // 对于 M = T * R，其逆矩阵是 M^-1 = R^-1 * T^-1 = R^T * [I -t; 0 1] = [R^T -R^T*t; 0 1]
-        // 所以 translationInv = -R^T * T 应该是正确的
-        // 但视图矩阵的平移部分应该是 (0, 0, -5)，而不是 (0, 0, 5)
-        // 让我检查一下：如果 R^T * T = (0, 0, -5)，那么 -R^T * T = (0, 0, 5)
-        // 但视图矩阵的平移部分应该是 (0, 0, -5)
-        // 所以问题可能在于：我们需要的是 R^T * T，而不是 -R^T * T
-        Vector3 translationInv = rotationInv * translation;
-        
-        // 验证计算：如果旋转矩阵包含缩放，需要特殊处理
-        // 但通常相机的旋转矩阵应该是纯旋转（正交矩阵），所以转置就是逆
-        
-        // 构建视图矩阵
-        m_viewMatrix = Matrix4::Identity();
-        m_viewMatrix.block<3, 3>(0, 0) = rotationInv;
-        m_viewMatrix.block<3, 1>(0, 3) = translationInv;
-    }
+    // 使用旋转的共轭（转置）来构建视图矩阵
+    // 这是标准的OpenGL视图矩阵构建方式
+    Quaternion rotation = m_transform.GetRotation();
+    Quaternion viewRotation = rotation.conjugate();  // 共轭 = 逆旋转
+    
+    // 构建视图矩阵的旋转部分（转置）
+    Matrix3 viewRotMatrix = viewRotation.toRotationMatrix();
+    
+    // 构建视图矩阵的平移部分：-R^T * T
+    Vector3 translation = -viewRotMatrix * eye;
+    
+    // 构建完整的视图矩阵
+    m_viewMatrix = Matrix4::Identity();
+    m_viewMatrix.block<3, 3>(0, 0) = viewRotMatrix;
+    m_viewMatrix.block<3, 1>(0, 3) = translation;
     
     // 使用原子操作更新脏标志
     m_viewDirty.store(false, std::memory_order_release);
@@ -641,10 +609,10 @@ void FirstPersonCameraController::Update(float deltaTime) {
     // 计算移动方向
     Vector3 movement = Vector3::Zero();
     
-    if (m_moveForward) movement -= m_camera.GetForward();
-    if (m_moveBackward) movement += m_camera.GetForward();
-    if (m_moveRight) movement -= m_camera.GetRight();
-    if (m_moveLeft) movement += m_camera.GetRight();
+    if (m_moveForward) movement += m_camera.GetForward();
+    if (m_moveBackward) movement -= m_camera.GetForward();
+    if (m_moveRight) movement += m_camera.GetRight();
+    if (m_moveLeft) movement -= m_camera.GetRight();
     if (m_moveUp) movement += Vector3::UnitY();
     if (m_moveDown) movement -= Vector3::UnitY();
     
@@ -658,8 +626,8 @@ void FirstPersonCameraController::Update(float deltaTime) {
 
 void FirstPersonCameraController::OnMouseMove(float deltaX, float deltaY) {
     
-    // 更新旋转角度（调换左右方向）
-    m_yaw -= deltaX * m_mouseSensitivity;  // 将+改为-，调换左右旋转方向
+    // 更新旋转角度
+    m_yaw -= deltaX * m_mouseSensitivity;
     m_pitch -= deltaY * m_mouseSensitivity;
     
     // 限制俯仰角
@@ -700,8 +668,8 @@ void OrbitCameraController::Update(float deltaTime) {
 }
 
 void OrbitCameraController::OnMouseMove(float deltaX, float deltaY) {
-    // 更新旋转角度（调换左右方向）
-    m_yaw -= deltaX * m_mouseSensitivity;  // 将+改为-，调换左右旋转方向
+    // 更新旋转角度
+    m_yaw -= deltaX * m_mouseSensitivity;
     m_pitch -= deltaY * m_mouseSensitivity;
     
     // 限制俯仰角
@@ -762,8 +730,8 @@ void ThirdPersonCameraController::Update(float deltaTime) {
 }
 
 void ThirdPersonCameraController::OnMouseMove(float deltaX, float deltaY) {
-    // 更新旋转角度（调换左右方向）
-    m_yaw -= deltaX * m_mouseSensitivity;  // 将+改为-，调换左右旋转方向
+    // 更新旋转角度
+    m_yaw -= deltaX * m_mouseSensitivity;
     m_pitch -= deltaY * m_mouseSensitivity;
     
     // 限制俯仰角

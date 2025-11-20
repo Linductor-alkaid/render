@@ -375,7 +375,7 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
         return; // 目标点与当前位置重合
     }
     
-    Quaternion lookRotation = MathUtils::LookRotation(direction, up);
+    Quaternion lookRotation = MathUtils::LookRotation(-direction, up);
     
     Transform* parent = m_parent.load(std::memory_order_acquire);
     if (parent) {

@@ -4,15 +4,15 @@
 
 # 应用层开发进度汇报与后续计划
 
-**更新时间**: 2025-11-18 (更新: 2025-01-XX)  
-**测试状态**: ✅ 单元测试和压力测试已通过（2025-01-XX），事件系统测试已通过（53_event_system_test）  
+**更新时间**: 2025-11-19  
+**测试状态**: ✅ 单元测试和压力测试已通过，事件系统测试已通过（53_event_system_test），模块和HUD测试已通过（54_module_hud_test）  
 **参考文档**: [SCENE_MODULE_FRAMEWORK.md](../SCENE_MODULE_FRAMEWORK.md)
 
 ---
 
 ## 1. 总体进度概览
 
-根据 `SCENE_MODULE_FRAMEWORK.md` 的设计方案，应用层框架的核心基础设施已基本完成，**整体完成度约 80%**。
+根据 `SCENE_MODULE_FRAMEWORK.md` 的设计方案，应用层框架的核心基础设施已基本完成，**整体完成度约 85%**。
 
 ### 完成度统计
 
@@ -27,9 +27,9 @@
 | SceneGraph | 100% | ✅ 已完成 |
 | ApplicationHost | 100% | ✅ 已完成 |
 | **模块实现** | | |
-| CoreRenderModule | 80% | 🟡 骨架完成，功能待完善 |
+| CoreRenderModule | 100% | ✅ 已完成（包含自动注册渲染系统） |
 | InputModule | 100% | ✅ 已完成 |
-| DebugHUDModule | 60% | 🟡 基础HUD，统计功能待完善 |
+| DebugHUDModule | 90% | ✅ 基本完成（统计信息显示已实现，UI层深度测试已修复） |
 | **资源管理** | | |
 | 资源清单系统 | 100% | ✅ 已完成 |
 | 预加载检测 | 100% | ✅ 已完成 |
@@ -106,9 +106,10 @@
 - ✅ 模块骨架与注册机制
 - ✅ PreFrame/PostFrame 钩子
 - ✅ 异步加载任务限制配置（已实现）
-- ✅ 渲染系统自动注册（已实现）
+- ✅ 渲染系统自动注册（已实现，2025-11-19）
   - 自动注册核心ECS组件（TransformComponent、MeshRenderComponent、ModelComponent、SpriteRenderComponent、CameraComponent、LightComponent、GeometryComponent）
   - 自动注册核心渲染系统（WindowSystem、CameraSystem、TransformSystem、GeometrySystem、ResourceLoadingSystem、LightSystem、UniformSystem、MeshRenderSystem、ModelRenderSystem、SpriteAnimationSystem、SpriteRenderSystem、ResourceCleanupSystem）
+  - 系统按优先级正确排序，支持依赖关系配置
 
 #### InputModule (`modules/input_module.h/cpp`)
 - ✅ SDL 事件处理
@@ -123,11 +124,16 @@
 #### DebugHUDModule (`modules/debug_hud_module.h/cpp`)
 - ✅ 模块骨架
 - ✅ FPS 计算与显示（使用文本渲染）
-- ✅ 完整统计信息显示（Draw Call、批次数、内存使用等）
+- ✅ 完整统计信息显示（Draw Call、批次数、内存使用等，2025-11-19）
   - 性能统计：FPS、帧时间
   - 渲染统计：Draw Calls（原始/批处理/实例化）、批次数、三角形数、顶点数
   - 资源统计：纹理、网格、材质、着色器数量
   - 内存统计：总内存、纹理内存、网格内存（MB）
+- ✅ UI层深度测试修复（2025-11-19）
+  - 自动配置UI层（LayerID 800）禁用深度测试和深度写入
+  - 使用 `RenderLayerRegistry::SetOverrides` 正确设置渲染状态
+  - 确保UI文本不会遮挡3D场景
+  - 文本位置计算优化，支持左对齐和边界检查
 - 🟡 渲染层级可视化开关（待实现）
 - 🟡 Uniform/材质状态检查（待实现）
 
@@ -211,16 +217,19 @@
 
 ### 3.2 中优先级（功能增强）
 
-#### CoreRenderModule 完善
-- 自动注册核心渲染系统（MeshRenderSystem、LightSystem 等）
-- 异步加载任务限制配置实现
-- 渲染统计收集与上报
+#### CoreRenderModule 完善 ✅（已完成，2025-11-19）
+- ✅ 自动注册核心渲染系统（MeshRenderSystem、LightSystem 等）
+- ✅ 异步加载任务限制配置实现
+- ✅ 渲染统计收集与上报
+- ✅ 测试程序验证（54_module_hud_test）
 
-#### DebugHUDModule 增强
-- 完整统计信息显示（Draw Call、批次数、内存使用、GPU 时间等）
-- 渲染层级可视化开关
-- Uniform/材质状态检查面板
-- 性能分析时间轴
+#### DebugHUDModule 增强 ✅（基本完成，2025-11-19）
+- ✅ 完整统计信息显示（Draw Call、批次数、内存使用等）
+- ✅ UI层深度测试修复（确保3D场景可见）
+- ✅ 文本渲染位置优化（左对齐、边界检查）
+- 🔄 渲染层级可视化开关（待实现）
+- 🔄 Uniform/材质状态检查面板（待实现）
+- 🔄 性能分析时间轴（待实现）
 
 #### 多场景热切换测试
 - 场景栈压力测试
@@ -300,11 +309,12 @@
 **目标**: 完善核心模块功能，增强调试工具
 
 **任务清单**:
-1. ✅ CoreRenderModule 自动注册渲染系统（已完成）
-2. ✅ DebugHUDModule 完整统计信息显示（已完成）
-3. 🔄 DebugHUDModule 渲染层级可视化
-4. 🔄 DebugHUDModule Uniform/材质状态检查
-5. 📝 编写模块开发指南
+1. ✅ CoreRenderModule 自动注册渲染系统（已完成，2025-11-19）
+2. ✅ DebugHUDModule 完整统计信息显示（已完成，2025-11-19）
+3. ✅ DebugHUDModule UI层深度测试修复（已完成，2025-11-19）
+4. 🔄 DebugHUDModule 渲染层级可视化
+5. 🔄 DebugHUDModule Uniform/材质状态检查
+6. 📝 编写模块开发指南
 
 **验收标准**:
 - ✅ 核心模块功能完整可用（已完成）
@@ -443,10 +453,11 @@
 ### 近期计划（2 周内）
 1. ✅ ~~实现 EventBus 事件过滤器~~（已完成）
 2. ✅ ~~InputModule Blender 风格映射~~（已完成）
-3. ✅ ~~DebugHUDModule 统计信息完善~~（已完成）
-4. 🔄 DebugHUDModule 渲染层级可视化开关
-5. 🔄 DebugHUDModule Uniform/材质状态检查
-6. 📝 编写事件系统使用指南
+3. ✅ ~~DebugHUDModule 统计信息完善~~（已完成，2025-11-19）
+4. ✅ ~~DebugHUDModule UI层深度测试修复~~（已完成，2025-11-19）
+5. 🔄 DebugHUDModule 渲染层级可视化开关
+6. 🔄 DebugHUDModule Uniform/材质状态检查
+7. 📝 编写事件系统使用指南
 
 ### 中期计划（1 个月内）
 1. 场景保存/加载功能
@@ -504,6 +515,26 @@ Total Test time (real) =  15.67 sec
 - ✅ 渲染集成测试（验证操作对渲染的影响）
 
 **测试状态**: ✅ 通过
+
+### 模块和HUD测试结果（2025-11-19）
+
+**测试程序**: `examples/54_module_hud_test.cpp`
+
+**测试覆盖**:
+- ✅ CoreRenderModule 自动注册渲染系统验证
+- ✅ CoreRenderModule 自动注册ECS组件验证
+- ✅ DebugHUDModule 统计信息显示（性能、渲染、资源、内存）
+- ✅ DebugHUDModule UI层深度测试修复验证（确保3D场景可见）
+- ✅ 文本渲染位置和边界检查
+- ✅ 模块生命周期测试（注册、更新、注销）
+
+**测试状态**: ✅ 通过
+
+**关键修复**:
+- UI层（LayerID 800）深度测试和深度写入已正确禁用
+- 使用 `RenderLayerRegistry::SetOverrides` 正确配置渲染状态
+- 文本位置计算优化，支持左对齐和边界检查
+- 确保UI文本不会遮挡3D场景
 
 ---
 

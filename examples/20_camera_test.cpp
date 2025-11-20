@@ -192,7 +192,7 @@ int main(int argc, char* argv[]) {
     
     Logger::GetInstance().Info("初始化成功");
     Logger::GetInstance().Info("控制说明：");
-    Logger::GetInstance().Info("  W - 向后移动 / S - 向前移动");
+    Logger::GetInstance().Info("  W - 向前移动 / S - 向后移动");
     Logger::GetInstance().Info("  A - 向左移动 / D - 向右移动");
     Logger::GetInstance().Info("  Q - 向下移动 / E - 向上移动");
     Logger::GetInstance().Info("  鼠标移动 - 旋转视角");
@@ -297,14 +297,14 @@ int main(int argc, char* argv[]) {
                         break;
                     }
                     
-                    // 第一人称相机移动控制（W后退，S前进）
+                    // 第一人称相机移动控制
                     case SDLK_W:
                         if (auto* fpc = dynamic_cast<FirstPersonCameraController*>(controller.get()))
-                            fpc->SetMoveBackward(true);  // W改为后退
+                            fpc->SetMoveForward(true);
                         break;
                     case SDLK_S:
                         if (auto* fpc = dynamic_cast<FirstPersonCameraController*>(controller.get()))
-                            fpc->SetMoveForward(true);   // S改为前进
+                            fpc->SetMoveBackward(true);  
                         break;
                     case SDLK_A:
                         if (auto* fpc = dynamic_cast<FirstPersonCameraController*>(controller.get()))
@@ -328,11 +328,11 @@ int main(int argc, char* argv[]) {
                 switch (event.key.key) {
                     case SDLK_W:
                         if (auto* fpc = dynamic_cast<FirstPersonCameraController*>(controller.get()))
-                            fpc->SetMoveBackward(false);  // W改为后退
+                            fpc->SetMoveForward(false); 
                         break;
                     case SDLK_S:
                         if (auto* fpc = dynamic_cast<FirstPersonCameraController*>(controller.get()))
-                            fpc->SetMoveForward(false);   // S改为前进
+                            fpc->SetMoveBackward(false); 
                         break;
                     case SDLK_A:
                         if (auto* fpc = dynamic_cast<FirstPersonCameraController*>(controller.get()))

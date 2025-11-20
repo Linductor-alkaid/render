@@ -277,6 +277,17 @@ int main(int argc, char* argv[]) {
         RenderLayerId worldLayerId = Layers::World::Midground;
         bool hudVisible = true;
         
+        // 计算层掩码（参考51测试）
+        uint32_t worldMask = 0;
+        uint32_t uiMask = 0;
+        for (const auto& record : layerRegistry.ListLayers()) {
+            if (record.descriptor.id == Layers::World::Midground) {
+                worldMask = 1u << record.descriptor.maskIndex;
+            } else if (record.descriptor.id == Layers::UI::Default) {
+                uiMask = 1u << record.descriptor.maskIndex;
+            }
+        }
+        
         // 确保UI层初始可见
         if (layerRegistry.HasLayer(uiLayerId)) {
             layerRegistry.SetEnabled(uiLayerId, true);
@@ -302,6 +313,29 @@ int main(int argc, char* argv[]) {
             }
         } else {
             Logger::GetInstance().WarningFormat("[ModuleHUDTest] World layer (id=%u) not found", worldLayerId.value);
+        }
+        
+        // 获取相机实体并设置初始layerMask（参考51测试）
+        auto* cameraSystem = world.GetSystem<CameraSystem>();
+        EntityID mainCameraEntity = cameraSystem ? cameraSystem->GetMainCamera() : EntityID::Invalid();
+        if (mainCameraEntity != EntityID::Invalid() && world.HasComponent<CameraComponent>(mainCameraEntity)) {
+            auto& cameraComponent = world.GetComponent<CameraComponent>(mainCameraEntity);
+            // 根据当前层的enabled状态设置layerMask
+            bool worldEnabled = false;
+            bool uiEnabled = false;
+            if (layerRegistry.HasLayer(worldLayerId)) {
+                auto worldStateOpt = layerRegistry.GetState(worldLayerId);
+                worldEnabled = worldStateOpt.has_value() && worldStateOpt.value().enabled;
+            }
+            if (layerRegistry.HasLayer(uiLayerId)) {
+                auto uiStateOpt = layerRegistry.GetState(uiLayerId);
+                uiEnabled = uiStateOpt.has_value() && uiStateOpt.value().enabled;
+            }
+            cameraComponent.layerMask = (worldEnabled ? worldMask : 0u) | (uiEnabled ? uiMask : 0u);
+            Logger::GetInstance().InfoFormat("[ModuleHUDTest] Initial camera layerMask = 0x%08X (world=%s, ui=%s)",
+                                             cameraComponent.layerMask,
+                                             worldEnabled ? "ON" : "OFF",
+                                             uiEnabled ? "ON" : "OFF");
         }
 
         bool running = true;
@@ -362,6 +396,26 @@ int main(int argc, char* argv[]) {
                     layerRegistry.SetEnabled(uiLayerId, hudVisible);
                     Logger::GetInstance().InfoFormat("[ModuleHUDTest] HUD layer visibility toggled to %s", 
                                                      hudVisible ? "ON" : "OFF");
+                    
+                    // 更新相机layerMask以反映层的enabled状态（参考51测试）
+                    if (mainCameraEntity != EntityID::Invalid() && world.HasComponent<CameraComponent>(mainCameraEntity)) {
+                        auto& cameraComponent = world.GetComponent<CameraComponent>(mainCameraEntity);
+                        bool worldEnabled = false;
+                        bool uiEnabled = false;
+                        if (layerRegistry.HasLayer(worldLayerId)) {
+                            auto worldStateOpt = layerRegistry.GetState(worldLayerId);
+                            worldEnabled = worldStateOpt.has_value() && worldStateOpt.value().enabled;
+                        }
+                        if (layerRegistry.HasLayer(uiLayerId)) {
+                            auto uiStateOpt = layerRegistry.GetState(uiLayerId);
+                            uiEnabled = uiStateOpt.has_value() && uiStateOpt.value().enabled;
+                        }
+                        cameraComponent.layerMask = (worldEnabled ? worldMask : 0u) | (uiEnabled ? uiMask : 0u);
+                        Logger::GetInstance().InfoFormat("[ModuleHUDTest] Camera layerMask updated to 0x%08X (world=%s, ui=%s)",
+                                                         cameraComponent.layerMask,
+                                                         worldEnabled ? "ON" : "OFF",
+                                                         uiEnabled ? "ON" : "OFF");
+                    }
                 }
             }
 
