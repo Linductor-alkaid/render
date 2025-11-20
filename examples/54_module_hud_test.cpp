@@ -1,6 +1,12 @@
 /**
  * @file 54_module_hud_test.cpp
  * @brief 模块和HUD测试 - 测试 CoreRenderModule 自动注册渲染系统和 DebugHUDModule 统计信息显示
+ * 
+ * 测试功能：
+ * 1. CoreRenderModule 自动注册渲染系统和组件
+ * 2. DebugHUDModule 统计信息显示
+ * 3. DebugHUDModule 渲染层级可视化（L键切换）
+ * 4. DebugHUDModule Uniform/材质状态检查（M键切换）
  */
 
 #include "render/application/application_host.h"
@@ -270,12 +276,15 @@ int main(int argc, char* argv[]) {
         Logger::GetInstance().Info("[ModuleHUDTest] Pushed BootScene");
 
         auto* inputModule = static_cast<InputModule*>(moduleRegistry.GetModule("InputModule"));
+        auto* debugHUDModule = static_cast<DebugHUDModule*>(moduleRegistry.GetModule("DebugHUDModule"));
 
         // 获取层注册表，用于切换HUD层可见性
         auto& layerRegistry = renderer->GetLayerRegistry();
         RenderLayerId uiLayerId = Layers::UI::Default;
         RenderLayerId worldLayerId = Layers::World::Midground;
         bool hudVisible = true;
+        bool layerInfoVisible = false;  // 渲染层级信息显示状态
+        bool uniformMaterialInfoVisible = false;  // Uniform/材质信息显示状态
         
         // 计算层掩码（参考51测试）
         uint32_t worldMask = 0;
@@ -353,12 +362,16 @@ int main(int argc, char* argv[]) {
         Logger::GetInstance().Info("[ModuleHUDTest] Controls:");
         Logger::GetInstance().Info("[ModuleHUDTest]   - ESC or Close Window: Exit");
         Logger::GetInstance().Info("[ModuleHUDTest]   - H: Toggle HUD layer visibility");
+        Logger::GetInstance().Info("[ModuleHUDTest]   - L: Toggle render layer info display");
+        Logger::GetInstance().Info("[ModuleHUDTest]   - M: Toggle Uniform/Material info display");
         Logger::GetInstance().Info("[ModuleHUDTest] ");
         Logger::GetInstance().Info("[ModuleHUDTest] The Debug HUD should display:");
         Logger::GetInstance().Info("[ModuleHUDTest]   - Performance stats (FPS, Frame Time)");
         Logger::GetInstance().Info("[ModuleHUDTest]   - Rendering stats (Draw Calls, Batches, Triangles)");
         Logger::GetInstance().Info("[ModuleHUDTest]   - Resource stats (Textures, Meshes, Materials)");
         Logger::GetInstance().Info("[ModuleHUDTest]   - Memory stats (Total, Textures, Meshes)");
+        Logger::GetInstance().Info("[ModuleHUDTest]   - Render layer info (press L to toggle)");
+        Logger::GetInstance().Info("[ModuleHUDTest]   - Uniform/Material info (press M to toggle)");
         Logger::GetInstance().Info("[ModuleHUDTest] =========================================");
 
         while (running) {
@@ -416,6 +429,22 @@ int main(int argc, char* argv[]) {
                                                          worldEnabled ? "ON" : "OFF",
                                                          uiEnabled ? "ON" : "OFF");
                     }
+                }
+                
+                // 检查L键切换渲染层级信息显示
+                if (inputModule->WasKeyPressed(SDL_SCANCODE_L) && debugHUDModule) {
+                    layerInfoVisible = !layerInfoVisible;
+                    debugHUDModule->SetShowLayerInfo(layerInfoVisible);
+                    Logger::GetInstance().InfoFormat("[ModuleHUDTest] Render layer info display toggled to %s", 
+                                                     layerInfoVisible ? "ON" : "OFF");
+                }
+                
+                // 检查M键切换Uniform/材质信息显示
+                if (inputModule->WasKeyPressed(SDL_SCANCODE_M) && debugHUDModule) {
+                    uniformMaterialInfoVisible = !uniformMaterialInfoVisible;
+                    debugHUDModule->SetShowUniformMaterialInfo(uniformMaterialInfoVisible);
+                    Logger::GetInstance().InfoFormat("[ModuleHUDTest] Uniform/Material info display toggled to %s", 
+                                                     uniformMaterialInfoVisible ? "ON" : "OFF");
                 }
             }
 
@@ -475,6 +504,15 @@ int main(int argc, char* argv[]) {
                     resourceStats.meshCount,
                     static_cast<float>(resourceStats.totalMemory) / (1024.0f * 1024.0f)
                 );
+                
+                // 输出调试功能状态
+                if (debugHUDModule) {
+                    Logger::GetInstance().InfoFormat(
+                        "[ModuleHUDTest] Debug HUD features - LayerInfo: %s, UniformMaterialInfo: %s",
+                        debugHUDModule->GetShowLayerInfo() ? "ON" : "OFF",
+                        debugHUDModule->GetShowUniformMaterialInfo() ? "ON" : "OFF"
+                    );
+                }
             }
         }
 

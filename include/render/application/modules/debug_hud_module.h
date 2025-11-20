@@ -34,21 +34,75 @@ public:
 
     void OnPostFrame(const FrameUpdateArgs& frame, AppContext& ctx) override;
 
+    // ========================================================================
+    // 调试功能开关
+    // ========================================================================
+    
+    /**
+     * @brief 设置是否显示渲染层级信息
+     */
+    void SetShowLayerInfo(bool show) { m_showLayerInfo = show; }
+    
+    /**
+     * @brief 获取是否显示渲染层级信息
+     */
+    bool GetShowLayerInfo() const { return m_showLayerInfo; }
+    
+    /**
+     * @brief 设置是否显示Uniform/材质状态
+     */
+    void SetShowUniformMaterialInfo(bool show) { m_showUniformMaterialInfo = show; }
+    
+    /**
+     * @brief 获取是否显示Uniform/材质状态
+     */
+    bool GetShowUniformMaterialInfo() const { return m_showUniformMaterialInfo; }
+
 private:
     void DrawHUD(const FrameUpdateArgs& frame, AppContext& ctx);
     void UpdateTextContent(const FrameUpdateArgs& frame, AppContext& ctx);
     void CreateTextObjects(AppContext& ctx);
     void DestroyTextObjects();
+    void UpdateLayerInfoText(const FrameUpdateArgs& frame, AppContext& ctx);
+    void UpdateUniformMaterialInfoText(const FrameUpdateArgs& frame, AppContext& ctx);
+    
+    // 辅助函数：创建和更新右对齐文本对象
+    void CreateRightAlignedTextObjects(
+        std::vector<TextPtr>& textObjects,
+        std::vector<std::unique_ptr<TextRenderable>>& textRenderables,
+        size_t count,
+        AppContext& ctx,
+        int32_t basePriority,
+        const Color& headerColor,
+        const Color& textColor);
+    
+    void UpdateRightAlignedTextObjects(
+        const std::vector<std::string>& lines,
+        std::vector<TextPtr>& textObjects,
+        std::vector<std::unique_ptr<TextRenderable>>& textRenderables,
+        AppContext& ctx);
 
     bool m_registered = false;
     float m_accumulatedTime = 0.0f;
     uint32_t m_frameCounter = 0;
     float m_smoothedFPS = 0.0f;
     
+    // 调试功能开关
+    bool m_showLayerInfo = false;              // 是否显示渲染层级信息
+    bool m_showUniformMaterialInfo = false;    // 是否显示Uniform/材质状态
+    
     // 文本对象
     FontPtr m_font;
     std::vector<TextPtr> m_textObjects;
     std::vector<std::unique_ptr<TextRenderable>> m_textRenderables;
+    
+    // 层级信息文本对象（动态创建）
+    std::vector<TextPtr> m_layerInfoTextObjects;
+    std::vector<std::unique_ptr<TextRenderable>> m_layerInfoTextRenderables;
+    
+    // Uniform/材质信息文本对象（动态创建）
+    std::vector<TextPtr> m_uniformMaterialTextObjects;
+    std::vector<std::unique_ptr<TextRenderable>> m_uniformMaterialTextRenderables;
     
     // 统计信息缓存
     struct StatsCache {

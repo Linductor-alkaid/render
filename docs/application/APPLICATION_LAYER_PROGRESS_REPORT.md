@@ -227,8 +227,14 @@
 - ✅ 完整统计信息显示（Draw Call、批次数、内存使用等）
 - ✅ UI层深度测试修复（确保3D场景可见）
 - ✅ 文本渲染位置优化（左对齐、边界检查）
-- 🔄 渲染层级可视化开关（待实现）
-- 🔄 Uniform/材质状态检查面板（待实现）
+- ✅ 渲染层级可视化开关（已实现，2025-11-19）
+  - 支持显示/隐藏渲染层级信息
+  - 显示层级ID、名称、优先级、Mask索引、启用状态
+  - 通过 `SetShowLayerInfo()` 控制显示
+- ✅ Uniform/材质状态检查面板（已实现，2025-11-19）
+  - 显示材质和着色器统计信息
+  - 显示内存使用情况
+  - 通过 `SetShowUniformMaterialInfo()` 控制显示
 - 🔄 性能分析时间轴（待实现）
 
 #### 多场景热切换测试
@@ -312,14 +318,14 @@
 1. ✅ CoreRenderModule 自动注册渲染系统（已完成，2025-11-19）
 2. ✅ DebugHUDModule 完整统计信息显示（已完成，2025-11-19）
 3. ✅ DebugHUDModule UI层深度测试修复（已完成，2025-11-19）
-4. 🔄 DebugHUDModule 渲染层级可视化
-5. 🔄 DebugHUDModule Uniform/材质状态检查
-6. 📝 编写模块开发指南
+4. ✅ DebugHUDModule 渲染层级可视化（已完成，2025-11-19）
+5. ✅ DebugHUDModule Uniform/材质状态检查（已完成，2025-11-19）
+6. ✅ 编写模块开发指南（已完成，2025-11-19）
 
 **验收标准**:
 - ✅ 核心模块功能完整可用（已完成）
 - ✅ HUD 显示完整统计信息（已完成）
-- 🔄 调试工具可实时查看渲染状态（部分完成）
+- ✅ 调试工具可实时查看渲染状态（已完成）
 
 ### Phase 2.4: 场景系统增强（预计 1 周）
 
@@ -455,9 +461,9 @@
 2. ✅ ~~InputModule Blender 风格映射~~（已完成）
 3. ✅ ~~DebugHUDModule 统计信息完善~~（已完成，2025-11-19）
 4. ✅ ~~DebugHUDModule UI层深度测试修复~~（已完成，2025-11-19）
-5. 🔄 DebugHUDModule 渲染层级可视化开关
-6. 🔄 DebugHUDModule Uniform/材质状态检查
-7. 📝 编写事件系统使用指南
+5. ✅ ~~DebugHUDModule 渲染层级可视化开关~~（已完成，2025-11-19）
+6. ✅ ~~DebugHUDModule Uniform/材质状态检查~~（已完成，2025-11-19）
+7. ✅ ~~编写事件系统使用指南~~（已完成，2025-11-19）
 
 ### 中期计划（1 个月内）
 1. 场景保存/加载功能
@@ -542,6 +548,8 @@ Total Test time (real) =  15.67 sec
 
 - [SCENE_MODULE_FRAMEWORK.md](../SCENE_MODULE_FRAMEWORK.md) - 应用层框架设计方案
 - [SceneGraph_Node_Guide.md](SceneGraph_Node_Guide.md) - SceneGraph 节点开发手册
+- [EventBus_Guide.md](EventBus_Guide.md) - 事件总线使用指南 ⭐ **新增**
+- [Module_Guide.md](Module_Guide.md) - 模块开发指南 ⭐ **新增**
 - [PHASE2_APPLICATION_LAYER.md](../todolists/PHASE2_APPLICATION_LAYER.md) - Phase 2 TODO 列表
 - [ECS API](../api/ECS.md) - ECS 系统 API 文档
 - [ResourceManager API](../api/ResourceManager.md) - 资源管理器 API

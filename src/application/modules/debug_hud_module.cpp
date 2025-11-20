@@ -9,6 +9,7 @@
 #include "render/text/text.h"
 #include "render/text/font.h"
 #include "render/resource_manager.h"
+#include "render/uniform_manager.h"
 #include "render/transform.h"
 #include "render/types.h"
 #include "render/math_utils.h"
@@ -355,11 +356,326 @@ void DebugHUDModule::DrawHUD(const FrameUpdateArgs& frame, AppContext& ctx) {
 
     // 更新文本内容
     UpdateTextContent(frame, ctx);
+    
+    // 更新层级信息（如果启用）
+    if (m_showLayerInfo) {
+        UpdateLayerInfoText(frame, ctx);
+    }
+    
+    // 更新Uniform/材质信息（如果启用）
+    if (m_showUniformMaterialInfo) {
+        UpdateUniformMaterialInfoText(frame, ctx);
+    }
 
     // 提交所有文本渲染对象
     for (auto& renderable : m_textRenderables) {
         if (renderable && renderable->IsVisible()) {
             renderable->SubmitToRenderer(ctx.renderer);
+        }
+    }
+    
+    // 提交层级信息文本对象
+    if (m_showLayerInfo) {
+        for (auto& renderable : m_layerInfoTextRenderables) {
+            if (renderable && renderable->IsVisible()) {
+                renderable->SubmitToRenderer(ctx.renderer);
+            }
+        }
+    }
+    
+    // 提交Uniform/材质信息文本对象
+    if (m_showUniformMaterialInfo) {
+        for (auto& renderable : m_uniformMaterialTextRenderables) {
+            if (renderable && renderable->IsVisible()) {
+                renderable->SubmitToRenderer(ctx.renderer);
+            }
+        }
+    }
+}
+
+// 辅助函数：创建右对齐的文本对象
+void DebugHUDModule::CreateRightAlignedTextObjects(
+    std::vector<TextPtr>& textObjects,
+    std::vector<std::unique_ptr<TextRenderable>>& textRenderables,
+    size_t count,
+    AppContext& ctx,
+    int32_t basePriority,
+    const Color& headerColor,
+    const Color& textColor) {
+    
+    if (!m_font || !ctx.renderer) {
+        return;
+    }
+    
+    textObjects.clear();
+    textRenderables.clear();
+    textObjects.reserve(count);
+    textRenderables.reserve(count);
+    
+    const float screenWidth = static_cast<float>(ctx.renderer->GetWidth());
+    const float screenHeight = static_cast<float>(ctx.renderer->GetHeight());
+    const float rightMargin = 20.0f;
+    const float topMargin = 20.0f;
+    const float lineHeight = 20.0f;
+    
+    for (size_t i = 0; i < count; ++i) {
+        auto text = std::make_shared<Text>(m_font);
+        text->SetColor(i == 0 ? headerColor : textColor);
+        text->SetAlignment(TextAlignment::Right);  // 右对齐
+        text->SetString("");
+        textObjects.push_back(text);
+        
+        auto renderable = std::make_unique<TextRenderable>();
+        renderable->SetText(text);
+        renderable->SetLayerID(Layers::UI::Default.value);
+        renderable->SetRenderPriority(basePriority + static_cast<int32_t>(i));
+        
+        // 右对齐：文本右边缘距离屏幕右边缘rightMargin
+        // 文本中心X = screenWidth - rightMargin - textWidth/2
+        // 初始时使用估算值，后续会根据实际文本宽度更新
+        const float estimatedTextWidth = 300.0f;
+        const float centerX = screenWidth - rightMargin - estimatedTextWidth * 0.5f;
+        const float centerY = topMargin + static_cast<float>(i) * lineHeight + lineHeight * 0.5f;
+        
+        auto transform = std::make_shared<Transform>();
+        transform->SetPosition(Vector3(centerX, centerY, 0.0f));
+        renderable->SetTransform(transform);
+        
+        Matrix4 view = Matrix4::Identity();
+        Matrix4 projection = MathUtils::Orthographic(0.0f, screenWidth, screenHeight, 0.0f, -1.0f, 1.0f);
+        renderable->SetViewProjectionOverride(view, projection);
+        
+        MaterialSortKey uiKey;
+        uiKey.depthTest = false;
+        uiKey.depthWrite = false;
+        uiKey.pipelineFlags = MaterialPipelineFlags_ScreenSpace;
+        renderable->SetMaterialSortKey(uiKey);
+        
+        textRenderables.push_back(std::move(renderable));
+    }
+}
+
+// 辅助函数：更新右对齐文本对象的位置和内容
+void DebugHUDModule::UpdateRightAlignedTextObjects(
+    const std::vector<std::string>& lines,
+    std::vector<TextPtr>& textObjects,
+    std::vector<std::unique_ptr<TextRenderable>>& textRenderables,
+    AppContext& ctx) {
+    
+    if (!ctx.renderer || textObjects.size() != textRenderables.size()) {
+        return;
+    }
+    
+    const float screenWidth = static_cast<float>(ctx.renderer->GetWidth());
+    const float rightMargin = 20.0f;
+    const float topMargin = 20.0f;
+    const float lineHeight = 20.0f;
+    
+    // 更新文本内容并获取实际尺寸
+    std::vector<Vector2> textSizes;
+    textSizes.reserve(lines.size());
+    
+    for (size_t i = 0; i < textObjects.size() && i < lines.size(); ++i) {
+        if (textObjects[i]) {
+            textObjects[i]->SetString(lines[i]);
+            textObjects[i]->MarkDirty();
+            textObjects[i]->EnsureUpdated();
+            Vector2 textSize = textObjects[i]->GetSize();
+            textSizes.push_back(textSize);
+        } else {
+            textSizes.push_back(Vector2(0.0f, lineHeight));
+        }
+    }
+    
+    // 更新位置（右对齐）
+    for (size_t i = 0; i < textRenderables.size() && i < textSizes.size(); ++i) {
+        auto& renderable = textRenderables[i];
+        if (!renderable) {
+            continue;
+        }
+        
+        Vector2 textSize = textSizes[i];
+        if (textSize.y() <= 0.0f) {
+            textSize.y() = lineHeight;
+        }
+        
+        // 右对齐：文本右边缘距离屏幕右边缘rightMargin
+        // 中心X = screenWidth - rightMargin - textWidth/2
+        const float centerX = screenWidth - rightMargin - textSize.x() * 0.5f;
+        const float centerY = topMargin + static_cast<float>(i) * lineHeight + lineHeight * 0.5f;
+        
+        // 边界检查
+        const float minX = textSize.x() * 0.5f;
+        const float maxX = screenWidth - textSize.x() * 0.5f;
+        const float clampedX = std::max(minX, std::min(centerX, maxX));
+        
+        auto transform = renderable->GetTransform();
+        if (transform) {
+            transform->SetPosition(Vector3(clampedX, centerY, 0.0f));
+        }
+    }
+}
+
+void DebugHUDModule::UpdateLayerInfoText(const FrameUpdateArgs&, AppContext& ctx) {
+    if (!ctx.renderer || !m_font) {
+        return;
+    }
+    
+    auto& layerRegistry = ctx.renderer->GetLayerRegistry();
+    auto layers = layerRegistry.ListLayers();
+    
+    const size_t lineCount = layers.size() + 1; // +1 for header
+    
+    // 动态创建文本对象（如果数量变化）
+    if (m_layerInfoTextObjects.size() != lineCount) {
+        CreateRightAlignedTextObjects(
+            m_layerInfoTextObjects,
+            m_layerInfoTextRenderables,
+            lineCount,
+            ctx,
+            1000,
+            Color(1.0f, 1.0f, 0.0f, 1.0f),  // 黄色标题
+            Color(0.8f, 0.8f, 1.0f, 1.0f)  // 浅蓝色文本
+        );
+    }
+    
+    // 构建文本内容
+    std::vector<std::string> lines;
+    lines.push_back("=== Render Layers ===");
+    
+    for (const auto& record : layers) {
+        const auto& desc = record.descriptor;
+        const auto& state = record.state;
+        
+        std::stringstream ss;
+        ss << "[" << desc.id.value << "] " << desc.name
+           << " (P:" << desc.priority << ", M:" << static_cast<int>(desc.maskIndex)
+           << ", " << (state.enabled ? "ON" : "OFF") << ")";
+        lines.push_back(ss.str());
+    }
+    
+    // 更新文本对象（从顶部开始，右对齐）
+    UpdateRightAlignedTextObjects(lines, m_layerInfoTextObjects, m_layerInfoTextRenderables, ctx);
+}
+
+void DebugHUDModule::UpdateUniformMaterialInfoText(const FrameUpdateArgs&, AppContext& ctx) {
+    if (!ctx.resourceManager || !m_font || !ctx.renderer) {
+        return;
+    }
+    
+    // 获取所有材质
+    ResourceStats stats = ctx.resourceManager->GetStats();
+    
+    // 获取渲染统计信息
+    auto renderStats = ctx.renderer->GetStats();
+    
+    // 构建文本内容
+    std::vector<std::string> lines;
+    lines.push_back("=== Resource Stats ===");
+    
+    // 资源数量统计
+    lines.push_back("Resources:");
+    lines.push_back("  Materials: " + std::to_string(stats.materialCount));
+    lines.push_back("  Shaders: " + std::to_string(stats.shaderCount));
+    lines.push_back("  Textures: " + std::to_string(stats.textureCount));
+    lines.push_back("  Meshes: " + std::to_string(stats.meshCount));
+    lines.push_back("  Models: " + std::to_string(stats.modelCount));
+    lines.push_back("  Sprite Atlases: " + std::to_string(stats.spriteAtlasCount));
+    lines.push_back("  Fonts: " + std::to_string(stats.fontCount));
+    lines.push_back("  Total: " + std::to_string(stats.totalCount));
+    
+    // 内存使用统计
+    lines.push_back("Memory:");
+    std::stringstream memStream;
+    memStream << std::fixed << std::setprecision(2);
+    float textureMemMB = static_cast<float>(stats.textureMemory) / (1024.0f * 1024.0f);
+    float meshMemMB = static_cast<float>(stats.meshMemory) / (1024.0f * 1024.0f);
+    float totalMemMB = static_cast<float>(stats.totalMemory) / (1024.0f * 1024.0f);
+    memStream.str("");
+    memStream << "  Texture: " << textureMemMB << " MB";
+    lines.push_back(memStream.str());
+    memStream.str("");
+    memStream << "  Mesh: " << meshMemMB << " MB";
+    lines.push_back(memStream.str());
+    memStream.str("");
+    memStream << "  Total: " << totalMemMB << " MB";
+    lines.push_back(memStream.str());
+    
+    // 渲染统计（从RenderStats）
+    lines.push_back("Rendering:");
+    lines.push_back("  Draw Calls: " + std::to_string(renderStats.drawCalls));
+    lines.push_back("  Batches: " + std::to_string(renderStats.batchCount));
+    lines.push_back("  Triangles: " + std::to_string(renderStats.triangles));
+    
+    const size_t infoLineCount = lines.size();
+    
+    // 动态创建文本对象（如果数量变化）
+    if (m_uniformMaterialTextObjects.size() != infoLineCount) {
+        CreateRightAlignedTextObjects(
+            m_uniformMaterialTextObjects,
+            m_uniformMaterialTextRenderables,
+            infoLineCount,
+            ctx,
+            2000,
+            Color(1.0f, 1.0f, 0.0f, 1.0f),  // 黄色标题
+            Color(0.8f, 1.0f, 0.8f, 1.0f)   // 浅绿色文本
+        );
+    }
+    
+    // 更新文本对象（Uniform/材质信息显示在层级信息下方，如果层级信息也显示的话）
+    const float screenWidth = static_cast<float>(ctx.renderer->GetWidth());
+    const float topMargin = 20.0f;
+    const float lineHeight = 20.0f;
+    const float rightMargin = 20.0f;
+    
+    // 计算Uniform/材质信息的起始Y位置
+    // 如果层级信息也显示，则在其下方；否则从顶部开始
+    float uniformInfoTopMargin = topMargin;
+    if (m_showLayerInfo && !m_layerInfoTextObjects.empty()) {
+        const float layerInfoHeight = static_cast<float>(m_layerInfoTextObjects.size()) * lineHeight;
+        uniformInfoTopMargin = topMargin + layerInfoHeight + 40.0f; // 层级信息下方，留40像素间距
+    }
+    
+    // 更新文本内容并获取实际尺寸
+    std::vector<Vector2> textSizes;
+    textSizes.reserve(lines.size());
+    
+    for (size_t i = 0; i < m_uniformMaterialTextObjects.size() && i < lines.size(); ++i) {
+        if (m_uniformMaterialTextObjects[i]) {
+            m_uniformMaterialTextObjects[i]->SetString(lines[i]);
+            m_uniformMaterialTextObjects[i]->MarkDirty();
+            m_uniformMaterialTextObjects[i]->EnsureUpdated();
+            Vector2 textSize = m_uniformMaterialTextObjects[i]->GetSize();
+            textSizes.push_back(textSize);
+        } else {
+            textSizes.push_back(Vector2(0.0f, lineHeight));
+        }
+    }
+    
+    // 更新位置（右对齐）
+    for (size_t i = 0; i < m_uniformMaterialTextRenderables.size() && i < textSizes.size(); ++i) {
+        auto& renderable = m_uniformMaterialTextRenderables[i];
+        if (!renderable) {
+            continue;
+        }
+        
+        Vector2 textSize = textSizes[i];
+        if (textSize.y() <= 0.0f) {
+            textSize.y() = lineHeight;
+        }
+        
+        // 右对齐：文本右边缘距离屏幕右边缘rightMargin
+        const float centerX = screenWidth - rightMargin - textSize.x() * 0.5f;
+        const float centerY = uniformInfoTopMargin + static_cast<float>(i) * lineHeight + lineHeight * 0.5f;
+        
+        // 边界检查
+        const float minX = textSize.x() * 0.5f;
+        const float maxX = screenWidth - textSize.x() * 0.5f;
+        const float clampedX = std::max(minX, std::min(centerX, maxX));
+        
+        auto transform = renderable->GetTransform();
+        if (transform) {
+            transform->SetPosition(Vector3(clampedX, centerY, 0.0f));
         }
     }
 }

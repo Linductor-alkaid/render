@@ -2,966 +2,512 @@
 
 ---
 
-# 事件系统使用指南
+# 事件总线使用指南
 
-**更新时间**: 2025-11-18  
-**参考文档**: [APPLICATION_LAYER_PROGRESS_REPORT.md](APPLICATION_LAYER_PROGRESS_REPORT.md)
+**更新时间**: 2025-11-19  
+**参考文档**: [SCENE_MODULE_FRAMEWORK.md](../SCENE_MODULE_FRAMEWORK.md)
 
 ---
 
 ## 1. 概述
 
-事件系统是应用层框架的核心通信机制，提供了类型安全的事件订阅/发布功能，支持事件过滤、Blender 风格操作映射和手势检测。
+`EventBus` 是应用层的统一事件系统，提供类型安全的事件订阅和发布机制。它支持：
 
-### 1.1 核心组件
+- **类型安全**：编译时类型检查，避免事件类型错误
+- **优先级支持**：高优先级监听者先执行
+- **事件过滤**：支持按标签、场景等条件过滤事件
+- **线程安全**：使用互斥锁保护，支持多线程环境
 
-- **EventBus**: 事件总线，负责事件的订阅和发布
-- **EventBase**: 所有事件的基类，支持标签和目标场景过滤
-- **EventFilter**: 事件过滤器接口，支持自定义过滤逻辑
-- **InputModule**: 输入模块，处理 SDL 事件并发布高层语义事件
-- **OperationMappingManager**: 操作映射管理器，实现 Blender 风格快捷键映射
+## 2. 基本使用
 
-### 1.2 事件类型
+### 2.1 获取 EventBus 实例
 
-| 事件类型 | 说明 | 用途 |
-|---------|------|------|
-| **帧事件** | FrameBeginEvent、FrameTickEvent、FrameEndEvent | 帧循环生命周期 |
-| **场景事件** | SceneTransitionEvent、SceneLifecycleEvent 等 | 场景切换和生命周期 |
-| **输入事件** | KeyEvent、MouseButtonEvent、MouseMotionEvent | 原始输入事件 |
-| **操作事件** | OperationEvent | Blender 风格操作（Move、Rotate、Scale 等） |
-| **手势事件** | GestureEvent | 高级手势（Drag、Pan、Zoom、BoxSelect 等） |
-
----
-
-## 2. EventBus 基础使用
-
-### 2.1 订阅事件
-
-使用 `EventBus::Subscribe` 方法订阅事件，支持优先级和过滤器：
+EventBus 通常通过 `AppContext` 访问：
 
 ```cpp
+#include "render/application/app_context.h"
 #include "render/application/event_bus.h"
-#include "render/application/events/input_events.h"
 
-using namespace Render::Application;
-using namespace Render::Application::Events;
+void MyModule::OnRegister(ECS::World& world, AppContext& ctx) {
+    // 通过 AppContext 获取 EventBus
+    EventBus* eventBus = ctx.globalEventBus;
+    
+    // 订阅事件
+    m_listenerId = eventBus->Subscribe<FrameBeginEvent>(
+        [this](const FrameBeginEvent& event) {
+            OnFrameBegin(event);
+        }
+    );
+}
+```
 
-// 获取 EventBus 引用
-EventBus& eventBus = applicationHost.GetEventBus();
+### 2.2 订阅事件
 
-// 基础订阅（无过滤器）
-auto listenerId = eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        std::cout << "Key pressed: " << event.scancode << std::endl;
+使用 `Subscribe` 方法订阅事件：
+
+```cpp
+// 基本订阅
+auto listenerId = eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& event) {
+        std::cout << "Frame begin: " << event.frame.deltaTime << std::endl;
     }
 );
 
-// 带优先级的订阅（高优先级先执行）
-auto highPriorityId = eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        // 高优先级处理逻辑
+// 带优先级的订阅（数字越大优先级越高）
+auto highPriorityId = eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& event) {
+        // 这个回调会先执行
     },
-    EventPriority::High  // 或 EventPriority::Normal、EventPriority::Low
+    100  // 高优先级
 );
 ```
 
-### 2.2 发布事件
+### 2.3 发布事件
 
-使用 `EventBus::Publish` 方法发布事件：
+使用 `Publish` 方法发布事件：
 
 ```cpp
 // 创建并发布事件
-KeyEvent keyEvent;
-keyEvent.scancode = SDL_SCANCODE_SPACE;
-keyEvent.state = KeyState::Pressed;
-keyEvent.repeat = false;
-
-eventBus.Publish(keyEvent);
+FrameBeginEvent event;
+event.frame.deltaTime = 0.016f;
+event.frame.frameIndex = 12345;
+eventBus->Publish(event, "MyScene");  // 可选：指定当前场景ID
 ```
 
-### 2.3 取消订阅
+### 2.4 取消订阅
 
-使用 `EventBus::Unsubscribe` 方法取消订阅：
+使用 `Unsubscribe` 方法取消订阅：
 
 ```cpp
-eventBus.Unsubscribe<KeyEvent>(listenerId);
+eventBus->Unsubscribe(listenerId);
 ```
 
----
+## 3. 事件类型
 
-## 3. 事件过滤器
+### 3.1 帧事件
 
-事件过滤器允许订阅者只接收符合特定条件的事件，减少不必要的回调执行。
-
-### 3.1 内置过滤器
-
-#### DefaultEventFilter（默认过滤器）
-
-接收所有事件（默认行为）：
+帧事件在每帧的特定阶段发布：
 
 ```cpp
-auto filter = std::make_shared<DefaultEventFilter>();
-auto listenerId = eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) { /* ... */ },
-    EventPriority::Normal,
-    filter
-);
+#include "render/application/events/frame_events.h"
+
+// FrameBeginEvent - 帧开始
+eventBus->Subscribe<FrameBeginEvent>([](const FrameBeginEvent& e) {
+    // 在帧开始时执行
+});
+
+// FrameTickEvent - 帧更新
+eventBus->Subscribe<FrameTickEvent>([](const FrameTickEvent& e) {
+    // 在帧更新时执行
+});
+
+// FrameEndEvent - 帧结束
+eventBus->Subscribe<FrameEndEvent>([](const FrameEndEvent& e) {
+    // 在帧结束时执行
+});
 ```
 
-#### TagEventFilter（标签过滤器）
+### 3.2 场景事件
+
+场景事件在场景生命周期变化时发布：
+
+```cpp
+#include "render/application/events/scene_events.h"
+
+using namespace Render::Application::Events;
+
+// 场景切换事件
+eventBus->Subscribe<SceneTransitionEvent>([](const SceneTransitionEvent& e) {
+    if (e.type == SceneTransitionEvent::Type::Push) {
+        std::cout << "Pushing scene: " << e.sceneId << std::endl;
+    }
+});
+
+// 场景生命周期事件
+eventBus->Subscribe<SceneLifecycleEvent>([](const SceneLifecycleEvent& e) {
+    switch (e.stage) {
+        case SceneLifecycleEvent::Stage::Entered:
+            std::cout << "Scene entered: " << e.sceneId << std::endl;
+            break;
+        case SceneLifecycleEvent::Stage::Exiting:
+            std::cout << "Scene exiting: " << e.sceneId << std::endl;
+            break;
+        // ...
+    }
+});
+
+// 资源预加载进度事件
+eventBus->Subscribe<ScenePreloadProgressEvent>([](const ScenePreloadProgressEvent& e) {
+    float progress = static_cast<float>(e.requiredLoaded) / e.requiredTotal;
+    std::cout << "Preload progress: " << progress * 100.0f << "%" << std::endl;
+});
+```
+
+### 3.3 输入事件
+
+输入事件由 `InputModule` 发布：
+
+```cpp
+#include "render/application/events/input_events.h"
+
+using namespace Render::Application::Events;
+
+// 键盘事件
+eventBus->Subscribe<KeyEvent>([](const KeyEvent& e) {
+    if (e.state == KeyState::Pressed && !e.repeat) {
+        std::cout << "Key pressed: " << e.scancode << std::endl;
+    }
+});
+
+// 鼠标按钮事件
+eventBus->Subscribe<MouseButtonEvent>([](const MouseButtonEvent& e) {
+    if (e.state == MouseButtonState::Pressed) {
+        std::cout << "Mouse button " << static_cast<int>(e.button) 
+                  << " pressed at (" << e.x << ", " << e.y << ")" << std::endl;
+    }
+});
+
+// 鼠标移动事件
+eventBus->Subscribe<MouseMotionEvent>([](const MouseMotionEvent& e) {
+    // 处理鼠标移动
+});
+
+// Blender风格操作事件
+eventBus->Subscribe<OperationEvent>([](const OperationEvent& e) {
+    switch (e.type) {
+        case OperationType::Move:
+            std::cout << "Move operation at (" << e.x << ", " << e.y << ")" << std::endl;
+            break;
+        case OperationType::Rotate:
+            std::cout << "Rotate operation" << std::endl;
+            break;
+        // ...
+    }
+});
+
+// 手势事件
+eventBus->Subscribe<GestureEvent>([](const GestureEvent& e) {
+    if (e.type == GestureType::Drag && e.isActive) {
+        std::cout << "Dragging from (" << e.startX << ", " << e.startY 
+                  << ") to (" << e.currentX << ", " << e.currentY << ")" << std::endl;
+    }
+});
+```
+
+## 4. 事件过滤
+
+EventBus 支持多种事件过滤器，用于精确控制哪些事件被接收。
+
+### 4.1 标签过滤器
 
 只接收包含指定标签的事件：
 
 ```cpp
+#include "render/application/event_bus.h"
+
 // 创建标签过滤器
-auto tagFilter = std::make_shared<TagEventFilter>("ui");
+auto filter = std::make_shared<TagEventFilter>("debug");
 
 // 订阅时使用过滤器
-auto listenerId = eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        std::cout << "Received UI key event" << std::endl;
+eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& e) {
+        // 只接收带有 "debug" 标签的事件
     },
-    EventPriority::Normal,
-    tagFilter
+    0,  // 优先级
+    filter
 );
 
-// 发布带标签的事件
-KeyEvent keyEvent;
-keyEvent.AddTag("ui");
-keyEvent.scancode = SDL_SCANCODE_ESCAPE;
-eventBus.Publish(keyEvent);  // 只有使用 tagFilter 的订阅者会收到
+// 发布时添加标签
+FrameBeginEvent event;
+event.AddTag("debug");
+eventBus->Publish(event);
 ```
 
-#### SceneEventFilter（场景过滤器）
+### 4.2 场景过滤器
 
 只接收目标场景的事件：
 
 ```cpp
 // 创建场景过滤器
-auto sceneFilter = std::make_shared<SceneEventFilter>("MainScene");
+auto sceneFilter = std::make_shared<SceneEventFilter>("MyScene");
 
-// 订阅时使用过滤器
-auto listenerId = eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        std::cout << "Received MainScene key event" << std::endl;
+eventBus->Subscribe<SceneLifecycleEvent>(
+    [](const SceneLifecycleEvent& e) {
+        // 只接收目标场景为 "MyScene" 的事件
     },
-    EventPriority::Normal,
+    0,
     sceneFilter
 );
-
-// 发布目标场景的事件
-KeyEvent keyEvent;
-keyEvent.targetSceneId = "MainScene";
-keyEvent.scancode = SDL_SCANCODE_RETURN;
-eventBus.Publish(keyEvent);  // 只有使用 sceneFilter 的订阅者会收到
 ```
 
-#### CompositeEventFilter（组合过滤器）
+### 4.3 组合过滤器
 
-组合多个过滤器（AND 逻辑）：
+组合多个过滤器（AND逻辑）：
 
 ```cpp
-// 创建组合过滤器
 auto compositeFilter = std::make_shared<CompositeEventFilter>();
-compositeFilter->AddFilter(std::make_shared<TagEventFilter>("ui"));
-compositeFilter->AddFilter(std::make_shared<SceneEventFilter>("MainScene"));
+compositeFilter->AddFilter(std::make_shared<TagEventFilter>("debug"));
+compositeFilter->AddFilter(std::make_shared<SceneEventFilter>("MyScene"));
 
-// 订阅时使用组合过滤器
-auto listenerId = eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        // 只接收同时满足标签和场景条件的事件
+eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& e) {
+        // 只接收同时满足两个条件的事件
     },
-    EventPriority::Normal,
+    0,
     compositeFilter
 );
 ```
 
-### 3.2 自定义过滤器
+## 5. 事件标签和目标场景
 
-实现 `EventFilter` 接口创建自定义过滤器：
+### 5.1 添加标签
+
+事件可以添加标签用于分类和过滤：
 
 ```cpp
-class CustomEventFilter : public EventFilter {
-public:
-    explicit CustomEventFilter(int minScancode) : m_minScancode(minScancode) {}
-    
-    bool ShouldReceive(const EventBase& event) const override {
-        // 类型检查
-        if (auto* keyEvent = dynamic_cast<const KeyEvent*>(&event)) {
-            return keyEvent->scancode >= m_minScancode;
-        }
-        return false;
-    }
-    
-private:
-    int m_minScancode;
-};
+FrameBeginEvent event;
+event.AddTag("debug");
+event.AddTag("performance");
+eventBus->Publish(event);
+```
 
-// 使用自定义过滤器
-auto customFilter = std::make_shared<CustomEventFilter>(SDL_SCANCODE_A);
-auto listenerId = eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) { /* ... */ },
-    EventPriority::Normal,
-    customFilter
+### 5.2 设置目标场景
+
+事件可以指定目标场景：
+
+```cpp
+SceneLifecycleEvent event;
+event.sceneId = "MyScene";
+event.stage = SceneLifecycleEvent::Stage::Entered;
+event.targetSceneId = "MyScene";  // 只有订阅了该场景的监听者会收到
+eventBus->Publish(event);
+```
+
+## 6. 优先级
+
+监听者可以设置优先级，数字越大优先级越高，高优先级的监听者会先执行：
+
+```cpp
+// 低优先级（后执行）
+eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& e) {
+        // 后执行
+    },
+    0  // 低优先级
+);
+
+// 高优先级（先执行）
+eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& e) {
+        // 先执行
+    },
+    100  // 高优先级
 );
 ```
-
----
-
-## 4. 输入事件系统
-
-### 4.1 基础输入事件
-
-#### KeyEvent（键盘事件）
-
-```cpp
-struct KeyEvent : public EventBase {
-    int scancode;           // SDL 扫描码
-    KeyState state;          // Pressed 或 Released
-    bool repeat;             // 是否为重复按键
-    bool ctrl;               // Ctrl 键状态
-    bool shift;              // Shift 键状态
-    bool alt;                // Alt 键状态
-};
-
-// 订阅键盘事件
-eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-    if (event.state == KeyState::Pressed && !event.repeat) {
-        std::cout << "Key pressed: " << event.scancode << std::endl;
-    }
-});
-```
-
-#### MouseButtonEvent（鼠标按钮事件）
-
-```cpp
-struct MouseButtonEvent : public EventBase {
-    MouseButton button;           // Left、Right、Middle 等
-    MouseButtonState state;        // Pressed 或 Released
-    float x, y;                    // 鼠标位置
-    bool ctrl, shift, alt;         // 修饰键状态
-};
-
-// 订阅鼠标按钮事件
-eventBus.Subscribe<MouseButtonEvent>([](const MouseButtonEvent& event) {
-    if (event.state == MouseButtonState::Pressed) {
-        std::cout << "Mouse clicked at (" << event.x << ", " << event.y << ")" << std::endl;
-    }
-});
-```
-
-#### MouseMotionEvent（鼠标移动事件）
-
-```cpp
-struct MouseMotionEvent : public EventBase {
-    float x, y;                    // 当前鼠标位置
-    float deltaX, deltaY;          // 相对移动量
-    bool ctrl, shift, alt;         // 修饰键状态
-};
-
-// 订阅鼠标移动事件
-eventBus.Subscribe<MouseMotionEvent>([](const MouseMotionEvent& event) {
-    std::cout << "Mouse moved: (" << event.deltaX << ", " << event.deltaY << ")" << std::endl;
-});
-```
-
-### 4.2 InputModule 集成
-
-`InputModule` 自动处理 SDL 事件并发布高层事件：
-
-```cpp
-#include "render/application/modules/input_module.h"
-
-// 注册 InputModule（通常在 ApplicationHost 初始化时完成）
-ApplicationHost host;
-host.GetModuleRegistry().RegisterModule(std::make_shared<InputModule>());
-
-// InputModule 会自动发布 KeyEvent、MouseButtonEvent 等事件
-// 只需订阅即可接收
-```
-
----
-
-## 5. 操作映射系统
-
-操作映射系统实现了 Blender 风格的快捷键映射，将底层输入转换为高层语义操作。
-
-### 5.1 OperationType（操作类型）
-
-```cpp
-enum class OperationType {
-    Select,      // 选择
-    Add,          // 添加
-    Delete,       // 删除
-    Move,         // 移动（G）
-    Rotate,       // 旋转（R）
-    Scale,        // 缩放（S）
-    Duplicate,    // 复制（Shift+D）
-    Cancel,       // 取消（ESC）
-    Confirm       // 确认（Enter）
-};
-```
-
-### 5.2 OperationEvent（操作事件）
-
-```cpp
-struct OperationEvent : public EventBase {
-    OperationType type;     // 操作类型
-    float x, y;             // 操作位置
-    bool isStart;           // 是否为操作开始
-    std::string context;    // 操作上下文（如 "ObjectMode"、"EditMode"）
-};
-
-// 订阅操作事件
-eventBus.Subscribe<OperationEvent>([](const OperationEvent& event) {
-    switch (event.type) {
-        case OperationType::Move:
-            std::cout << "Move operation " << (event.isStart ? "started" : "ended") << std::endl;
-            break;
-        case OperationType::Rotate:
-            std::cout << "Rotate operation " << (event.isStart ? "started" : "ended") << std::endl;
-            break;
-        // ...
-    }
-});
-```
-
-### 5.3 ShortcutContext（快捷键上下文）
-
-不同上下文可以有不同的快捷键映射：
-
-```cpp
-#include "render/application/operation_mapping.h"
-
-// 创建上下文
-auto objectModeContext = std::make_shared<ShortcutContext>("ObjectMode");
-objectModeContext->AddMapping({SDL_SCANCODE_G, false, false, false}, OperationType::Move);
-objectModeContext->AddMapping({SDL_SCANCODE_R, false, false, false}, OperationType::Rotate);
-objectModeContext->AddMapping({SDL_SCANCODE_S, false, false, false}, OperationType::Scale);
-objectModeContext->AddMapping({SDL_SCANCODE_X, false, false, false}, OperationType::Delete);
-objectModeContext->AddMapping({SDL_SCANCODE_D, false, true, false}, OperationType::Duplicate);  // Shift+D
-
-// 注册上下文
-OperationMappingManager mappingManager;
-mappingManager.RegisterContext(objectModeContext);
-mappingManager.SetCurrentContext("ObjectMode");
-
-// InputModule 会自动使用当前上下文进行映射
-```
-
-### 5.4 默认映射
-
-`OperationMappingManager` 构造函数会自动创建默认的 "ObjectMode" 上下文，包含以下映射：
-
-| 快捷键 | 操作 |
-|--------|------|
-| G | Move |
-| R | Rotate |
-| S | Scale |
-| X | Delete |
-| Shift+D | Duplicate |
-| ESC | Cancel |
-| Enter | Confirm |
-
----
-
-## 6. 手势检测
-
-手势检测将底层鼠标输入转换为高层手势事件。
-
-### 6.1 GestureType（手势类型）
-
-```cpp
-enum class GestureType {
-    Drag,          // 拖拽
-    Click,         // 单击
-    DoubleClick,   // 双击
-    Pan,           // 平移（中键拖拽）
-    Rotate,        // 旋转（Alt+左键拖拽）
-    Zoom,          // 缩放（Ctrl+滚轮或中键拖拽）
-    BoxSelect,     // 框选（Shift+左键拖拽）
-    LassoSelect    // 套索选择（Ctrl+Shift+左键拖拽）
-};
-```
-
-### 6.2 GestureEvent（手势事件）
-
-```cpp
-struct GestureEvent : public EventBase {
-    GestureType type;       // 手势类型
-    float startX, startY;   // 起始位置
-    float currentX, currentY;  // 当前位置
-    float deltaX, deltaY;   // 相对移动量
-    bool isActive;           // 手势是否激活
-    MouseButton button;     // 触发按钮
-    bool ctrl, shift, alt;  // 修饰键状态
-};
-
-// 订阅手势事件
-eventBus.Subscribe<GestureEvent>([](const GestureEvent& event) {
-    switch (event.type) {
-        case GestureType::Drag:
-            std::cout << "Dragging from (" << event.startX << ", " << event.startY 
-                      << ") to (" << event.currentX << ", " << event.currentY << ")" << std::endl;
-            break;
-        case GestureType::BoxSelect:
-            std::cout << "Box selecting from (" << event.startX << ", " << event.startY 
-                      << ") to (" << event.currentX << ", " << event.currentY << ")" << std::endl;
-            break;
-        // ...
-    }
-});
-```
-
-### 6.3 手势检测规则
-
-`InputModule` 根据鼠标按钮和修饰键自动检测手势：
-
-| 手势 | 触发条件 |
-|------|---------|
-| Drag | 左键拖拽（无修饰键） |
-| Click | 左键单击 |
-| DoubleClick | 左键双击 |
-| Pan | 中键拖拽 |
-| Rotate | Alt + 左键拖拽 |
-| Zoom | Ctrl + 滚轮或中键拖拽 |
-| BoxSelect | Shift + 左键拖拽 |
-| LassoSelect | Ctrl + Shift + 左键拖拽 |
-
----
 
 ## 7. 完整示例
 
-### 7.1 基础事件订阅示例
+### 7.1 在模块中订阅事件
 
 ```cpp
-#include "render/application/application_host.h"
+#include "render/application/app_module.h"
 #include "render/application/event_bus.h"
+#include "render/application/events/frame_events.h"
 #include "render/application/events/input_events.h"
-#include "render/application/modules/input_module.h"
 
-using namespace Render::Application;
-using namespace Render::Application::Events;
-
-int main() {
-    // 初始化 ApplicationHost
-    ApplicationHost host;
-    host.Initialize("Event Test", 1280, 720);
+class MyModule : public AppModule {
+public:
+    void OnRegister(ECS::World& world, AppContext& ctx) override {
+        m_eventBus = ctx.globalEventBus;
+        
+        // 订阅帧事件
+        m_frameListenerId = m_eventBus->Subscribe<FrameBeginEvent>(
+            [this](const FrameBeginEvent& e) {
+                OnFrameBegin(e);
+            },
+            50  // 中等优先级
+        );
+        
+        // 订阅输入事件（只接收调试标签）
+        auto debugFilter = std::make_shared<TagEventFilter>("debug");
+        m_inputListenerId = m_eventBus->Subscribe<KeyEvent>(
+            [this](const KeyEvent& e) {
+                OnKeyEvent(e);
+            },
+            0,
+            debugFilter
+        );
+    }
     
-    // 注册 InputModule
-    host.GetModuleRegistry().RegisterModule(std::make_shared<InputModule>());
-    
-    // 获取 EventBus
-    EventBus& eventBus = host.GetEventBus();
-    
-    // 订阅键盘事件
-    eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-        if (event.state == KeyState::Pressed && !event.repeat) {
-            std::cout << "Key pressed: " << event.scancode << std::endl;
+    void OnUnregister(ECS::World& world, AppContext& ctx) override {
+        // 取消订阅
+        if (m_eventBus) {
+            m_eventBus->Unsubscribe(m_frameListenerId);
+            m_eventBus->Unsubscribe(m_inputListenerId);
         }
-    });
-    
-    // 订阅操作事件
-    eventBus.Subscribe<OperationEvent>([](const OperationEvent& event) {
-        const char* opNames[] = {
-            "Select", "Add", "Delete", "Move", "Rotate",
-            "Scale", "Duplicate", "Cancel", "Confirm"
-        };
-        std::cout << "Operation: " << opNames[static_cast<int>(event.type)] << std::endl;
-    });
-    
-    // 主循环
-    while (host.IsRunning()) {
-        host.UpdateFrame();
     }
     
-    return 0;
-}
-```
-
-### 7.2 带过滤器的事件订阅示例
-
-```cpp
-// 创建标签过滤器
-auto uiFilter = std::make_shared<TagEventFilter>("ui");
-
-// 订阅带标签过滤的键盘事件
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        std::cout << "UI key event: " << event.scancode << std::endl;
-    },
-    EventPriority::Normal,
-    uiFilter
-);
-
-// 发布带标签的事件
-KeyEvent keyEvent;
-keyEvent.AddTag("ui");
-keyEvent.scancode = SDL_SCANCODE_ESCAPE;
-eventBus.Publish(keyEvent);  // 只有使用 uiFilter 的订阅者会收到
-```
-
-### 7.3 操作映射示例
-
-```cpp
-#include "render/application/operation_mapping.h"
-
-// 创建自定义上下文
-auto editModeContext = std::make_shared<ShortcutContext>("EditMode");
-editModeContext->AddMapping({SDL_SCANCODE_G, false, false, false}, OperationType::Move);
-editModeContext->AddMapping({SDL_SCANCODE_R, false, false, false}, OperationType::Rotate);
-editModeContext->AddMapping({SDL_SCANCODE_X, false, false, false}, OperationType::Delete);
-
-// 注册并切换上下文
-OperationMappingManager mappingManager;
-mappingManager.RegisterContext(editModeContext);
-mappingManager.SetCurrentContext("EditMode");
-
-// InputModule 会自动使用当前上下文
-InputModule inputModule;
-inputModule.SetShortcutContext("EditMode");
-```
-
-### 7.4 手势检测示例
-
-```cpp
-// 订阅手势事件
-eventBus.Subscribe<GestureEvent>([](const GestureEvent& event) {
-    switch (event.type) {
-        case GestureType::Drag:
-            // 处理拖拽
-            if (event.isActive) {
-                // 更新拖拽对象位置
-                updateDragTarget(event.currentX, event.currentY);
-            }
-            break;
-            
-        case GestureType::BoxSelect:
-            // 处理框选
-            if (event.isActive) {
-                // 更新选择框
-                updateSelectionBox(
-                    event.startX, event.startY,
-                    event.currentX, event.currentY
-                );
-            } else {
-                // 完成选择
-                finalizeSelection(
-                    event.startX, event.startY,
-                    event.currentX, event.currentY
-                );
-            }
-            break;
-            
-        case GestureType::Zoom:
-            // 处理缩放
-            if (event.isActive) {
-                // 根据 deltaY 调整缩放比例
-                float zoomFactor = 1.0f + event.deltaY * 0.01f;
-                applyZoom(zoomFactor);
-            }
-            break;
-            
-        case GestureType::Pan:
-            // 处理平移
-            if (event.isActive) {
-                // 更新相机或视图位置
-                translateView(event.deltaX, event.deltaY);
-            }
-            break;
-            
-        default:
-            break;
+private:
+    EventBus* m_eventBus = nullptr;
+    EventBus::ListenerId m_frameListenerId = 0;
+    EventBus::ListenerId m_inputListenerId = 0;
+    
+    void OnFrameBegin(const FrameBeginEvent& e) {
+        // 处理帧开始事件
     }
-});
+    
+    void OnKeyEvent(const KeyEvent& e) {
+        // 处理键盘事件
+    }
+};
 ```
 
----
+### 7.2 在场景中订阅事件
+
+```cpp
+#include "render/application/scene.h"
+#include "render/application/event_bus.h"
+#include "render/application/events/scene_events.h"
+
+class MyScene : public Scene {
+public:
+    void OnAttach(AppContext& ctx, ModuleRegistry& modules) override {
+        m_eventBus = ctx.globalEventBus;
+        
+        // 订阅场景生命周期事件
+        m_lifecycleListenerId = m_eventBus->Subscribe<SceneLifecycleEvent>(
+            [this](const SceneLifecycleEvent& e) {
+                if (e.sceneId == Name() && e.stage == SceneLifecycleEvent::Stage::Entered) {
+                    OnSceneEntered();
+                }
+            }
+        );
+    }
+    
+    void OnDetach() override {
+        if (m_eventBus) {
+            m_eventBus->Unsubscribe(m_lifecycleListenerId);
+        }
+    }
+    
+private:
+    EventBus* m_eventBus = nullptr;
+    EventBus::ListenerId m_lifecycleListenerId = 0;
+    
+    void OnSceneEntered() {
+        // 场景进入时的处理
+    }
+};
+```
 
 ## 8. 最佳实践
 
-### 8.1 事件订阅管理
+### 8.1 及时取消订阅
 
-**保存 ListenerId**：订阅事件时保存返回的 `ListenerId`，以便后续取消订阅：
-
-```cpp
-class MyComponent {
-public:
-    void Initialize(EventBus& eventBus) {
-        // 保存 listener ID
-        m_keyListenerId = eventBus.Subscribe<KeyEvent>(
-            [this](const KeyEvent& event) {
-                this->OnKeyEvent(event);
-            }
-        );
-    }
-    
-    void Shutdown(EventBus& eventBus) {
-        // 取消订阅
-        eventBus.Unsubscribe<KeyEvent>(m_keyListenerId);
-    }
-    
-private:
-    void OnKeyEvent(const KeyEvent& event) {
-        // 处理事件
-    }
-    
-    ListenerId m_keyListenerId;
-};
-```
-
-### 8.2 使用过滤器减少回调
-
-**优先使用过滤器**：使用过滤器可以减少不必要的回调执行，提高性能：
+避免内存泄漏，在模块或场景销毁时取消订阅：
 
 ```cpp
-// 不好的做法：在回调中检查条件
-eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-    if (event.scancode == SDL_SCANCODE_SPACE) {  // 每次都检查
-        // 处理逻辑
-    }
-});
-
-// 好的做法：使用自定义过滤器
-class SpaceKeyFilter : public EventFilter {
-public:
-    bool ShouldReceive(const EventBase& event) const override {
-        if (auto* keyEvent = dynamic_cast<const KeyEvent*>(&event)) {
-            return keyEvent->scancode == SDL_SCANCODE_SPACE;
+void OnUnregister(ECS::World& world, AppContext& ctx) override {
+    if (m_eventBus) {
+        for (auto id : m_listenerIds) {
+            m_eventBus->Unsubscribe(id);
         }
-        return false;
+        m_listenerIds.clear();
     }
-};
-
-auto filter = std::make_shared<SpaceKeyFilter>();
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        // 只接收 Space 键事件
-    },
-    EventPriority::Normal,
-    filter
-);
-```
-
-### 8.3 事件优先级使用
-
-**合理设置优先级**：高优先级用于系统级处理（如输入拦截），低优先级用于业务逻辑：
-
-```cpp
-// 系统级处理（高优先级）
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        // 检查是否需要拦截（如模态对话框）
-        if (shouldIntercept(event)) {
-            event.SetHandled();  // 标记为已处理
-        }
-    },
-    EventPriority::High
-);
-
-// 业务逻辑（正常优先级）
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        if (!event.IsHandled()) {  // 检查是否已被处理
-            // 处理业务逻辑
-        }
-    },
-    EventPriority::Normal
-);
-```
-
-### 8.4 场景隔离
-
-**使用场景过滤器**：不同场景的事件应该隔离，避免相互干扰：
-
-```cpp
-// 场景 A 的订阅
-auto sceneAFilter = std::make_shared<SceneEventFilter>("SceneA");
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        // 只处理 SceneA 的事件
-    },
-    EventPriority::Normal,
-    sceneAFilter
-);
-
-// 场景 B 的订阅
-auto sceneBFilter = std::make_shared<SceneEventFilter>("SceneB");
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        // 只处理 SceneB 的事件
-    },
-    EventPriority::Normal,
-    sceneBFilter
-);
-```
-
-### 8.5 避免在回调中发布事件
-
-**避免循环发布**：在事件回调中发布新事件可能导致无限循环，应该谨慎使用：
-
-```cpp
-// 危险：可能导致无限循环
-eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-    if (event.scancode == SDL_SCANCODE_SPACE) {
-        KeyEvent newEvent;  // 创建新事件
-        eventBus.Publish(newEvent);  // 可能导致循环
-    }
-});
-
-// 安全：使用标志或延迟发布
-bool shouldPublish = false;
-eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-    if (event.scancode == SDL_SCANCODE_SPACE) {
-        shouldPublish = true;  // 设置标志
-    }
-});
-
-// 在下一帧发布
-if (shouldPublish) {
-    KeyEvent newEvent;
-    eventBus.Publish(newEvent);
-    shouldPublish = false;
 }
 ```
 
----
+### 8.2 使用智能指针管理过滤器
+
+```cpp
+class MyModule {
+private:
+    std::shared_ptr<EventFilter> m_filter;
+    
+public:
+    void OnRegister(ECS::World& world, AppContext& ctx) override {
+        // 创建过滤器并保存引用
+        m_filter = std::make_shared<TagEventFilter>("my-tag");
+        
+        m_listenerId = ctx.globalEventBus->Subscribe<FrameBeginEvent>(
+            [](const FrameBeginEvent& e) { /* ... */ },
+            0,
+            m_filter
+        );
+    }
+};
+```
+
+### 8.3 避免在事件处理中执行耗时操作
+
+事件处理是同步的，耗时操作会阻塞事件派发：
+
+```cpp
+// ❌ 不好：耗时操作
+eventBus->Subscribe<FrameBeginEvent>([](const FrameBeginEvent& e) {
+    LoadLargeFile();  // 阻塞其他监听者
+});
+
+// ✅ 好：异步处理
+eventBus->Subscribe<FrameBeginEvent>([](const FrameBeginEvent& e) {
+    std::thread([]() {
+        LoadLargeFile();  // 在后台线程执行
+    }).detach();
+});
+```
+
+### 8.4 使用事件标签进行分类
+
+```cpp
+// 发布调试事件
+FrameBeginEvent debugEvent;
+debugEvent.AddTag("debug");
+debugEvent.AddTag("performance");
+eventBus->Publish(debugEvent);
+
+// 只订阅调试事件
+auto debugFilter = std::make_shared<TagEventFilter>("debug");
+eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& e) { /* ... */ },
+    0,
+    debugFilter
+);
+```
 
 ## 9. 常见问题
 
-### 9.1 为什么我的事件订阅没有收到事件？
+### Q: 如何确保事件处理顺序？
 
-**可能原因**：
-1. **过滤器不匹配**：检查事件是否包含所需的标签或目标场景
-2. **事件未发布**：确认 `InputModule` 已注册并运行
-3. **优先级问题**：高优先级订阅者可能标记事件为已处理
-4. **订阅时机**：确保在事件发布之前完成订阅
+A: 使用优先级。高优先级的监听者会先执行。如果需要严格的顺序，可以使用不同的优先级值。
 
-**调试方法**：
+### Q: 事件处理是同步还是异步？
+
+A: 同步。`Publish` 方法会同步调用所有匹配的监听者。如果需要异步处理，请在监听者内部启动异步任务。
+
+### Q: 可以在事件处理中发布新事件吗？
+
+A: 可以，但要注意避免无限递归。建议使用事件队列或延迟发布。
+
+### Q: 如何调试事件系统？
+
+A: 可以添加日志记录所有事件的发布和接收：
+
 ```cpp
-// 添加调试输出
-eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-    std::cout << "Received KeyEvent: " << event.scancode << std::endl;
-});
-
-// 检查事件标签
-KeyEvent event;
-event.AddTag("test");
-std::cout << "Event tags: ";
-for (const auto& tag : event.GetTags()) {
-    std::cout << tag << " ";
-}
-std::cout << std::endl;
-```
-
-### 9.2 如何实现事件拦截？
-
-**使用高优先级和 Handled 标志**：
-```cpp
-// 拦截器（高优先级）
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        if (shouldIntercept(event)) {
-            event.SetHandled();  // 标记为已处理
-        }
-    },
-    EventPriority::High
-);
-
-// 普通处理器（检查是否已处理）
-eventBus.Subscribe<KeyEvent>(
-    [](const KeyEvent& event) {
-        if (!event.IsHandled()) {
-            // 处理事件
-        }
-    },
-    EventPriority::Normal
+eventBus->Subscribe<FrameBeginEvent>(
+    [](const FrameBeginEvent& e) {
+        Logger::GetInstance().Debug("FrameBeginEvent received");
+    }
 );
 ```
 
-### 9.3 如何在不同场景间切换快捷键上下文？
+## 10. 参考
 
-**使用 InputModule 的 SetShortcutContext**：
-```cpp
-InputModule* inputModule = /* ... */;
-
-// 切换到 ObjectMode
-inputModule->SetShortcutContext("ObjectMode");
-
-// 切换到 EditMode
-inputModule->SetShortcutContext("EditMode");
-
-// 获取当前上下文
-const ShortcutContext* context = inputModule->GetOperationMapping().GetCurrentContext();
-std::cout << "Current context: " << context->GetName() << std::endl;
-```
-
-### 9.4 如何自定义手势检测规则？
-
-**扩展 InputModule**：目前手势检测规则在 `InputModule` 中硬编码，如需自定义，可以：
-1. 继承 `InputModule` 并重写 `ProcessMouseGesture` 方法
-2. 或直接修改 `InputModule` 的源码
-
----
-
-## 10. 性能考虑
-
-### 10.1 事件发布开销
-
-**批量发布**：避免在循环中频繁发布事件，考虑批量处理：
-
-```cpp
-// 不好的做法
-for (int i = 0; i < 1000; ++i) {
-    KeyEvent event;
-    eventBus.Publish(event);  // 每次发布都有开销
-}
-
-// 好的做法：批量处理
-std::vector<KeyEvent> events;
-events.reserve(1000);
-// ... 收集事件 ...
-for (const auto& event : events) {
-    eventBus.Publish(event);
-}
-```
-
-### 10.2 过滤器性能
-
-**过滤器应该快速**：过滤器在每次事件发布时都会被调用，应该保持轻量：
-
-```cpp
-// 不好的做法：在过滤器中做复杂计算
-class SlowFilter : public EventFilter {
-    bool ShouldReceive(const EventBase& event) const override {
-        // 复杂计算（不推荐）
-        for (int i = 0; i < 1000000; ++i) {
-            // ...
-        }
-        return true;
-    }
-};
-
-// 好的做法：快速检查
-class FastFilter : public EventFilter {
-    bool ShouldReceive(const EventBase& event) const override {
-        // 简单检查
-        return event.HasTag("ui");
-    }
-};
-```
-
-### 10.3 回调函数性能
-
-**避免在回调中做耗时操作**：事件回调应该快速执行，耗时操作应该异步处理：
-
-```cpp
-// 不好的做法
-eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-    // 耗时操作（不推荐）
-    loadLargeFile("data.bin");
-    processComplexData();
-});
-
-// 好的做法：异步处理
-eventBus.Subscribe<KeyEvent>([](const KeyEvent& event) {
-    // 快速处理
-    if (event.scancode == SDL_SCANCODE_SPACE) {
-        // 提交异步任务
-        asyncTaskQueue.push([=]() {
-            loadLargeFile("data.bin");
-            processComplexData();
-        });
-    }
-});
-```
-
----
-
-## 11. 与其他系统集成
-
-### 11.1 与 SceneManager 集成
-
-**场景切换时自动切换上下文**：
-```cpp
-// 在场景进入时切换快捷键上下文
-class MyScene : public Scene {
-    void OnEnter() override {
-        auto* inputModule = GetAppContext().GetModuleRegistry()
-            .GetModule<InputModule>("InputModule");
-        if (inputModule) {
-            inputModule->SetShortcutContext("ObjectMode");
-        }
-    }
-};
-```
-
-### 11.2 与 ECS 系统集成
-
-**在 ECS 组件中订阅事件**：
-```cpp
-class InputComponent : public Component {
-public:
-    void Initialize(EventBus& eventBus) {
-        m_listenerId = eventBus.Subscribe<KeyEvent>(
-            [this](const KeyEvent& event) {
-                this->HandleKeyEvent(event);
-            }
-        );
-    }
-    
-    void Destroy(EventBus& eventBus) {
-        eventBus.Unsubscribe<KeyEvent>(m_listenerId);
-    }
-    
-private:
-    void HandleKeyEvent(const KeyEvent& event) {
-        // 更新组件状态
-    }
-    
-    ListenerId m_listenerId;
-};
-```
-
----
-
-## 12. 参考资源
-
-### 12.1 相关文档
-
-- [APPLICATION_LAYER_PROGRESS_REPORT.md](APPLICATION_LAYER_PROGRESS_REPORT.md) - 应用层开发进度报告
-- [SCENE_MODULE_FRAMEWORK.md](../SCENE_MODULE_FRAMEWORK.md) - 场景模块框架设计
-- [Resource_Management_Guide.md](Resource_Management_Guide.md) - 资源管理指南
-
-### 12.2 示例代码
-
-- `examples/53_event_system_test.cpp` - 完整的事件系统测试示例
-- `examples/52_application_boot_demo.cpp` - 应用层启动示例
-
-### 12.3 API 参考
-
-- `include/render/application/event_bus.h` - EventBus 接口定义
-- `include/render/application/events/input_events.h` - 输入事件定义
-- `include/render/application/operation_mapping.h` - 操作映射接口
-- `include/render/application/modules/input_module.h` - InputModule 接口
-
----
-
-## 13. 总结
-
-事件系统是应用层框架的核心通信机制，提供了：
-
-- ✅ **类型安全**：编译时类型检查，避免运行时错误
-- ✅ **灵活过滤**：支持标签、场景、自定义过滤器
-- ✅ **优先级控制**：支持事件处理优先级
-- ✅ **Blender 风格**：符合用户偏好的操作映射
-- ✅ **手势检测**：自动检测常见手势
-- ✅ **线程安全**：支持多线程环境
-
-通过合理使用事件系统，可以构建解耦、可维护的应用架构。
+- [SCENE_MODULE_FRAMEWORK.md](../SCENE_MODULE_FRAMEWORK.md) - 应用层框架设计
+- [APPLICATION_LAYER_PROGRESS_REPORT.md](APPLICATION_LAYER_PROGRESS_REPORT.md) - 应用层开发进度
+- `include/render/application/event_bus.h` - EventBus API
+- `include/render/application/events/` - 事件类型定义
 
 ---
 
 **上一章**: [APPLICATION_LAYER_PROGRESS_REPORT.md](APPLICATION_LAYER_PROGRESS_REPORT.md)  
-**下一章**: [Resource_Management_Guide.md](Resource_Management_Guide.md)
-       
+**下一章**: [SceneGraph_Node_Guide.md](SceneGraph_Node_Guide.md)

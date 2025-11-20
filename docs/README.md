@@ -63,8 +63,13 @@
 - [RenderState 线程安全](THREAD_SAFETY.md)
 - [网格系统线程安全](MESH_THREAD_SAFETY.md)
 
+#### 性能优化 ⚡
+- **[基础渲染器优化方案](RENDERER_OPTIMIZATION_PLAN.md)** - Phase 2 渲染器优化详细方案 🆕
+- [材质排序架构](MATERIAL_SORTING_ARCHITECTURE.md) - 材质排序系统设计
+
 ### 项目管理
 - [Phase 1 进度列表](todolists/PHASE1_BASIC_RENDERING.md)
+- [Phase 2 进度列表](todolists/PHASE2_APPLICATION_LAYER.md)
 - [功能列表](FEATURE_LIST.md)
 - [贡献指南](CONTRIBUTING.md)
 
