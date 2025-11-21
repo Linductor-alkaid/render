@@ -56,6 +56,7 @@ set(EXAMPLES
     52_application_boot_demo
     53_event_system_test
     54_module_hud_test
+    55_scene_serialization_test
     60_ui_framework_showcase
 )
 

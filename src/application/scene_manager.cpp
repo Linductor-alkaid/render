@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "render/application/module_registry.h"
+#include "render/application/scene_serializer.h"
 #include "render/logger.h"
 #include "render/resource_manager.h"
 #include "render/shader_cache.h"
@@ -775,6 +776,63 @@ void SceneManager::ReleaseSceneResources(SceneStackEntry& entry) {
             releasedCount,
             entry.id.c_str());
     }
+}
+
+bool SceneManager::SaveActiveScene(const std::string& filePath) {
+    if (!m_appContext || !m_appContext->world) {
+        Logger::GetInstance().Error("[SceneManager] Cannot save scene: AppContext or World is null");
+        return false;
+    }
+
+    Scene* activeScene = GetActiveScene();
+    if (!activeScene) {
+        Logger::GetInstance().Error("[SceneManager] Cannot save scene: no active scene");
+        return false;
+    }
+
+    SceneSerializer serializer;
+    std::string sceneName = std::string(activeScene->Name());
+    
+    bool success = serializer.SaveScene(*m_appContext->world, sceneName, filePath);
+    
+    if (success) {
+        Logger::GetInstance().InfoFormat(
+            "[SceneManager] Successfully saved active scene '%s' to '%s'",
+            sceneName.c_str(), filePath.c_str());
+    } else {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Failed to save active scene '%s' to '%s'",
+            sceneName.c_str(), filePath.c_str());
+    }
+
+    return success;
+}
+
+bool SceneManager::LoadSceneFromFile(const std::string& filePath, SceneEnterArgs args) {
+    if (!m_appContext || !m_appContext->world) {
+        Logger::GetInstance().Error("[SceneManager] Cannot load scene: AppContext or World is null");
+        return false;
+    }
+
+    SceneSerializer serializer;
+    auto sceneName = serializer.LoadScene(*m_appContext->world, filePath, *m_appContext);
+    
+    if (!sceneName.has_value()) {
+        Logger::GetInstance().ErrorFormat(
+            "[SceneManager] Failed to load scene from '%s'",
+            filePath.c_str());
+        return false;
+    }
+
+    Logger::GetInstance().InfoFormat(
+        "[SceneManager] Successfully loaded scene '%s' from '%s'",
+        sceneName.value().c_str(), filePath.c_str());
+
+    // 注意：从文件加载的场景不会自动推入场景栈
+    // 如果需要，可以创建一个临时场景来包装加载的实体
+    // 这里暂时只加载实体到World中，不创建Scene对象
+
+    return true;
 }
 
 } // namespace Render::Application

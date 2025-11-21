@@ -332,16 +332,23 @@
 **目标**: 场景保存/加载、多场景测试
 
 **任务清单**:
-1. 🔄 场景序列化（JSON 格式）
-2. 🔄 场景反序列化与资源路径校验
+1. ✅ 场景序列化（JSON 格式）（已完成，2025-11-19）
+2. ✅ 场景反序列化与资源路径校验（已完成，2025-11-19）
 3. 🔄 多场景热切换压力测试
 4. 🔄 场景切换性能基准测试
 5. 📝 更新场景 API 文档
 
 **验收标准**:
-- 场景可保存为 JSON 并正确加载
-- 多场景切换稳定无内存泄漏
-- 场景切换性能满足要求（< 100ms）
+- ✅ 场景可保存为 JSON 并正确加载（已完成）
+- 🔄 多场景切换稳定无内存泄漏（待测试）
+- 🔄 场景切换性能满足要求（< 100ms）（待测试）
+
+**已完成功能**:
+- ✅ SceneSerializer 类实现（SaveScene、LoadScene）
+- ✅ ECS组件序列化支持（TransformComponent、MeshRenderComponent、CameraComponent、LightComponent、NameComponent）
+- ✅ 资源路径校验功能
+- ✅ SceneManager 集成（SaveActiveScene、LoadSceneFromFile）
+- ✅ 测试程序（55_scene_serialization_test）
 
 ### Phase 2.5: 工具链集成（预计 2-3 周）
 

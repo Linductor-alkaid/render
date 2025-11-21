@@ -252,6 +252,7 @@ set(RENDER_SOURCES
     src/application/operation_mapping.cpp
     src/application/scene_manager.cpp
     src/application/scene_graph.cpp
+    src/application/scene_serializer.cpp
     src/application/scenes/boot_scene.cpp
     src/application/scene_types.cpp
 

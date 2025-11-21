@@ -1,0 +1,130 @@
+{
+    "entities": [
+        {
+            "components": {
+                "camera": {
+                    "active": true,
+                    "aspect": 1.7777777910232544,
+                    "clearColor": [
+                        0.05000000074505806,
+                        0.07999999821186066,
+                        0.11999999731779099,
+                        1.0
+                    ],
+                    "clearDepth": true,
+                    "clearStencil": false,
+                    "depth": 0,
+                    "farPlane": 100.0,
+                    "fov": 60.0,
+                    "layerMask": 4294967295,
+                    "nearPlane": 0.10000000149011612,
+                    "projectionType": "perspective"
+                },
+                "transform": {
+                    "position": [
+                        0.0,
+                        1.5,
+                        4.0
+                    ],
+                    "rotation": [
+                        1.0,
+                        -2.9802322387695313e-08,
+                        -0.0,
+                        0.0
+                    ],
+                    "scale": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ]
+                }
+            },
+            "id": 0,
+            "version": 0
+        },
+        {
+            "components": {
+                "light": {
+                    "attenuation": 1.0,
+                    "castShadows": false,
+                    "color": [
+                        1.0,
+                        0.949999988079071,
+                        0.8500000238418579
+                    ],
+                    "enabled": true,
+                    "innerConeAngle": 30.0,
+                    "intensity": 4.0,
+                    "outerConeAngle": 45.0,
+                    "range": 10.0,
+                    "shadowBias": 0.0010000000474974513,
+                    "shadowMapSize": 1024,
+                    "type": 1
+                },
+                "transform": {
+                    "position": [
+                        2.0,
+                        3.0,
+                        2.0
+                    ],
+                    "rotation": [
+                        1.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "scale": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ]
+                }
+            },
+            "id": 1,
+            "version": 0
+        },
+        {
+            "components": {
+                "meshRender": {
+                    "castShadows": true,
+                    "layerID": 700,
+                    "materialName": "test.cube.material",
+                    "materialOverride": {
+                        "diffuseColor": [
+                            0.30000001192092896,
+                            0.699999988079071,
+                            1.0,
+                            1.0
+                        ]
+                    },
+                    "meshName": "test.cube.mesh",
+                    "receiveShadows": true,
+                    "renderPriority": 0,
+                    "visible": true
+                },
+                "transform": {
+                    "position": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "rotation": [
+                        1.0,
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "scale": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ]
+                }
+            },
+            "id": 2,
+            "version": 0
+        }
+    ],
+    "sceneName": "TestScene",
+    "version": "1.0"
+}

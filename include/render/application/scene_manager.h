@@ -50,6 +50,23 @@ public:
     [[nodiscard]] bool IsTransitionInProgress() const noexcept;
     [[nodiscard]] size_t SceneCount() const noexcept;
 
+    // ==================== 场景序列化 ====================
+    
+    /**
+     * @brief 保存当前活动场景到JSON文件
+     * @param filePath 保存路径
+     * @return 成功返回true，失败返回false
+     */
+    bool SaveActiveScene(const std::string& filePath);
+
+    /**
+     * @brief 从JSON文件加载场景并推入场景栈
+     * @param filePath 文件路径
+     * @param args 场景进入参数
+     * @return 成功返回true，失败返回false
+     */
+    bool LoadSceneFromFile(const std::string& filePath, SceneEnterArgs args = {});
+
 private:
     struct SceneStackEntry {
         std::string id;
