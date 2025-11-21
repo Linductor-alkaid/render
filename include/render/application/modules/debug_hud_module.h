@@ -86,6 +86,8 @@ private:
     float m_accumulatedTime = 0.0f;
     uint32_t m_frameCounter = 0;
     float m_smoothedFPS = 0.0f;
+    float m_fpsDisplayUpdateAccumulator = 0.0f;  // FPS显示更新的累积时间
+    float m_currentDisplayFPS = 0.0f;  // 当前显示的FPS值
     
     // 调试功能开关
     bool m_showLayerInfo = false;              // 是否显示渲染层级信息

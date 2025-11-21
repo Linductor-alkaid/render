@@ -128,26 +128,68 @@ public:
 class SceneManager {
 public:
     void Initialize(AppContext* appContext, ModuleRegistry* modules);
+    void Shutdown();
+    
+    // 场景工厂注册
     void RegisterSceneFactory(std::string sceneId, SceneFactory factory);
+    bool HasSceneFactory(std::string_view sceneId) const;
+    
+    // 场景切换
     bool PushScene(std::string_view sceneId, SceneEnterArgs args = {});
     bool ReplaceScene(std::string_view sceneId, SceneEnterArgs args = {});
     std::optional<SceneSnapshot> PopScene(SceneExitArgs args = {});
+    
+    // 场景更新
     void Update(const FrameUpdateArgs& frameArgs);
-    // ...
+    
+    // 场景查询
+    Scene* GetActiveScene() noexcept;
+    const Scene* GetActiveScene() const noexcept;
+    bool IsTransitionInProgress() const noexcept;
+    size_t SceneCount() const noexcept;
+    
+    // 场景序列化
+    bool SaveActiveScene(const std::string& filePath);
+    bool LoadSceneFromFile(const std::string& filePath, SceneEnterArgs args = {});
 };
 ```
 
-- 事件广播：
-  - `SceneTransitionEvent`：`PushScene` / `ReplaceScene` / `PopScene` 调用时发布。
-  - `SceneLifecycleEvent`：`OnAttach`、`OnEnter`、`OnExit`、`OnDetach` 等阶段触发，便于调试 HUD 或工具链监听。
-  - `SceneManifestEvent`：执行 `BuildManifest` 后发布，可用于资源加载监控。
-  - `ScenePreloadProgressEvent`：`SceneManager` 轮询资源可用性时发布，包含 required/optional 已就绪数量、缺失资源列表、完成/失败标记。
+### 核心方法
 
-- 注册场景工厂 `sceneId → SceneFactory`。
-- `PushScene`：压入场景栈并激活。
-- `ReplaceScene`：替换栈顶场景（保留快照传递）。
-- `PopScene`：退出当前场景并返回快照。
-- `Update`：调用当前场景 `OnUpdate`。
+#### 初始化和关闭
+
+- `Initialize(AppContext*, ModuleRegistry*)`：初始化场景管理器，需要提供应用上下文和模块注册表。
+- `Shutdown()`：关闭场景管理器，清理所有场景。
+
+#### 场景工厂注册
+
+- `RegisterSceneFactory(sceneId, factory)`：注册场景工厂函数，用于创建场景实例。
+- `HasSceneFactory(sceneId)`：检查场景工厂是否已注册。
+
+#### 场景切换
+
+- `PushScene(sceneId, args)`：将新场景压入场景栈并激活。返回 `true` 表示成功。
+- `ReplaceScene(sceneId, args)`：替换栈顶场景（保留快照传递）。返回 `true` 表示成功。
+- `PopScene(args)`：退出当前场景并返回快照。如果场景栈为空，返回 `std::nullopt`。
+
+#### 场景更新和查询
+
+- `Update(frameArgs)`：调用当前活动场景的 `OnUpdate` 方法。
+- `GetActiveScene()`：获取当前活动场景指针，如果没有活动场景返回 `nullptr`。
+- `IsTransitionInProgress()`：检查是否有场景切换正在进行中。
+- `SceneCount()`：返回场景栈中的场景数量。
+
+#### 场景序列化
+
+- `SaveActiveScene(filePath)`：将当前活动场景保存到JSON文件。返回 `true` 表示成功。
+- `LoadSceneFromFile(filePath, args)`：从JSON文件加载场景并推入场景栈。返回 `true` 表示成功。
+
+### 事件广播
+
+- `SceneTransitionEvent`：`PushScene` / `ReplaceScene` / `PopScene` 调用时发布。
+- `SceneLifecycleEvent`：`OnAttach`、`OnEnter`、`OnExit`、`OnDetach` 等阶段触发，便于调试 HUD 或工具链监听。
+- `SceneManifestEvent`：执行 `BuildManifest` 后发布，可用于资源加载监控。
+- `ScenePreloadProgressEvent`：`SceneManager` 轮询资源可用性时发布，包含 required/optional 已就绪数量、缺失资源列表、完成/失败标记。
 
 ### 热切换流程
 
@@ -193,14 +235,224 @@ m_sceneGraph.Attach(*this, ctx);
 
 ---
 
+## `SceneSerializer`
+
+### 概述
+
+`SceneSerializer` 负责将场景序列化为JSON格式，以及从JSON反序列化场景。支持ECS实体、组件的完整序列化和反序列化。
+
+### 接口概览
+
+```cpp
+class SceneSerializer {
+public:
+    SceneSerializer() = default;
+    ~SceneSerializer() = default;
+
+    // 场景序列化
+    bool SaveScene(ECS::World& world, const std::string& sceneName, const std::string& filePath);
+    
+    // 场景反序列化
+    std::optional<std::string> LoadScene(ECS::World& world, const std::string& filePath, AppContext& ctx);
+    
+    // 资源路径校验
+    static bool ValidateResourcePath(const std::string& resourcePath, const std::string& resourceType, AppContext& ctx);
+};
+```
+
+### 核心方法
+
+#### 保存场景
+
+```cpp
+bool SaveScene(ECS::World& world, const std::string& sceneName, const std::string& filePath);
+```
+
+将ECS World中的所有实体和组件序列化为JSON格式并保存到文件。
+
+**参数**:
+- `world`: ECS World对象，包含要序列化的实体和组件
+- `sceneName`: 场景名称，会保存到JSON中
+- `filePath`: 保存路径
+
+**返回值**: 成功返回 `true`，失败返回 `false`
+
+**支持的组件类型**:
+- `TransformComponent`: 位置、旋转、缩放
+- `MeshRenderComponent`: 网格和材质引用
+- `CameraComponent`: 相机参数（投影类型、FOV、近远平面等）
+- `LightComponent`: 光源类型、颜色、强度、范围等
+- `NameComponent`: 实体名称
+
+#### 加载场景
+
+```cpp
+std::optional<std::string> LoadScene(ECS::World& world, const std::string& filePath, AppContext& ctx);
+```
+
+从JSON文件加载场景，创建实体和组件。
+
+**参数**:
+- `world`: ECS World对象，用于创建新实体
+- `filePath`: JSON文件路径
+- `ctx`: AppContext，用于资源路径校验和资源获取
+
+**返回值**: 成功返回场景名称，失败返回 `std::nullopt`
+
+**功能**:
+- 自动创建实体和组件
+- 从 `ResourceManager` 获取资源指针（mesh、material）
+- 验证资源路径的有效性
+- 设置 `resourcesLoaded` 标志
+
+#### 资源路径校验
+
+```cpp
+static bool ValidateResourcePath(const std::string& resourcePath, const std::string& resourceType, AppContext& ctx);
+```
+
+验证资源路径是否有效。
+
+**参数**:
+- `resourcePath`: 资源路径或名称
+- `resourceType`: 资源类型（"mesh"、"material"、"texture"、"shader"）
+- `ctx`: AppContext，包含 ResourceManager
+
+**返回值**: 如果资源存在返回 `true`
+
+### JSON 格式
+
+场景序列化的JSON格式如下：
+
+```json
+{
+  "sceneName": "MyScene",
+  "entities": [
+    {
+      "id": 0,
+      "name": "Cube",
+      "components": {
+        "transform": {
+          "position": [0.0, 0.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "meshRender": {
+          "meshName": "cube.mesh",
+          "materialName": "default.material",
+          "layerID": 200,
+          "diffuseColor": [0.3, 0.7, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "id": 1,
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [0.0, 1.5, 4.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "camera": {
+          "projectionType": "perspective",
+          "fov": 60.0,
+          "aspect": 1.77778,
+          "nearPlane": 0.1,
+          "farPlane": 100.0,
+          "depth": 0,
+          "clearColor": [0.05, 0.08, 0.12, 1.0],
+          "layerMask": 4294967295
+        }
+      }
+    }
+  ]
+}
+```
+
+### 使用示例
+
+#### 保存场景
+
+```cpp
+#include "render/application/scene_serializer.h"
+#include "render/application/scene_manager.h"
+
+// 通过 SceneManager 保存
+SceneManager sceneManager;
+// ... 初始化场景管理器并创建场景 ...
+if (sceneManager.SaveActiveScene("my_scene.json")) {
+    Logger::GetInstance().Info("Scene saved successfully");
+} else {
+    Logger::GetInstance().Error("Failed to save scene");
+}
+
+// 直接使用 SceneSerializer
+SceneSerializer serializer;
+ECS::World& world = host.GetWorld();
+if (serializer.SaveScene(world, "MyScene", "my_scene.json")) {
+    Logger::GetInstance().Info("Scene saved successfully");
+}
+```
+
+#### 加载场景
+
+```cpp
+// 通过 SceneManager 加载
+SceneManager sceneManager;
+// ... 初始化场景管理器 ...
+if (sceneManager.LoadSceneFromFile("my_scene.json")) {
+    Logger::GetInstance().Info("Scene loaded successfully");
+} else {
+    Logger::GetInstance().Error("Failed to load scene");
+}
+
+// 直接使用 SceneSerializer
+SceneSerializer serializer;
+ECS::World& world = host.GetWorld();
+auto& ctx = host.GetContext();
+auto sceneName = serializer.LoadScene(world, "my_scene.json", ctx);
+if (sceneName.has_value()) {
+    Logger::GetInstance().InfoFormat("Scene '%s' loaded successfully", sceneName.value().c_str());
+} else {
+    Logger::GetInstance().Error("Failed to load scene");
+}
+```
+
+#### 资源路径校验
+
+```cpp
+AppContext& ctx = host.GetContext();
+if (SceneSerializer::ValidateResourcePath("cube.mesh", "mesh", ctx)) {
+    Logger::GetInstance().Info("Mesh resource exists");
+} else {
+    Logger::GetInstance().Warning("Mesh resource not found");
+}
+```
+
+### 注意事项
+
+1. **资源预加载**: 加载场景前，确保所需的资源（mesh、material、shader）已经在 `ResourceManager` 中注册。
+2. **实体清理**: 加载新场景前，建议清空当前场景的实体，避免实体ID冲突。
+3. **资源指针**: 反序列化时，`SceneSerializer` 会自动从 `ResourceManager` 获取资源指针，并设置 `resourcesLoaded` 标志。
+4. **错误处理**: 如果资源路径无效，会记录警告但不会阻止场景加载（可选资源）。
+5. **组件支持**: 目前支持 `TransformComponent`、`MeshRenderComponent`、`CameraComponent`、`LightComponent`、`NameComponent`。如需支持其他组件，需要扩展 `SceneSerializer`。
+
+---
+
 ## 参考
 
 - `include/render/application/scene.h`
+- `include/render/application/scene_manager.h`
+- `include/render/application/scene_serializer.h`
 - `include/render/application/scene_graph.h`
 - `src/application/scenes/boot_scene.cpp`
 - `src/application/scene_graph.cpp`
+- `src/application/scene_serializer.cpp`
 - `include/render/application/modules/*.h`
 - `docs/SCENE_MODULE_FRAMEWORK.md`
+- `examples/55_scene_serialization_test.cpp` - 场景序列化测试示例
+- `examples/56_scene_manager_stress_test.cpp` - 场景管理器压力测试示例
 
 ---
 

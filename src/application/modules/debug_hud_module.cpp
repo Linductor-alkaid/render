@@ -34,6 +34,8 @@ void DebugHUDModule::OnRegister(ECS::World&, AppContext& ctx) {
     m_accumulatedTime = 0.0f;
     m_frameCounter = 0;
     m_smoothedFPS = 0.0f;
+    m_fpsDisplayUpdateAccumulator = 0.0f;
+    m_currentDisplayFPS = 0.0f;
     m_textObjectsCreated = false;
     
     // 确保使用默认UI层，并配置禁用深度测试和深度写入
@@ -100,14 +102,38 @@ void DebugHUDModule::OnPostFrame(const FrameUpdateArgs& frame, AppContext& ctx) 
         return;
     }
 
+    // 计算实时帧数：基于当前帧的deltaTime
+    // 如果deltaTime为0或非常小，使用上一帧的FPS值避免除零或异常值
+    float currentFPS = 0.0f;
+    if (frame.deltaTime > 0.0001f) {
+        currentFPS = 1.0f / frame.deltaTime;
+    } else if (m_smoothedFPS > 0.0f) {
+        currentFPS = m_smoothedFPS; // 使用上一次的值作为回退
+    }
+    
+    // 更新平滑后的FPS用于其他统计目的（保留平滑算法但用于显示实时FPS）
     m_accumulatedTime += frame.deltaTime;
     ++m_frameCounter;
     if (m_accumulatedTime >= 0.5f) {
-        const float fps = static_cast<float>(m_frameCounter) / m_accumulatedTime;
+        const float avgFPS = static_cast<float>(m_frameCounter) / m_accumulatedTime;
         const float smoothing = 0.1f;
-        m_smoothedFPS = (1.0f - smoothing) * m_smoothedFPS + smoothing * fps;
+        m_smoothedFPS = (1.0f - smoothing) * m_smoothedFPS + smoothing * avgFPS;
         m_accumulatedTime = 0.0f;
         m_frameCounter = 0;
+    }
+    
+    // 控制FPS显示的更新频率，避免在高帧率下刷新过快
+    const float fpsDisplayUpdateInterval = 0.15f;  // 每0.15秒更新一次显示的FPS（约6-7次/秒）
+    m_fpsDisplayUpdateAccumulator += frame.deltaTime;
+    
+    if (m_fpsDisplayUpdateAccumulator >= fpsDisplayUpdateInterval) {
+        // 达到更新间隔，更新显示的FPS值
+        m_currentDisplayFPS = currentFPS;
+        m_statsCache.fps = m_currentDisplayFPS;
+        m_fpsDisplayUpdateAccumulator = 0.0f;
+    } else {
+        // 未达到更新间隔，保持上次显示的FPS值
+        m_statsCache.fps = m_currentDisplayFPS;
     }
 
     // 创建文本对象（如果还没有创建）
@@ -214,8 +240,8 @@ void DebugHUDModule::UpdateTextContent(const FrameUpdateArgs&, AppContext& ctx) 
         resourceStats = ctx.resourceManager->GetStats();
     }
 
-    // 更新统计缓存
-    m_statsCache.fps = m_smoothedFPS;
+    // 更新统计缓存（FPS已在OnPostFrame中更新为实时值）
+    // m_statsCache.fps 已经在OnPostFrame中设置为实时FPS，无需再次更新
     m_statsCache.frameTime = renderStats.frameTime;
     m_statsCache.drawCalls = renderStats.drawCalls;
     m_statsCache.triangles = renderStats.triangles;
