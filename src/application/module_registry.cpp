@@ -233,6 +233,65 @@ void ModuleRegistry::SortForPhase(ModulePhase phase) {
     }
 }
 
+std::optional<ModuleRegistry::ModuleState> ModuleRegistry::GetModuleState(std::string_view name) const {
+    auto it = m_modules.find(std::string(name));
+    if (it == m_modules.end() || !it->second.module) {
+        return std::nullopt;
+    }
+
+    const auto& record = it->second;
+    const auto* module = record.module.get();
+
+    ModuleState state;
+    state.name = std::string(module->Name());
+    state.active = record.active;
+    state.registered = record.registered;
+    state.dependencies = module->Dependencies();
+    state.preFramePriority = module->Priority(ModulePhase::PreFrame);
+    state.postFramePriority = module->Priority(ModulePhase::PostFrame);
+
+    return state;
+}
+
+std::vector<ModuleRegistry::ModuleState> ModuleRegistry::GetAllModuleStates() const {
+    std::vector<ModuleState> states;
+    states.reserve(m_modules.size());
+
+    for (const auto& [name, record] : m_modules) {
+        if (!record.module) {
+            continue;
+        }
+
+        const auto* module = record.module.get();
+        ModuleState state;
+        state.name = std::string(module->Name());
+        state.active = record.active;
+        state.registered = record.registered;
+        state.dependencies = module->Dependencies();
+        state.preFramePriority = module->Priority(ModulePhase::PreFrame);
+        state.postFramePriority = module->Priority(ModulePhase::PostFrame);
+
+        states.push_back(std::move(state));
+    }
+
+    // 按名称排序
+    std::sort(states.begin(), states.end(), [](const ModuleState& lhs, const ModuleState& rhs) {
+        return lhs.name < rhs.name;
+    });
+
+    return states;
+}
+
+bool ModuleRegistry::IsModuleActive(std::string_view name) const {
+    auto it = m_modules.find(std::string(name));
+    return it != m_modules.end() && it->second.active;
+}
+
+bool ModuleRegistry::IsModuleRegistered(std::string_view name) const {
+    auto it = m_modules.find(std::string(name));
+    return it != m_modules.end() && it->second.registered;
+}
+
 } // namespace Render::Application
 
 

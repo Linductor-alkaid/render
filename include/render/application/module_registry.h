@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <optional>
+
 #include "render/application/app_context.h"
 #include "render/application/app_module.h"
 
@@ -41,6 +43,45 @@ public:
     const AppModule* GetModule(std::string_view name) const;
 
     void InvokePhase(ModulePhase phase, const FrameUpdateArgs& frameArgs);
+
+    // ========================================================================
+    // 工具链集成接口（Phase 2.5）
+    // ========================================================================
+
+    /**
+     * @brief 模块状态信息
+     */
+    struct ModuleState {
+        std::string name;
+        bool active = false;
+        bool registered = false;
+        ModuleDependencies dependencies;
+        int preFramePriority = 0;
+        int postFramePriority = 0;
+    };
+
+    /**
+     * @brief 获取模块状态
+     * @param name 模块名称
+     * @return 模块状态，如果模块不存在返回 std::nullopt
+     */
+    std::optional<ModuleState> GetModuleState(std::string_view name) const;
+
+    /**
+     * @brief 获取所有模块状态列表
+     * @return 模块状态列表（按名称排序）
+     */
+    std::vector<ModuleState> GetAllModuleStates() const;
+
+    /**
+     * @brief 检查模块是否激活
+     */
+    bool IsModuleActive(std::string_view name) const;
+
+    /**
+     * @brief 检查模块是否已注册
+     */
+    bool IsModuleRegistered(std::string_view name) const;
 
 private:
     struct ModuleRecord {

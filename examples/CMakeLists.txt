@@ -58,6 +58,7 @@ set(EXAMPLES
     54_module_hud_test
     55_scene_serialization_test
     56_scene_manager_stress_test
+    57_toolchain_integration_test
     60_ui_framework_showcase
 )
 

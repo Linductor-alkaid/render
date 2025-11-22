@@ -255,6 +255,9 @@ set(RENDER_SOURCES
     src/application/scene_serializer.cpp
     src/application/scenes/boot_scene.cpp
     src/application/scene_types.cpp
+    src/application/toolchain/material_shader_panel.cpp
+    src/application/toolchain/layermask_editor.cpp
+    src/application/toolchain/scene_graph_visualizer.cpp
 
     # Debug
     src/debug/sprite_animation_debugger.cpp
@@ -347,6 +350,9 @@ set(RENDER_HEADERS
     include/render/application/scene_graph.h
     include/render/application/scene_types.h
     include/render/application/scenes/boot_scene.h
+    include/render/application/toolchain/material_shader_panel.h
+    include/render/application/toolchain/layermask_editor.h
+    include/render/application/toolchain/scene_graph_visualizer.h
     
     # Rendering
     include/render/shader.h
