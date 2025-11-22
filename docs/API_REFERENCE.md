@@ -5,6 +5,65 @@
 
 ## 核心 API
 
+### 应用层系统 🆕 **Phase 2**
+
+应用层提供了统一的应用框架，包括场景管理、模块系统、事件总线和工具链集成。
+
+- **[ApplicationHost](api/ApplicationHost.md)** - 应用宿主，统一入口和生命周期管理
+- **[ModuleRegistry](api/ModuleRegistry.md)** - 模块注册表，管理应用模块的生命周期和依赖
+- **[AppContext](api/AppContext.md)** - 应用上下文，提供核心服务引用
+- **[EventBus](api/EventBus.md)** - 事件总线，类型安全的事件订阅和发布
+- **[SceneManager](api/SceneManager.md)** - 场景管理器，管理场景栈和热切换
+
+**应用层详细文档**:
+- [场景API](application/Scene_API.md) - 场景接口详细文档
+- [模块开发指南](application/Module_Guide.md) - 模块开发指南
+- [事件总线使用指南](application/EventBus_Guide.md) - 事件系统使用指南
+- [工具链集成指南](application/Toolchain_Intergration_Guide.md) - 工具链集成指南
+
+**快速开始示例**:
+```cpp
+#include "render/application/application_host.h"
+
+// 创建ApplicationHost
+ApplicationHost host;
+ApplicationHost::Config config{};
+config.renderer = renderer;
+config.resourceManager = &ResourceManager::GetInstance();
+config.asyncLoader = &AsyncResourceLoader::GetInstance();
+
+if (!host.Initialize(config)) {
+    return -1;
+}
+
+// 注册模块
+auto& moduleRegistry = host.GetModuleRegistry();
+moduleRegistry.RegisterModule(std::make_unique<CoreRenderModule>());
+
+// 注册场景
+auto& sceneManager = host.GetSceneManager();
+sceneManager.RegisterSceneFactory("BootScene", []() {
+    return std::make_unique<BootScene>();
+});
+
+// 加载场景
+sceneManager.PushScene("BootScene");
+
+// 主循环
+while (running) {
+    FrameUpdateArgs frameArgs{};
+    frameArgs.deltaTime = renderer->GetDeltaTime();
+    host.UpdateFrame(frameArgs);
+    
+    renderer->BeginFrame();
+    host.UpdateWorld(frameArgs.deltaTime);
+    renderer->EndFrame();
+    renderer->Present();
+}
+```
+
+---
+
 ### 状态管理（RenderState）
 
 状态管理系统提供了 OpenGL 状态缓存，减少冗余的 API 调用，提高渲染性能。

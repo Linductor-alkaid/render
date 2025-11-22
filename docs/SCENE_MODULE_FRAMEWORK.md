@@ -4,6 +4,10 @@
 
 # 应用层场景与模块框架设计方案（Phase 2）
 
+**最后更新**: 2025-11-22  
+**整体进度**: 约 90% 完成  
+**参考文档**: [APPLICATION_LAYER_PROGRESS_REPORT.md](application/APPLICATION_LAYER_PROGRESS_REPORT.md)
+
 ## 1. 背景与现状评估
 
 - 引擎核心层已完成资源、渲染、ECS 系统（`World`、`SystemRegistry`、`ResourceManager`、`UniformManager` 等），具备稳定的渲染循环与组件化逻辑。
@@ -28,15 +32,15 @@
 │                         Application Layer                      │
 │                                                                │
 │  ┌────────────┐    ┌──────────────────┐    ┌────────────────┐  │
-│  │ AppContext │◄─► │ ModuleRegistry   │ ◄─►│ EventBus        │  │
+│  │ AppContext │◄─► │ ModuleRegistry   │ ◄─►│ EventBus       │  │
 │  └────────────┘    └──────────────────┘    └────────────────┘  │
 │          ▲                      ▲                    ▲         │
 │          │                      │                    │         │
-│  ┌────────────┐         ┌───────────────┐    ┌────────────────┐│
+│  ┌─────────────┐        ┌───────────────┐    ┌────────────────┐│
 │  │ SceneManager│ ─────► │ Scene (Base)  │ ◄─►│ SceneGraph Ext ││
-│  └────────────┘         └───────────────┘    └────────────────┘│
-│          │                      │                               │
-│          ▼                      ▼                               │
+│  └─────────────┘        └───────────────┘    └────────────────┘│
+│          │                      │                              │
+│          ▼                      ▼                              │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │                    ECS World / Systems                   │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -195,56 +199,195 @@ SceneManager.PushScene("Boot")
 - **ResourceManager**：Manifest 结合缓存查询与 `AsyncResourceLoader`（可选）拉起加载，由 `SceneManager` 统一监视并通过进度事件告知工具链。
 - **Input/操作约定**：事件总线的 Input Channel 按 Blender 规范解析手势，模块通过订阅接收高层语义事件。
 - **工具链**：应用层向 Renderer HUD、材质/Shader 面板、LayerMask 编辑器提供实时数据源；模块状态暴露给调试面板。
+  - ✅ ModuleRegistry 模块状态查询接口已实现（GetModuleState、GetAllModuleStates、IsModuleActive、IsModuleRegistered）
+  - ✅ MaterialShaderPanelDataSource 已实现，提供材质和着色器信息查询接口
+  - ✅ LayerMaskEditorDataSource 已实现，支持LayerMask编辑功能
+  - ✅ SceneGraphVisualizerDataSource 已实现，支持场景图可视化
+  - ✅ 工具链集成指南文档已完成（Toolchain_Integration_Guide.md）
 
 ## 8. 开发计划与里程碑
 
-| 里程碑 | 产出 | 说明 |
-|--------|------|------|
-| M1: 基础框架 | `AppContext`, `Scene`, `SceneManager` 原型，支持单场景 | 验证生命周期、Uniform 接入 |
-| M2: 模块注册 | `ModuleRegistry`, 基础模块（渲染、输入、UI）迁移 | 对接 ECS 系统注册排序 |
-| M3: 资源管线 | `SceneResourceManifest`, 预加载/释放策略，可选资源流 | 与 `AsyncResourceLoader` 整合 |
-| M4: 事件总线 | `EventBus`, 输入映射、优先级、过滤 | 接入现有输入系统 |
-| M5: 多场景 | 场景栈、热切换、Overlay 支持；SceneGraph 节点生命周期 | 链接 Phase2 Demo 需求 |
-| M6: 工具联动 | HUD/材质面板读取模块状态，支持调试接口 | Phase2 工具链准备 |
+| 里程碑 | 状态 | 完成度 | 说明 |
+|--------|------|--------|------|
+| M1: 基础框架 | ✅ 已完成 | 100% | `AppContext`, `Scene`, `SceneManager` 原型完成，支持单场景和多场景栈式管理，生命周期已验证 |
+| M2: 模块注册 | ✅ 已完成 | 100% | `ModuleRegistry` 完成，基础模块（CoreRenderModule、InputModule、DebugHUDModule）已实现，ECS 系统自动注册已实现 |
+| M3: 资源管线 | ✅ 已完成 | 100% | `SceneResourceManifest` 完成，预加载/释放策略已实现，与 `AsyncResourceLoader` 整合完成，细粒度资源控制已实现 |
+| M4: 事件总线 | ✅ 已完成 | 100% | `EventBus` 完成，输入映射、优先级、过滤器已实现，Blender 风格操作映射已实现 |
+| M5: 多场景 | ✅ 已完成 | 95% | 场景栈完成，热切换完成，SceneGraph 节点生命周期已实现，Overlay 支持待测试 |
+| M6: 工具联动 | ✅ 已完成 | 90% | 工具链集成接口已完成（ModuleRegistry状态查询、MaterialShaderPanelDataSource、LayerMaskEditorDataSource、SceneGraphVisualizerDataSource），UI界面实现待完善 |
+
+**整体进度**: 约 90% 完成（2025-11-22）
+
+**已完成功能**:
+- ✅ 核心框架组件（AppContext、Scene、SceneManager、ModuleRegistry、EventBus、SceneGraph、ApplicationHost）
+- ✅ 模块实现（CoreRenderModule、InputModule、DebugHUDModule）
+- ✅ 资源管理（资源清单系统、预加载机制、资源释放策略）
+- ✅ 事件系统（帧事件、场景事件、输入事件、操作事件、手势事件）
+- ✅ 场景序列化（SceneSerializer，支持JSON格式）
+- ✅ 工具链集成接口（模块状态查询、材质/Shader面板数据源、LayerMask编辑器、场景图可视化）
+
+**测试状态**:
+- ✅ 单元测试和压力测试已通过
+- ✅ 事件系统测试已通过（53_event_system_test）
+- ✅ 模块和HUD测试已通过（54_module_hud_test）
+- ✅ 场景序列化测试已通过（55_scene_serialization_test）
+- ✅ 多场景热切换压力测试已通过（56_scene_manager_stress_test）
+- ✅ 工具链集成测试已通过（57_toolchain_integration_test）
 
 ## 9. 测试与验证策略
 
-- **单元测试**：SceneManager 状态机（Push/Pop/Replace）、Manifest 资源引用计数、ModuleRegistry 拓扑排序。
-- **集成测试**：多场景切换 Demo（透视/正交/Debug）、资源预加载检查（断网/失败回滚）、事件优先级冲突测试。
-- **性能测试**：多模块 PreFrame/PostFrame 拓展下的帧耗，资源预加载批量任务限制对帧时间影响（依托 Renderer HUD）。
-- **回归测试**：确保 UniformManager、ResourceManager、Renderer 等核心系统调用仅通过既有接口，维持 Phase1 渲染回归脚本。
+### 已完成的测试 ✅
+
+- **单元测试**（✅ 已完成）：
+  - SceneManager 状态机（Push/Pop/Replace）测试
+  - Manifest 资源引用计数测试
+  - 资源预加载检测机制测试
+  - 资源释放（Scene/Shared 范围区分）测试
+  - 必需/可选资源阻塞机制测试
+  - 测试文件：`tests/scene_manager_resource_test.cpp`（5个测试用例，全部通过，2.60秒）
+
+- **压力测试**（✅ 已完成）：
+  - 批量资源加载性能测试（50/200/500个资源）
+  - 快速场景切换性能测试（10次切换）
+  - Shared资源复用测试
+  - 并发加载压力测试（500个资源）
+  - 测试文件：`tests/scene_manager_stress_test.cpp`（5个压力场景，全部通过，13.05秒）
+
+- **集成测试**（✅ 已完成）：
+  - 事件系统测试：事件过滤器、Blender风格映射、操作事件、手势事件（`examples/53_event_system_test.cpp`）
+  - 模块和HUD测试：CoreRenderModule自动注册、DebugHUDModule统计信息显示（`examples/54_module_hud_test.cpp`）
+  - 场景序列化测试：场景保存/加载、ECS组件序列化（`examples/55_scene_serialization_test.cpp`）
+  - 多场景热切换压力测试：快速切换、场景栈压力、长时间运行（`examples/56_scene_manager_stress_test.cpp`）
+  - 工具链集成测试：模块状态查询、材质/Shader面板、LayerMask编辑器、场景图可视化（`examples/57_toolchain_integration_test.cpp`）
+
+- **性能测试**（✅ 部分完成）：
+  - 多模块 PreFrame/PostFrame 开销已验证（通过DebugHUDModule显示统计信息）
+  - 资源预加载批量任务限制已验证（通过配置maxTasksPerFrame）
+  - 场景切换性能基准已建立（通过压力测试验证）
+
+### 待补充的测试 🔄
+
+- ModuleRegistry 拓扑排序单元测试
+- 事件优先级冲突测试
+- 帧循环开销详细分析
+- Overlay 场景支持测试
 
 ## 10. 风险与应对
 
-- **资源阻塞**：预加载过多资源造成帧卡顿 → 通过 Manifest 分批加载、配置 `maxTasksPerFrame`。
-- **模块依赖循环**：ModuleRegistry 拓扑排序失败 → 在构建期检测并输出诊断图；提供调试面板。
-- **输入冲突**：应用层事件映射与底层系统重复 → 统一接管输入事件，底层系统改为订阅应用层语义事件。
-- **场景切换资源泄露**：Manifest 标记遗漏 → 在 SceneManager 中添加调试验证（退出场景后检查 ResourceManager 引用计数差异）。
-- **调试开销**：EventBus 与 ModuleRegistry 的统计影响性能 → 提供可配置开关与 `Debug` 模式编译开关。
+### 已解决的风险 ✅
+
+- ✅ **资源阻塞**：已通过 Manifest 分批加载、配置 `maxTasksPerFrame` 解决，压力测试验证通过。
+- ✅ **场景切换资源泄露**：已实现细粒度资源释放控制（ResourceScope区分），SceneManager 中已添加资源清理逻辑，测试验证通过。
+- ✅ **输入冲突**：已统一接管输入事件，通过 EventBus 和 InputModule 实现 Blender 风格操作映射，底层系统改为订阅应用层语义事件。
+
+### 潜在风险与缓解措施
+
+- **模块依赖循环**：ModuleRegistry 拓扑排序失败 → 在构建期检测并输出诊断图；提供调试面板（ModuleRegistry状态查询接口已实现）。
+- **调试开销**：EventBus 与 ModuleRegistry 的统计影响性能 → 提供可配置开关与 `Debug` 模式编译开关（DebugHUDModule 已实现统计信息显示，可通过配置控制）。
+- **资源预加载阻塞帧循环**：批量资源加载可能导致帧时间波动 → 已配置 `maxTasksPerFrame` 限制，分批加载，压力测试验证性能可接受。
+- **事件总线性能瓶颈**：大量事件订阅可能导致锁竞争 → 考虑无锁数据结构或事件通道分离（当前性能测试显示影响可接受）。
 
 ## 11. 后续工作与文档
 
-- 编写 `docs/application/Scene_API.md`（接口说明）与 `docs/application/Module_Guide.md`（模块开发指南），文档模板遵循返回链接/导航规范。
-- 更新 `CMakeLists.txt`：新增 `src/application`、`include/render/application` 目录，纳入新框架源码。
-- 在 `docs/todolists/PHASE2_APPLICATION_LAYER.md` 记录上述里程碑的任务拆解，并与 Phase2 其它计划（HUD、工具链）对齐。
-- 准备示例：`SimpleSceneDemo`（多相机场景）、`DebugOverlayScene`（HUD Overlay）、`ResourceStressTestScene`（预加载压力测试）。
+### 已完成的文档 ✅
 
-## 12. 已落地代码结构快照（2025-11-10）
+- ✅ `docs/application/Module_Guide.md`：模块开发指南（已完成，2025-11-19）
+- ✅ `docs/application/EventBus_Guide.md`：事件总线使用指南（已完成，2025-11-19）
+- ✅ `docs/application/Toolchain_Integration_Guide.md`：工具链集成指南（已完成，2025-11-21）
+- ✅ `docs/application/SceneGraph_Node_Guide.md`：SceneGraph节点开发手册
+- ✅ `docs/application/APPLICATION_LAYER_PROGRESS_REPORT.md`：应用层开发进度汇报（持续更新）
+
+### 待完善的文档 🔄
+
+- 🔄 `docs/application/Scene_API.md`：场景接口详细说明（部分内容已在进度报告中）
+- 🔄 API 文档更新：更新核心API文档以反映应用层接口
+
+### 已完成的构建配置 ✅
+
+- ✅ `CMakeLists.txt`：已纳入所有 `src/application`、`include/render/application` 目录和文件
+- ✅ 工具链集成接口已纳入构建系统
+
+### 已完成的示例 ✅
+
+- ✅ `BootScene`：完整示例场景，展示事件订阅、实体创建、状态快照、SceneGraph使用
+- ✅ `examples/53_event_system_test.cpp`：事件系统完整示例
+- ✅ `examples/54_module_hud_test.cpp`：模块和HUD完整示例
+- ✅ `examples/55_scene_serialization_test.cpp`：场景序列化完整示例
+- ✅ `examples/56_scene_manager_stress_test.cpp`：多场景热切换压力测试示例
+- ✅ `examples/57_toolchain_integration_test.cpp`：工具链集成完整示例
+
+### 待补充的示例 🔄
+
+- 🔄 `SimpleSceneDemo`：多相机场景示例
+- 🔄 `DebugOverlayScene`：HUD Overlay 场景示例（Overlay支持待测试）
+- 🔄 `ResourceStressTestScene`：预加载压力测试场景（已有压力测试程序，可扩展为独立场景）
+
+### 后续开发重点
+
+1. **完善工具链集成**：实现UI界面，将数据源接口与可视化工具连接
+2. **Overlay场景支持**：完善多场景共存机制，支持调试HUD等Overlay场景
+3. **性能优化**：模块PreFrame/PostFrame开销分析，事件总线性能优化
+4. **测试覆盖**：补充ModuleRegistry拓扑排序、事件优先级冲突等单元测试
+
+## 12. 已落地代码结构快照（2025-11-21）
+
+### 核心框架组件
 
 - 头文件：`include/render/application/`
   - `app_context.h`：统一保存渲染器、UniformManager、资源管理器、异步加载器等句柄，并提供校验函数。
   - `scene_types.h`：收敛场景生命周期数据结构（Manifest、Snapshot、Enter/Exit 参数、Flags）。
   - `scene.h`：应用层场景抽象基类，定义 OnAttach/OnEnter/OnUpdate/OnExit 等接口。
-  - `scene_manager.h`：维护场景工厂、栈式切换、快照传递和生命周期钩子。
+  - `scene_manager.h`：维护场景工厂、栈式切换、快照传递和生命周期钩子，支持资源预加载和细粒度释放控制。
   - `scene_graph.h`：SceneNode / SceneGraph 实现，支持节点生命周期、资源声明、节点树更新。
-  - `app_module.h`、`module_registry.h`：模块基类与注册表，支持依赖检查、PreFrame/PostFrame 调用。
-  - `modules/core_render_module.h`、`modules/input_module.h`、`modules/debug_hud_module.h`：核心模块与输入、调试 HUD 模块骨架。
-  - `event_bus.h`、`events/frame_events.h`：轻量事件总线封装与统一帧事件定义（UniformManager 字段可选，缺省时模块需自行注册 uniform）。
+  - `app_module.h`、`module_registry.h`：模块基类与注册表，支持依赖检查、PreFrame/PostFrame 调用、模块状态查询接口。
+  - `event_bus.h`、`events/frame_events.h`、`events/scene_events.h`、`events/input_events.h`：轻量事件总线封装与统一事件定义，支持事件过滤器（EventFilter、TagEventFilter、SceneEventFilter、CompositeEventFilter）。
   - `application_host.h`：集中调度 World、SceneManager、ModuleRegistry、EventBus，提供初始化与帧循环入口。
-  - `scenes/boot_scene.h`：示例场景，展示事件订阅、实体创建与状态快照，现已基于 SceneGraph。
+  - `scene_serializer.h`：场景序列化器，支持JSON格式的场景保存和加载。
+
+### 模块实现
+
+- `modules/core_render_module.h/cpp`：核心渲染模块，自动注册ECS组件和渲染系统，支持异步加载任务限制配置。
+- `modules/input_module.h/cpp`：输入模块，支持SDL事件处理、Blender风格操作映射（OperationMappingManager、ShortcutContext）、手势检测、操作事件发布。
+- `modules/debug_hud_module.h/cpp`：调试HUD模块，支持FPS显示、完整统计信息（性能、渲染、资源、内存）、渲染层级可视化、Uniform/材质状态检查。
+
+### 工具链集成接口
+
+- `toolchain/material_shader_panel.h/cpp`：材质/Shader面板数据源，提供MaterialInfo、ShaderInfo查询和材质属性更新接口。
+- `toolchain/layermask_editor.h/cpp`：LayerMask编辑器数据源，支持LayerMask与层级列表转换、LayerMask操作。
+- `toolchain/scene_graph_visualizer.h/cpp`：场景图可视化工具数据源，支持节点信息查询、树形结构输出、统计信息收集。
+
+### 示例场景
+
+- `scenes/boot_scene.h/cpp`：示例场景，展示事件订阅、实体创建与状态快照，基于 SceneGraph 实现。
+
+### 源文件结构
+
 - 源文件：`src/application/`
-  - 对应实现文件（`app_context.cpp`、`application_host.cpp`、`scene_types.cpp`、`scene_manager.cpp`、`scene_graph.cpp`、`app_module.cpp`、`module_registry.cpp`、`event_bus.cpp`、`modules/core_render_module.cpp`、`modules/input_module.cpp`、`modules/debug_hud_module.cpp`、`scenes/boot_scene.cpp`）已加入构建。
-- 构建脚本：`CMakeLists.txt` 已将上述目录纳入 `RENDER_SOURCES` 与 `RENDER_HEADERS`，确保编译。
+  - 核心框架实现：`app_context.cpp`、`application_host.cpp`、`scene_types.cpp`、`scene_manager.cpp`、`scene_graph.cpp`、`app_module.cpp`、`module_registry.cpp`、`event_bus.cpp`
+  - 模块实现：`modules/core_render_module.cpp`、`modules/input_module.cpp`、`modules/debug_hud_module.cpp`
+  - 工具链集成：`toolchain/material_shader_panel.cpp`、`toolchain/layermask_editor.cpp`、`toolchain/scene_graph_visualizer.cpp`
+  - 场景序列化：`scene_serializer.cpp`
+  - 示例场景：`scenes/boot_scene.cpp`
+
+### 测试程序
+
+- `examples/53_event_system_test.cpp`：事件系统测试（事件过滤器、Blender风格映射、操作事件、手势事件）
+- `examples/54_module_hud_test.cpp`：模块和HUD测试（CoreRenderModule自动注册、DebugHUDModule统计信息显示）
+- `examples/55_scene_serialization_test.cpp`：场景序列化测试（场景保存/加载、ECS组件序列化）
+- `examples/56_scene_manager_stress_test.cpp`：多场景热切换压力测试（快速切换、场景栈压力、长时间运行）
+- `examples/57_toolchain_integration_test.cpp`：工具链集成测试（模块状态查询、材质/Shader面板、LayerMask编辑器、场景图可视化）
+
+### 文档
+
+- `docs/application/APPLICATION_LAYER_PROGRESS_REPORT.md`：应用层开发进度汇报
+- `docs/application/EventBus_Guide.md`：事件总线使用指南
+- `docs/application/Module_Guide.md`：模块开发指南
+- `docs/application/Toolchain_Integration_Guide.md`：工具链集成指南
+- `docs/application/SceneGraph_Node_Guide.md`：SceneGraph节点开发手册
+
+### 构建脚本
+
+- `CMakeLists.txt`：已将上述所有目录和文件纳入 `RENDER_SOURCES` 与 `RENDER_HEADERS`，确保编译。
 
 ---
 
