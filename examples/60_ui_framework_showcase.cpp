@@ -2,6 +2,16 @@
  * @file 60_ui_framework_showcase.cpp
  * @brief UI 框架基础设施演示：初始化 ApplicationHost，注册 CoreRenderModule 与 UIRuntimeModule，
  *        加载占位 UI 图集并驱动帧循环。
+ * 
+ * 本示例展示了以下 UI 布局系统功能：
+ * - Flex 布局：垂直和水平方向的 Flex 布局，支持 justifyContent、alignItems、flexGrow 等属性
+ * - Grid 布局：3x2 网格布局，展示 Grid 布局的基本功能
+ * - 嵌套布局：Flex 布局中嵌套 Grid 布局
+ * - 控件交互：按钮点击、文本输入等基本交互功能
+ * 
+ * 布局系统采用两阶段设计（参考 Blender 实现）：
+ * - 测量阶段：计算所有节点的理想尺寸
+ * - 排列阶段：根据可用空间和布局属性计算最终位置和尺寸
  */
 
 #include <SDL3/SDL.h>
@@ -99,6 +109,10 @@ int main(int argc, char* argv[]) {
     uint64_t frameIndex = 0;
     double absoluteTime = 0.0;
 
+    Logger::GetInstance().Info("[UIShowcase] UI Framework Showcase");
+    Logger::GetInstance().Info("[UIShowcase] - Demonstrates Flex and Grid layout systems");
+    Logger::GetInstance().Info("[UIShowcase] - Two-phase layout algorithm (Measure + Arrange)");
+    Logger::GetInstance().Info("[UIShowcase] - Nested layout support");
     Logger::GetInstance().Info("[UIShowcase] Press ESC or close the window to exit.");
 
     while (running) {

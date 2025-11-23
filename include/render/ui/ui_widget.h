@@ -9,6 +9,7 @@
 
 #include "render/types.h"
 #include "render/ui/ui_types.h"
+#include "render/ui/ui_layout.h"
 
 namespace Render::UI {
 
@@ -45,6 +46,54 @@ public:
     void SetMinSize(const Vector2& size) noexcept;
     [[nodiscard]] Vector4 GetPadding() const noexcept { return m_padding; }
     void SetPadding(const Vector4& padding) noexcept;
+
+    // Flex 布局属性
+    void SetLayoutDirection(UILayoutDirection direction) noexcept;
+    [[nodiscard]] UILayoutDirection GetLayoutDirection() const noexcept { return m_layoutDirection; }
+    
+    void SetJustifyContent(UIFlexJustifyContent justifyContent) noexcept;
+    [[nodiscard]] UIFlexJustifyContent GetJustifyContent() const noexcept { return m_justifyContent; }
+    
+    void SetAlignItems(UIFlexAlignItems alignItems) noexcept;
+    [[nodiscard]] UIFlexAlignItems GetAlignItems() const noexcept { return m_alignItems; }
+    
+    void SetAlignSelf(UIFlexAlignSelf alignSelf) noexcept;
+    [[nodiscard]] UIFlexAlignSelf GetAlignSelf() const noexcept { return m_alignSelf; }
+    
+    void SetFlexGrow(float flexGrow) noexcept;
+    [[nodiscard]] float GetFlexGrow() const noexcept { return m_flexGrow; }
+    
+    void SetFlexShrink(float flexShrink) noexcept;
+    [[nodiscard]] float GetFlexShrink() const noexcept { return m_flexShrink; }
+    
+    void SetSpacing(float spacing) noexcept;
+    [[nodiscard]] float GetSpacing() const noexcept { return m_spacing; }
+    
+    // Grid 布局属性
+    void SetLayoutMode(UILayoutMode mode) noexcept;
+    [[nodiscard]] UILayoutMode GetLayoutMode() const noexcept { return m_layoutMode; }
+    
+    void SetGridColumns(int columns) noexcept;
+    [[nodiscard]] int GetGridColumns() const noexcept { return m_gridColumns; }
+    
+    void SetGridRows(int rows) noexcept;
+    [[nodiscard]] int GetGridRows() const noexcept { return m_gridRows; }
+    
+    void SetGridCellSpacing(const Vector2& spacing) noexcept;
+    [[nodiscard]] const Vector2& GetGridCellSpacing() const noexcept { return m_gridCellSpacing; }
+    
+    void SetGridColumnWidths(const std::vector<float>& widths) noexcept;
+    [[nodiscard]] const std::vector<float>& GetGridColumnWidths() const noexcept { return m_gridColumnWidths; }
+    
+    void SetGridRowHeights(const std::vector<float>& heights) noexcept;
+    [[nodiscard]] const std::vector<float>& GetGridRowHeights() const noexcept { return m_gridRowHeights; }
+    
+    // Grid 项目属性（子节点使用）
+    void SetGridColumnSpan(int start, int end) noexcept;
+    [[nodiscard]] std::pair<int, int> GetGridColumnSpan() const noexcept { return {m_gridColumnStart, m_gridColumnEnd}; }
+    
+    void SetGridRowSpan(int start, int end) noexcept;
+    [[nodiscard]] std::pair<int, int> GetGridRowSpan() const noexcept { return {m_gridRowStart, m_gridRowEnd}; }
 
     UIWidget* AddChild(std::unique_ptr<UIWidget> child);
     std::unique_ptr<UIWidget> RemoveChild(std::string_view id);
@@ -95,6 +144,31 @@ private:
     UIVisibility m_visibility = UIVisibility::Visible;
     bool m_enabled = true;
     UIWidgetDirtyFlag m_dirtyFlags = UIWidgetDirtyFlag::All;
+    
+    // 布局模式
+    UILayoutMode m_layoutMode = UILayoutMode::Flex;
+    
+    // Flex 布局属性
+    UILayoutDirection m_layoutDirection = UILayoutDirection::Vertical;
+    UIFlexJustifyContent m_justifyContent = UIFlexJustifyContent::FlexStart;
+    UIFlexAlignItems m_alignItems = UIFlexAlignItems::FlexStart;
+    UIFlexAlignSelf m_alignSelf = UIFlexAlignSelf::Auto;
+    float m_flexGrow = 0.0f;
+    float m_flexShrink = 1.0f;
+    float m_spacing = 0.0f;
+    
+    // Grid 布局属性
+    int m_gridColumns = 1;
+    int m_gridRows = 0;
+    Vector2 m_gridCellSpacing = Vector2::Zero();
+    std::vector<float> m_gridColumnWidths;
+    std::vector<float> m_gridRowHeights;
+    
+    // Grid 项目属性（子节点使用）
+    int m_gridColumnStart = -1;
+    int m_gridColumnEnd = -1;
+    int m_gridRowStart = -1;
+    int m_gridRowEnd = -1;
 
     UIWidget* FindByIdRecursive(std::string_view id) noexcept;
     const UIWidget* FindByIdRecursive(std::string_view id) const noexcept;

@@ -11,6 +11,7 @@
 #include "render/ui/ui_widget.h"
 #include "render/ui/ui_widget_tree.h"
 #include "render/ui/ui_debug_config.h"
+#include "render/ui/ui_theme.h"
 #include "render/ui/widgets/ui_button.h"
 #include "render/ui/widgets/ui_text_field.h"
 
@@ -142,6 +143,11 @@ void UIRuntimeModule::EnsureInitialized(AppContext& ctx) {
         m_rendererBridge = std::make_unique<UI::UIRendererBridge>();
         m_rendererBridge->Initialize(ctx);
         m_rendererBridge->SetDebugConfig(&m_debugConfig);
+        
+        // 初始化主题管理器并设置到渲染桥接器
+        auto& themeManager = UI::UIThemeManager::GetInstance();
+        themeManager.InitializeDefaults();
+        m_rendererBridge->SetThemeManager(&themeManager);
     }
 
     if (!m_widgetTree) {
@@ -151,7 +157,7 @@ void UIRuntimeModule::EnsureInitialized(AppContext& ctx) {
 
     if (!m_inputRouter) {
         m_inputRouter = std::make_unique<UI::UIInputRouter>();
-        m_inputRouter->Initialize(m_widgetTree.get(), m_canvas.get());
+        m_inputRouter->Initialize(m_widgetTree.get(), m_canvas.get(), ctx.globalEventBus);
     } else {
         m_inputRouter->SetWidgetTree(m_widgetTree.get());
         m_inputRouter->SetCanvas(m_canvas.get());
@@ -179,22 +185,32 @@ void UIRuntimeModule::EnsureSampleWidgets() {
     }
 
     if (!root->FindById("ui.panel")) {
+        // 创建主面板，使用 Flex 布局（垂直方向）
         auto panel = std::make_unique<UI::UIWidget>("ui.panel");
-        panel->SetPreferredSize(Vector2(360.0f, 220.0f));
-        panel->SetMinSize(Vector2(200.0f, 140.0f));
-        panel->SetPadding(Vector4(24.0f, 24.0f, 24.0f, 24.0f));
+        panel->SetPreferredSize(Vector2(600.0f, 500.0f));
+        panel->SetMinSize(Vector2(400.0f, 300.0f));
+        panel->SetPadding(Vector4(32.0f, 32.0f, 32.0f, 32.0f));
+        panel->SetLayoutMode(UI::UILayoutMode::Flex);  // 明确设置布局模式
+        panel->SetLayoutDirection(UI::UILayoutDirection::Vertical);
+        panel->SetJustifyContent(UI::UIFlexJustifyContent::FlexStart);
+        panel->SetAlignItems(UI::UIFlexAlignItems::Stretch);
+        panel->SetSpacing(16.0f);
 
-        auto button = std::make_unique<UI::UIButton>("ui.panel.button");
-        button->SetPreferredSize(Vector2(220.0f, 56.0f));
-        button->SetMinSize(Vector2(140.0f, 40.0f));
-        button->SetLabel("Submit");
-        button->SetOnClicked([](UI::UIButton& btn) {
-            Logger::GetInstance().InfoFormat("[UIRuntimeModule] Button '%s' clicked.", btn.GetId().c_str());
-        });
+        // 创建标题区域（Flex 布局 - 水平）
+        auto titleRow = std::make_unique<UI::UIWidget>("ui.panel.titleRow");
+        titleRow->SetPreferredSize(Vector2(0.0f, 48.0f));
+        titleRow->SetMinSize(Vector2(200.0f, 40.0f));
+        titleRow->SetLayoutMode(UI::UILayoutMode::Flex);
+        titleRow->SetLayoutDirection(UI::UILayoutDirection::Horizontal);
+        titleRow->SetJustifyContent(UI::UIFlexJustifyContent::Center);
+        titleRow->SetAlignItems(UI::UIFlexAlignItems::Center);
+        titleRow->SetSpacing(8.0f);
 
+        // 创建文本输入框
         auto textField = std::make_unique<UI::UITextField>("ui.panel.input");
-        textField->SetPreferredSize(Vector2(220.0f, 64.0f));
-        textField->SetMinSize(Vector2(140.0f, 48.0f));
+        textField->SetPreferredSize(Vector2(0.0f, 64.0f)); // 宽度自适应（填充父容器）
+        textField->SetMinSize(Vector2(200.0f, 48.0f));
+        textField->SetFlexGrow(0.0f); // 不拉伸
         textField->SetPlaceholder("Type here...");
         textField->SetOnTextChanged([](UI::UITextField& field, const std::string& value) {
             Logger::GetInstance().InfoFormat("[UIRuntimeModule] TextField '%s' text=\"%s\"",
@@ -202,8 +218,61 @@ void UIRuntimeModule::EnsureSampleWidgets() {
                                              value.c_str());
         });
 
-        panel->AddChild(std::move(button));
+        // 创建 Grid 布局演示区域
+        auto gridDemo = std::make_unique<UI::UIWidget>("ui.panel.gridDemo");
+        gridDemo->SetPreferredSize(Vector2(0.0f, 200.0f));
+        gridDemo->SetMinSize(Vector2(200.0f, 150.0f));
+        gridDemo->SetLayoutMode(UI::UILayoutMode::Grid);  // 使用 Grid 布局
+        gridDemo->SetGridColumns(3);  // 3列
+        gridDemo->SetGridRows(2);     // 2行
+        gridDemo->SetGridCellSpacing(Vector2(8.0f, 8.0f));
+        gridDemo->SetPadding(Vector4(8.0f, 8.0f, 8.0f, 8.0f));
+
+        // 创建 Grid 中的按钮
+        for (int i = 0; i < 6; ++i) {
+            auto gridButton = std::make_unique<UI::UIButton>("ui.panel.gridButton" + std::to_string(i));
+            gridButton->SetPreferredSize(Vector2(0.0f, 0.0f)); // 填充网格单元格
+            gridButton->SetMinSize(Vector2(60.0f, 40.0f));
+            gridButton->SetLabel("Grid " + std::to_string(i + 1));
+            gridButton->SetOnClicked([](UI::UIButton& btn) {
+                Logger::GetInstance().InfoFormat("[UIRuntimeModule] Grid Button '%s' clicked.", btn.GetId().c_str());
+            });
+            gridDemo->AddChild(std::move(gridButton));
+        }
+
+        // 创建水平布局容器（用于按钮行）
+        auto buttonRow = std::make_unique<UI::UIWidget>("ui.panel.buttonRow");
+        buttonRow->SetPreferredSize(Vector2(0.0f, 56.0f)); // 宽度自适应
+        buttonRow->SetMinSize(Vector2(200.0f, 40.0f));
+        buttonRow->SetLayoutMode(UI::UILayoutMode::Flex);
+        buttonRow->SetLayoutDirection(UI::UILayoutDirection::Horizontal);
+        buttonRow->SetJustifyContent(UI::UIFlexJustifyContent::SpaceEvenly);
+        buttonRow->SetAlignItems(UI::UIFlexAlignItems::Center);
+        buttonRow->SetSpacing(12.0f);
+
+        auto button1 = std::make_unique<UI::UIButton>("ui.panel.button1");
+        button1->SetPreferredSize(Vector2(140.0f, 48.0f));
+        button1->SetMinSize(Vector2(100.0f, 36.0f));
+        button1->SetLabel("Submit");
+        button1->SetOnClicked([](UI::UIButton& btn) {
+            Logger::GetInstance().InfoFormat("[UIRuntimeModule] Button '%s' clicked.", btn.GetId().c_str());
+        });
+
+        auto button2 = std::make_unique<UI::UIButton>("ui.panel.button2");
+        button2->SetPreferredSize(Vector2(140.0f, 48.0f));
+        button2->SetMinSize(Vector2(100.0f, 36.0f));
+        button2->SetLabel("Cancel");
+        button2->SetOnClicked([](UI::UIButton& btn) {
+            Logger::GetInstance().InfoFormat("[UIRuntimeModule] Button '%s' clicked.", btn.GetId().c_str());
+        });
+
+        buttonRow->AddChild(std::move(button1));
+        buttonRow->AddChild(std::move(button2));
+
+        // 组装 UI 树
         panel->AddChild(std::move(textField));
+        panel->AddChild(std::move(gridDemo));
+        panel->AddChild(std::move(buttonRow));
         root->AddChild(std::move(panel));
     }
 }

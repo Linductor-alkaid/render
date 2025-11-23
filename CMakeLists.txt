@@ -284,6 +284,7 @@ set(RENDER_SOURCES
     src/ui/ui_render_commands.cpp
     src/ui/ui_input_router.cpp
     src/ui/ui_renderer_bridge.cpp
+    src/ui/ui_theme.cpp
     src/ui/ui_widget.cpp
     src/ui/ui_widget_tree.cpp
     src/ui/widgets/ui_button.cpp
@@ -399,6 +400,7 @@ set(RENDER_HEADERS
     include/render/ui/ui_debug_config.h
     include/render/ui/ui_input_router.h
     include/render/ui/ui_renderer_bridge.h
+    include/render/ui/ui_theme.h
     include/render/ui/ui_types.h
     include/render/ui/ui_widget.h
     include/render/ui/ui_widget_tree.h

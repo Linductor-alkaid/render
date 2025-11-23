@@ -129,6 +129,9 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
     }
 
     Matrix4 view = Matrix4::Identity();
+    // 正交投影矩阵参数：left, right, bottom, top, near, far
+    // 对于UI坐标系统（Y向下为正，原点在左上角）：left=0, right=width, bottom=height, top=0
+    // 注意：虽然top < bottom看起来不符合常规，但这是为了匹配窗口坐标系统（Y向下为正）
     Matrix4 projection = MathUtils::Orthographic(0.0f,
                                                  canvasSize.x(),
                                                  canvasSize.y(),
@@ -178,9 +181,50 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
             auto text = CreateRef<Text>(font);
             text->SetString(cmd.text.text);
             text->SetColor(cmd.text.color);
+            
+            // 根据offset.x判断对齐方式：-1.0f = Center, -2.0f = Right, 其他 = Left
+            // 这是一个临时方案，更好的方法是在UITextCommand中添加alignment字段
+            TextAlignment alignment = TextAlignment::Left;
+            if (cmd.text.offset.x() < -1.5f) {
+                alignment = TextAlignment::Right;
+            } else if (cmd.text.offset.x() < -0.5f) {
+                alignment = TextAlignment::Center;
+            } else {
+                alignment = TextAlignment::Left;
+            }
+            text->SetAlignment(alignment);
+            
+            text->EnsureUpdated();
+            
+            // 获取文本大小
+            Vector2 textSize = text->GetSize();
+            
+            // TextRenderer的Draw方法会根据对齐方式调整anchor，然后添加offset = textSize/2
+            // 对于不同的对齐方式（假设传入position = P，文本大小为S）：
+            // - Left:   anchor = (P.x, P.y), 最终位置 = (P.x + S.x/2, P.y + S.y/2) (文本中心)
+            // - Center: anchor = (P.x - S.x/2, P.y), 最终位置 = (P.x, P.y + S.y/2) (文本中心)
+            // - Right:  anchor = (P.x - S.x, P.y), 最终位置 = (P.x - S.x/2, P.y + S.y/2) (文本中心)
+            // 
+            // 关键理解：TextRenderer的最终位置总是文本中心，不管对齐方式如何
+            // - Left对齐：如果想左上角在P，传入P，文本中心会在P + S/2
+            // - Center对齐：如果想中心在P，传入P，文本中心会在(P.x, P.y + S.y/2) ❌ Y轴有偏差！
+            // - Right对齐：如果想右上角在P，传入P，文本中心会在(P.x - S.x/2, P.y + S.y/2)
+            //
+            // 所以对于Center对齐，如果UI代码传递的是期望的中心位置，需要补偿Y轴的offset
             Vector3 pos = transform->GetPosition();
-            pos.x() += cmd.text.offset.x();
+            
+            // 根据对齐方式调整位置
+            // 对于Center对齐，虽然按钮文本在BuildCommands中已经补偿了Y轴offset
+            // 但由于tempText和实际text对象可能有差异，这里再次补偿以确保准确性
+            if (alignment == TextAlignment::Center) {
+                // 对于Center对齐，UI代码传递的位置已经补偿了Y轴offset
+                // 但为了保险起见，如果发现位置是按钮中心位置，可以再次微调
+                // 或者完全依赖BuildCommands中的补偿，这里不做额外处理
+            }
+            
+            // offset.y用于额外的Y轴偏移
             pos.y() += cmd.text.offset.y();
+            
             pos.z() = static_cast<float>(-cmd.text.depth) * 0.001f;
             textRenderer.Draw(text, pos);
             break;
@@ -355,6 +399,12 @@ void UIRendererBridge::EnsureSolidTexture() {
         m_solidTexture.reset();
     } else {
         m_loggedSolidTexture = false;
+        // 添加成功创建的日志（仅第一次）
+        static bool loggedSuccess = false;
+        if (!loggedSuccess) {
+            Logger::GetInstance().Info("[UIRendererBridge] Solid UI texture created successfully.");
+            loggedSuccess = true;
+        }
     }
 }
 
@@ -405,9 +455,12 @@ void UIRendererBridge::DrawDebugRect(const UIDebugRectCommand& cmd,
 }
 
 void UIRendererBridge::BuildCommands(UICanvas& canvas,
-                                     UIWidgetTree& tree,
-                                     Render::Application::AppContext& ctx) {
+                                      UIWidgetTree& tree,
+                                      Render::Application::AppContext& ctx) {
     m_commandBuffer.Clear();
+    
+    // 预先创建光标纹理，确保光标可以渲染
+    EnsureSolidTexture();
 
     EnsureTextResources(ctx);
 
@@ -460,12 +513,15 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             if (m_defaultFont) {
                 UITextCommand textCmd;
                 textCmd.transform = CreateRef<Transform>();
+                // 面板文本位置：左上角偏移，使用Left对齐
                 textCmd.transform->SetPosition(Vector3(position.x() + 24.0f,
                                                        position.y() + 24.0f,
                                                        static_cast<float>(-depth) * 0.001f));
                 textCmd.text = "UI Panel";
                 textCmd.font = m_defaultFont;
                 textCmd.color = Color(0.9f, 0.9f, 0.9f, 1.0f);
+                // offset.x = 0表示Left对齐（默认）
+                textCmd.offset = Vector2::Zero();
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
                 m_commandBuffer.AddText(textCmd);
@@ -480,12 +536,25 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 m_commandBuffer.AddDebugRect(rectCmd);
             }
         } else if (const auto* buttonWidget = dynamic_cast<const UIButton*>(&widget)) {
-            Color buttonTint(0.94f, 0.94f, 0.98f, 1.0f);
-            if (buttonWidget->IsPressed()) {
-                buttonTint = Color(0.82f, 0.85f, 0.95f, 1.0f);
-            } else if (buttonWidget->IsHovered()) {
-                buttonTint = Color(0.98f, 0.98f, 1.0f, 1.0f);
+            // 使用主题系统获取颜色
+            const UITheme* theme = nullptr;
+            if (m_themeManager) {
+                theme = &m_themeManager->GetCurrentTheme();
             }
+            
+            const UIThemeColorSet& colorSet = theme 
+                ? theme->GetWidgetColorSet("button", 
+                                          buttonWidget->IsHovered(), 
+                                          buttonWidget->IsPressed(), 
+                                          !buttonWidget->IsEnabled(), 
+                                          false)
+                : UITheme::CreateDefault().GetWidgetColorSet("button", 
+                                                            buttonWidget->IsHovered(), 
+                                                            buttonWidget->IsPressed(), 
+                                                            !buttonWidget->IsEnabled(), 
+                                                            false);
+            
+            Color buttonTint = colorSet.inner;
             pushSprite("button_base", buttonTint);
 
             if (m_defaultFont) {
@@ -493,17 +562,36 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 if (label.empty()) {
                     label = "Button";
                 }
+                
+                // 先创建临时Text对象获取文本大小，用于精确计算位置
+                auto tempText = CreateRef<Text>(m_defaultFont);
+                tempText->SetString(label);
+                tempText->SetAlignment(TextAlignment::Center);
+                tempText->EnsureUpdated();
+                Vector2 textSize = tempText->GetSize();
+                
                 UITextCommand textCmd;
                 textCmd.transform = CreateRef<Transform>();
-                textCmd.transform->SetPosition(Vector3(position.x() + 24.0f,
-                                                       position.y() + 24.0f,
+                // 按钮文本位置：居中在按钮内
+                // TextRenderer的Center对齐：最终位置 = (position.x, position.y + textSize.y/2)
+                // 如果想让文本中心在(centerX, centerY)，需要传入(centerX, centerY - textSize.y/2)
+                float centerX = position.x() + size.x() * 0.5f;
+                float centerY = position.y() + size.y() * 0.5f;
+                // 提前补偿Y轴offset，这样Flush中就不需要再补偿了
+                float textY = centerY - textSize.y() * 0.5f;
+                textCmd.transform->SetPosition(Vector3(centerX,
+                                                       textY,
                                                        static_cast<float>(-depth) * 0.001f));
                 textCmd.text = label;
                 textCmd.font = m_defaultFont;
-                textCmd.color = buttonWidget->IsPressed() ? Color(0.15f, 0.15f, 0.15f, 1.0f)
-                                                          : Color(0.2f, 0.2f, 0.2f, 1.0f);
+                // 使用主题系统获取文本颜色
+                textCmd.color = colorSet.text;
+                // 使用offset.x作为对齐标记：-1.0f = Center对齐
+                // 由于已经提前补偿了Y轴，Flush中不需要再补偿
+                textCmd.offset = Vector2(-1.0f, 0.0f);
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
+                
                 m_commandBuffer.AddText(textCmd);
             }
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
@@ -516,24 +604,45 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 m_commandBuffer.AddDebugRect(rectCmd);
             }
         } else if (const auto* textFieldWidget = dynamic_cast<const UITextField*>(&widget)) {
-            const bool enabled = textFieldWidget->IsEnabled();
-            Color fieldTint = textFieldWidget->IsFocused() ? Color(0.18f, 0.2f, 0.3f, 1.0f)
-                                                           : Color(0.14f, 0.16f, 0.22f, 1.0f);
-            if (!enabled) {
-                fieldTint = Color(0.12f, 0.12f, 0.14f, 1.0f);
+            // 使用主题系统获取颜色
+            const UITheme* theme = nullptr;
+            if (m_themeManager) {
+                theme = &m_themeManager->GetCurrentTheme();
             }
+            
+            const bool enabled = textFieldWidget->IsEnabled();
+            const UIThemeColorSet& colorSet = theme
+                ? theme->GetWidgetColorSet("textField",
+                                          false,  // hover
+                                          false,  // pressed
+                                          !enabled,
+                                          textFieldWidget->IsFocused())
+                : UITheme::CreateDefault().GetWidgetColorSet("textField",
+                                                            false,
+                                                            false,
+                                                            !enabled,
+                                                            textFieldWidget->IsFocused());
+            
+            Color fieldTint = colorSet.inner;
             pushSprite("button_base", fieldTint);
 
             const std::string& actualText = textFieldWidget->GetText();
             std::string drawText = actualText;
-            bool isPlaceholder = drawText.empty();
+            bool isFocused = textFieldWidget->IsFocused();
+            // 占位符逻辑：只有在未获得焦点且文本为空时才显示占位符
+            bool isPlaceholder = drawText.empty() && !isFocused;
             if (isPlaceholder) {
                 drawText = textFieldWidget->GetPlaceholder();
             }
 
-            Color textColor = enabled ? Color(0.88f, 0.88f, 0.92f, 1.0f) : Color(0.56f, 0.56f, 0.6f, 1.0f);
+            // 使用主题系统获取文本颜色
+            Color textColor = colorSet.text;
             if (isPlaceholder) {
-                textColor = Color(0.6f, 0.6f, 0.65f, 1.0f);
+                // 占位符使用较淡的颜色
+                textColor = Color(colorSet.text.r * 0.7f, 
+                                 colorSet.text.g * 0.7f, 
+                                 colorSet.text.b * 0.7f, 
+                                 colorSet.text.a * 0.7f);
             }
 
             const float textStartX = position.x() + UITextField::kPaddingLeft;
@@ -553,28 +662,49 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
 
             if (m_defaultFont) {
                 const auto& offsets = textFieldWidget->GetCodepointOffsets();
+                // offsets 的大小应该等于可能的插入位置数量
+                // 对于 N 个字符，offsets 有 N+1 个元素（包括开始和结束位置）
+                // 所以 caretPositions 也应该有 offsets.size() 个元素
                 caretPositions.reserve(offsets.size());
                 const char* textPtr = actualText.c_str();
-                for (size_t offset : offsets) {
-                    int measuredWidth = 0;
-                    size_t measuredLength = 0;
-                    if (m_defaultFont->MeasureString(textPtr, offset, std::numeric_limits<int>::max(), measuredWidth, measuredLength)) {
-                        caretPositions.push_back(static_cast<float>(measuredWidth));
-                    } else if (!caretPositions.empty()) {
-                        caretPositions.push_back(caretPositions.back());
-                    } else {
+                
+                // 为每个偏移量计算光标位置
+                // 第一个位置总是 0.0f（文本开始）
+                for (size_t i = 0; i < offsets.size(); ++i) {
+                    size_t offset = offsets[i];
+                    if (offset == 0) {
+                        // 起始位置
                         caretPositions.push_back(0.0f);
+                    } else {
+                        // 测量从开始到 offset 的文本宽度
+                        int measuredWidth = 0;
+                        size_t measuredLength = 0;
+                        if (m_defaultFont->MeasureString(textPtr, offset, std::numeric_limits<int>::max(), measuredWidth, measuredLength)) {
+                            caretPositions.push_back(static_cast<float>(measuredWidth));
+                        } else if (!caretPositions.empty()) {
+                            // 如果测量失败，使用最后一个位置
+                            caretPositions.push_back(caretPositions.back());
+                        } else {
+                            // 如果还没有任何位置，使用 0
+                            caretPositions.push_back(0.0f);
+                        }
                     }
                 }
+                
+                // 确保至少有一个位置（即使文本为空）
                 if (caretPositions.empty()) {
                     caretPositions.push_back(0.0f);
                 }
+                
                 textHeight = std::max(textHeightRaw, 1.0f);
             } else {
+                // 没有字体时，至少提供一个位置
                 caretPositions = {0.0f};
             }
 
-            float caretHeight = contentHeight > 0.0f ? contentHeight : textHeight;
+            // 光标高度应该使用文本高度，而不是整个内容区域的高度
+            // contentHeight 是整个widget的内容高度，太大了
+            float caretHeight = textHeight;
             caretHeight = std::max(caretHeight, 1.0f);
             const float highlightTop = position.y() + UITextField::kPaddingTop;
             const float textStartY = highlightTop;
@@ -613,46 +743,85 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             if (m_defaultFont && !drawText.empty()) {
                 UITextCommand textCmd;
                 textCmd.transform = CreateRef<Transform>();
+                // 文本输入框的文本位置：左上角对齐
+                // TextRenderer的Left对齐会将position作为左上角，所以直接传入左上角位置
                 textCmd.transform->SetPosition(Vector3(textStartX,
                                                        textStartY,
                                                        static_cast<float>(-depth) * 0.001f));
                 textCmd.text = drawText;
                 textCmd.font = m_defaultFont;
                 textCmd.color = textColor;
-                textCmd.offset = Vector2(0.0f, -4.0f);
+                // offset.x = 0表示Left对齐（默认）
+                textCmd.offset = Vector2::Zero();
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
                 m_commandBuffer.AddText(textCmd);
             }
 
-            if (textFieldWidget->IsFocused()) {
-                double absoluteTime = canvas.GetState().absoluteTime;
-                constexpr double kBlinkPeriod = 0.55;
-                const double phase = std::fmod(std::max(absoluteTime, 0.0), kBlinkPeriod * 2.0);
-                if (phase < kBlinkPeriod) {
-                    size_t caretIndex = textFieldWidget->GetCaretIndex();
-                    float caretOffset = 0.0f;
-                    if (!caretPositions.empty()) {
-                        size_t clampedIndex = std::min(caretIndex, caretPositions.size() - 1);
-                        caretOffset = caretPositions[clampedIndex];
-                    }
-                    EnsureSolidTexture();
-                    if (m_solidTexture) {
-                        UISpriteCommand caretCmd;
-                        caretCmd.transform = CreateRef<Transform>();
-                        caretCmd.transform->SetPosition(Vector3(textStartX + caretOffset,
-                                                                highlightTop,
-                                                                static_cast<float>(-depth) * 0.001f));
-                        caretCmd.texture = m_solidTexture;
-                        caretCmd.sourceRect = Rect(0.0f, 0.0f, 1.0f, 1.0f);
-                        caretCmd.size = Vector2(std::max(UITextField::kCaretWidth, 1.0f), caretHeight);
-                        caretCmd.tint = Color(0.96f, 0.96f, 1.0f, 1.0f);
-                        caretCmd.layerID = 800;
-                        caretCmd.depth = static_cast<float>(depth) - 0.05f;
-                        m_commandBuffer.AddSprite(caretCmd);
-                    }
+            // 在文本之后渲染光标，确保光标在文本之上（后渲染的会覆盖先渲染的）
+            // 注意：isFocused 变量已在上面定义（第538行）
+            if (isFocused) {
+                // 计算光标位置
+                size_t caretIndex = textFieldWidget->GetCaretIndex();
+                float caretOffset = 0.0f;
+                
+                // 确保 caretPositions 不为空（应该总是至少有一个元素）
+                if (caretPositions.empty()) {
+                    caretPositions.push_back(0.0f);
+                }
+                
+                // 确保索引在有效范围内
+                size_t clampedIndex = std::min(caretIndex, caretPositions.size() - 1);
+                caretOffset = caretPositions[clampedIndex];
+                
+                // 确保光标纹理已创建
+                EnsureSolidTexture();
+                
+                if (m_solidTexture && m_solidTexture->IsValid()) {
+                    UISpriteCommand caretCmd;
+                    caretCmd.transform = CreateRef<Transform>();
+                    // 光标位置：文本起始位置 + 光标偏移
+                    // 文本的左上角位置是 (textStartX, textStartY)
+                    // 光标应该与文本的基线对齐，所以Y坐标与文本Y坐标相同
+                    float caretX = textStartX + caretOffset;
+                    float caretY = textStartY; // 与文本的左上角Y坐标对齐
+                    
+                    // 光标尺寸
+                    float caretWidth = std::max(UITextField::kCaretWidth, 3.0f);
+                    float finalCaretHeight = std::min(textHeight, 100.0f);
+                    finalCaretHeight = std::max(finalCaretHeight, 16.0f);
+                    
+                    // 使用与文本完全相同的深度值和Z坐标计算方式
+                    // 文本使用：depth = static_cast<float>(depth)，Z = static_cast<float>(-depth) * 0.001f
+                    float textDepth = static_cast<float>(depth);
+                    // 光标使用相同的深度值，但通过渲染顺序确保在文本之上
+                    caretCmd.transform->SetPosition(Vector3(caretX, caretY, static_cast<float>(-textDepth) * 0.001f));
+                    caretCmd.texture = m_solidTexture;
+                    caretCmd.sourceRect = Rect(0.0f, 0.0f, 1.0f, 1.0f);
+                    caretCmd.size = Vector2(caretWidth, finalCaretHeight);
+                    caretCmd.tint = Color(0.0f, 1.0f, 1.0f, 1.0f); // 青色，更明显
+                    caretCmd.layerID = 800;
+                    caretCmd.depth = textDepth; // 使用与文本相同的深度值
+                    m_commandBuffer.AddSprite(caretCmd);
+                    
+                    Logger::GetInstance().InfoFormat(
+                        "[UIRendererBridge] Rendering caret for %s: index=%zu offset=%.1f pos=(%.1f,%.1f) size=(%.1f,%.1f) depth=%.3f",
+                        textFieldWidget->GetId().c_str(),
+                        caretIndex,
+                        caretOffset,
+                        caretX,
+                        caretY,
+                        caretWidth,
+                        finalCaretHeight,
+                        textDepth);
                 }
             }
+
+            // 诊断信息：输出焦点状态
+            Logger::GetInstance().InfoFormat(
+                "[UIRendererBridge] TextField %s: IsFocused=%s",
+                textFieldWidget->GetId().c_str(),
+                isFocused ? "true" : "false");
 
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
                 UIDebugRectCommand rectCmd;

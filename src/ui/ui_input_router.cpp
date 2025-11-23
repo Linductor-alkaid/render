@@ -1,6 +1,7 @@
 #include "render/ui/ui_input_router.h"
 
 #include <queue>
+#include <algorithm>
 
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_mouse.h>
@@ -11,12 +12,15 @@
 #include "render/ui/ui_widget.h"
 #include "render/ui/ui_widget_tree.h"
 #include "render/ui/widgets/ui_text_field.h"
+#include "render/application/event_bus.h"
+#include "render/application/events/input_events.h"
 
 namespace Render::UI {
 
-void UIInputRouter::Initialize(UIWidgetTree* widgetTree, UICanvas* canvas) {
+void UIInputRouter::Initialize(UIWidgetTree* widgetTree, UICanvas* canvas, Application::EventBus* eventBus) {
     m_widgetTree = widgetTree;
     m_canvas = canvas;
+    m_eventBus = eventBus;
     m_focusWidget = nullptr;
     m_hoverWidget = nullptr;
     m_lastCursorPosition.reset();
@@ -25,12 +29,77 @@ void UIInputRouter::Initialize(UIWidgetTree* widgetTree, UICanvas* canvas) {
     m_mouseWheelQueue.clear();
     m_keyQueue.clear();
     m_textQueue.clear();
-    Logger::GetInstance().Info("[UIInputRouter] Initialized");
+    m_gestureTracking = GestureTracking{};
+    
+    // 订阅 EventBus 事件
+    if (m_eventBus) {
+        auto mouseMotionId = m_eventBus->Subscribe<Application::Events::MouseMotionEvent>(
+            [this](const Application::Events::MouseMotionEvent& event) {
+                OnMouseMotion(event);
+            },
+            100  // 高优先级，UI 优先处理
+        );
+        m_subscriptionIds.push_back(mouseMotionId);
+        
+        auto mouseButtonId = m_eventBus->Subscribe<Application::Events::MouseButtonEvent>(
+            [this](const Application::Events::MouseButtonEvent& event) {
+                OnMouseButton(event);
+            },
+            100
+        );
+        m_subscriptionIds.push_back(mouseButtonId);
+        
+        auto mouseWheelId = m_eventBus->Subscribe<Application::Events::MouseWheelEvent>(
+            [this](const Application::Events::MouseWheelEvent& event) {
+                OnMouseWheel(event);
+            },
+            100
+        );
+        m_subscriptionIds.push_back(mouseWheelId);
+        
+        auto keyId = m_eventBus->Subscribe<Application::Events::KeyEvent>(
+            [this](const Application::Events::KeyEvent& event) {
+                OnKey(event);
+            },
+            100
+        );
+        m_subscriptionIds.push_back(keyId);
+        
+        auto textId = m_eventBus->Subscribe<Application::Events::TextInputEvent>(
+            [this](const Application::Events::TextInputEvent& event) {
+                OnTextInput(event);
+            },
+            100
+        );
+        m_subscriptionIds.push_back(textId);
+        
+        auto gestureId = m_eventBus->Subscribe<Application::Events::GestureEvent>(
+            [this](const Application::Events::GestureEvent& event) {
+                OnGesture(event);
+            },
+            100
+        );
+        m_subscriptionIds.push_back(gestureId);
+        
+        Logger::GetInstance().InfoFormat("[UIInputRouter] Initialized with EventBus (subscriptions=%zu)", 
+                                        m_subscriptionIds.size());
+    } else {
+        Logger::GetInstance().Info("[UIInputRouter] Initialized without EventBus (using legacy Queue methods)");
+    }
 }
 
 void UIInputRouter::Shutdown() {
+    // 取消 EventBus 订阅
+    if (m_eventBus) {
+        for (auto id : m_subscriptionIds) {
+            m_eventBus->Unsubscribe(id);
+        }
+        m_subscriptionIds.clear();
+    }
+    
     m_widgetTree = nullptr;
     m_canvas = nullptr;
+    m_eventBus = nullptr;
     m_focusWidget = nullptr;
     m_hoverWidget = nullptr;
     m_lastCursorPosition.reset();
@@ -39,6 +108,7 @@ void UIInputRouter::Shutdown() {
     m_mouseWheelQueue.clear();
     m_keyQueue.clear();
     m_textQueue.clear();
+    m_gestureTracking = GestureTracking{};
     Logger::GetInstance().Info("[UIInputRouter] Shutdown");
 }
 
@@ -129,9 +199,160 @@ void UIInputRouter::QueueKey(int scancode, bool pressed, bool repeat) {
 
 void UIInputRouter::QueueTextInput(const std::string& text) {
     if (!text.empty()) {
-        Logger::GetInstance().InfoFormat("[UIInputRouter] QueueTextInput \"%s\"", text.c_str());
+        if (ShouldLog()) {
+            Logger::GetInstance().DebugFormat("[UIInputRouter] QueueTextInput \"%s\" (queue size before: %zu)", 
+                                             text.c_str(), m_textQueue.size());
+        }
         m_textQueue.push_back(UITextInputEvent{text});
     }
+}
+
+// EventBus 事件回调
+void UIInputRouter::OnMouseMotion(const Application::Events::MouseMotionEvent& event) {
+    Vector2 position(static_cast<float>(event.x), static_cast<float>(event.y));
+    Vector2 delta(static_cast<float>(event.dx), static_cast<float>(event.dy));
+    QueueMouseMove(position, delta);
+}
+
+void UIInputRouter::OnMouseButton(const Application::Events::MouseButtonEvent& event) {
+    Vector2 position(static_cast<float>(event.x), static_cast<float>(event.y));
+    bool pressed = (event.state == Application::Events::MouseButtonState::Pressed);
+    QueueMouseButton(event.button, pressed, position);
+}
+
+void UIInputRouter::OnMouseWheel(const Application::Events::MouseWheelEvent& event) {
+    Vector2 offset(static_cast<float>(event.x), static_cast<float>(event.y));
+    QueueMouseWheel(offset, event.precise);
+}
+
+void UIInputRouter::OnKey(const Application::Events::KeyEvent& event) {
+    bool pressed = (event.state == Application::Events::KeyState::Pressed);
+    QueueKey(event.scancode, pressed, event.repeat);
+}
+
+void UIInputRouter::OnTextInput(const Application::Events::TextInputEvent& event) {
+    if (ShouldLog()) {
+        Logger::GetInstance().DebugFormat("[UIInputRouter] OnTextInput from EventBus text=\"%s\"", event.text.c_str());
+    }
+    QueueTextInput(event.text);
+}
+
+void UIInputRouter::OnGesture(const Application::Events::GestureEvent& event) {
+    HandleGesture(event);
+}
+
+void UIInputRouter::HandleGesture(const Application::Events::GestureEvent& gesture) {
+    if (ShouldLog()) {
+        Logger::GetInstance().DebugFormat("[UIInputRouter] HandleGesture type=%d active=%s start=(%d,%d) current=(%d,%d)",
+                                         static_cast<int>(gesture.type),
+                                         gesture.isActive ? "true" : "false",
+                                         gesture.startX, gesture.startY,
+                                         gesture.currentX, gesture.currentY);
+    }
+    
+    ProcessGesture(gesture);
+}
+
+void UIInputRouter::ProcessGesture(const Application::Events::GestureEvent& gesture) {
+    switch (gesture.type) {
+    case Application::Events::GestureType::Drag:
+        HandleDragGesture(gesture);
+        break;
+    case Application::Events::GestureType::Click:
+    case Application::Events::GestureType::DoubleClick:
+        HandleClickGesture(gesture);
+        break;
+    case Application::Events::GestureType::Pan:
+        HandlePanGesture(gesture);
+        break;
+    case Application::Events::GestureType::Zoom:
+        HandleZoomGesture(gesture);
+        break;
+    case Application::Events::GestureType::Rotate:
+        // 旋转手势通常用于3D视图，UI不需要处理
+        break;
+    case Application::Events::GestureType::BoxSelect:
+    case Application::Events::GestureType::LassoSelect:
+        // 框选和套索选择通常用于场景视图，UI不需要处理
+        break;
+    }
+}
+
+void UIInputRouter::HandleDragGesture(const Application::Events::GestureEvent& gesture) {
+    Vector2 position(static_cast<float>(gesture.currentX), static_cast<float>(gesture.currentY));
+    Vector2 delta(static_cast<float>(gesture.deltaX), static_cast<float>(gesture.deltaY));
+    
+    if (gesture.isActive) {
+        // 拖拽开始或进行中
+        if (!m_gestureTracking.active) {
+            m_gestureTracking.active = true;
+            m_gestureTracking.type = gesture.type;
+            m_gestureTracking.startPosition = Vector2(static_cast<float>(gesture.startX), static_cast<float>(gesture.startY));
+            m_gestureTracking.button = gesture.button;
+            
+            // 发送鼠标按下事件
+            QueueMouseButton(gesture.button, true, m_gestureTracking.startPosition);
+        }
+        
+        // 发送鼠标移动事件
+        QueueMouseMove(position, delta);
+        m_gestureTracking.lastPosition = position;
+    } else {
+        // 拖拽结束
+        if (m_gestureTracking.active && m_gestureTracking.type == Application::Events::GestureType::Drag) {
+            // 发送鼠标释放事件
+            QueueMouseButton(gesture.button, false, position);
+            m_gestureTracking.active = false;
+        }
+    }
+}
+
+void UIInputRouter::HandleClickGesture(const Application::Events::GestureEvent& gesture) {
+    Vector2 position(static_cast<float>(gesture.currentX), static_cast<float>(gesture.currentY));
+    
+    if (!gesture.isActive) {
+        // 点击完成
+        if (ShouldLog()) {
+            Logger::GetInstance().DebugFormat("[UIInputRouter] ClickGesture completed at (%.1f, %.1f) button=%u",
+                                             position.x(), position.y(), gesture.button);
+        }
+        
+        // 发送点击事件
+        QueueMouseButton(gesture.button, true, position);
+        QueueMouseButton(gesture.button, false, position);
+    }
+}
+
+void UIInputRouter::HandlePanGesture(const Application::Events::GestureEvent& gesture) {
+    // 平移手势通常用于3D视图，但也可以用于可滚动的UI区域
+    Vector2 position(static_cast<float>(gesture.currentX), static_cast<float>(gesture.currentY));
+    Vector2 delta(static_cast<float>(gesture.deltaX), static_cast<float>(gesture.deltaY));
+    
+    if (gesture.isActive) {
+        // 发送鼠标移动事件（中键拖拽）
+        QueueMouseMove(position, delta);
+        
+        // 如果中键按下，发送按钮事件
+        if (!m_gestureTracking.active) {
+            m_gestureTracking.active = true;
+            m_gestureTracking.type = gesture.type;
+            m_gestureTracking.startPosition = Vector2(static_cast<float>(gesture.startX), static_cast<float>(gesture.startY));
+            m_gestureTracking.button = gesture.button;
+            QueueMouseButton(gesture.button, true, m_gestureTracking.startPosition);
+        }
+    } else {
+        // 平移结束
+        if (m_gestureTracking.active && m_gestureTracking.type == Application::Events::GestureType::Pan) {
+            QueueMouseButton(gesture.button, false, position);
+            m_gestureTracking.active = false;
+        }
+    }
+}
+
+void UIInputRouter::HandleZoomGesture(const Application::Events::GestureEvent& gesture) {
+    // 缩放手势（滚轮）
+    Vector2 offset(static_cast<float>(gesture.deltaX), static_cast<float>(gesture.deltaY));
+    QueueMouseWheel(offset, false);
 }
 
 void UIInputRouter::SetFocusWidget(UIWidget* widget) {
@@ -141,10 +362,39 @@ void UIInputRouter::SetFocusWidget(UIWidget* widget) {
     RequestFocus(widget);
 }
 
+Vector2 UIInputRouter::ConvertWindowToUICoordinates(const Vector2& windowPoint) const {
+    if (!m_canvas) {
+        return windowPoint;
+    }
+    
+    const auto& state = m_canvas->GetState();
+    Vector2 windowSize = state.WindowSize();
+    
+    // 如果窗口大小为0，直接返回原始坐标
+    if (windowSize.x() <= 0.0f || windowSize.y() <= 0.0f) {
+        return windowPoint;
+    }
+    
+    // UI坐标系统与窗口坐标系统应该一致（都是Y向下为正，原点在左上角）
+    // 由于UI渲染使用窗口大小作为canvas大小，坐标应该直接匹配
+    // 但如果存在DPI缩放，需要处理
+    Vector2 uiPoint = windowPoint;
+    
+    // 注意：如果UI使用了scaleFactor进行缩放，那么鼠标坐标也需要相应缩放
+    // 但通常UI应该使用窗口的实际像素大小，所以这里不需要转换
+    // 如果将来需要支持UI缩放，可以在这里添加相应的转换逻辑
+    
+    return uiPoint;
+}
+
 UIWidget* UIInputRouter::HitTest(const Vector2& point) const {
     if (!m_widgetTree) {
         return nullptr;
     }
+    
+    // 将窗口坐标转换为UI坐标
+    Vector2 uiPoint = ConvertWindowToUICoordinates(point);
+    
     UIWidget* result = nullptr;
 
     std::queue<UIWidget*> queue;
@@ -158,8 +408,9 @@ UIWidget* UIInputRouter::HitTest(const Vector2& point) const {
 
         const Rect& rect = current->GetLayoutRect();
         if (rect.width > 0.0f && rect.height > 0.0f) {
-            if (point.x() >= rect.x && point.x() <= rect.x + rect.width &&
-                point.y() >= rect.y && point.y() <= rect.y + rect.height) {
+            // 使用转换后的UI坐标进行碰撞检测
+            if (uiPoint.x() >= rect.x && uiPoint.x() <= rect.x + rect.width &&
+                uiPoint.y() >= rect.y && uiPoint.y() <= rect.y + rect.height) {
                 result = current;
             }
         }

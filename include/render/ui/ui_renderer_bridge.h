@@ -5,6 +5,7 @@
 #include "render/types.h"
 #include "render/ui/ui_render_commands.h"
 #include "render/ui/ui_debug_config.h"
+#include "render/ui/ui_theme.h"
 #include "render/sprite/sprite_atlas.h"
 
 namespace Render::Application {
@@ -33,6 +34,7 @@ public:
     void Shutdown(Render::Application::AppContext& ctx);
 
     void SetDebugConfig(const UIDebugConfig* config) { m_debugConfig = config; }
+    void SetThemeManager(UIThemeManager* themeManager) { m_themeManager = themeManager; }
 
     void PrepareFrame(const Render::Application::FrameUpdateArgs& frame,
                       UICanvas& canvas,
@@ -71,6 +73,7 @@ private:
     Ref<Render::Texture> m_solidTexture;
     bool m_loggedSolidTexture = false;
     const UIDebugConfig* m_debugConfig = nullptr;
+    UIThemeManager* m_themeManager = nullptr;
 
     UIRenderCommandBuffer m_commandBuffer;
 };

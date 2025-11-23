@@ -64,48 +64,13 @@ void InputModule::OnPreFrame(const FrameUpdateArgs&, AppContext& ctx) {
         ProcessBlenderOperations(event, ctx);
         ProcessMouseGesture(event, ctx);
 
-        if (router) {
-            switch (event.type) {
-        case SDL_EVENT_QUIT:
+        // 处理退出事件
+        if (event.type == SDL_EVENT_QUIT) {
             m_quitRequested = true;
-            break;
-                case SDL_EVENT_MOUSE_MOTION: {
-                    Render::Vector2 position(static_cast<float>(event.motion.x),
-                                             static_cast<float>(event.motion.y));
-                    Render::Vector2 delta(static_cast<float>(event.motion.xrel),
-                                          static_cast<float>(event.motion.yrel));
-                    router->QueueMouseMove(position, delta);
-                    break;
-                }
-                case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                case SDL_EVENT_MOUSE_BUTTON_UP: {
-                    Render::Vector2 position(static_cast<float>(event.button.x),
-                                             static_cast<float>(event.button.y));
-                    bool pressed = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
-                    router->QueueMouseButton(event.button.button, pressed, position);
-                    break;
-                }
-                case SDL_EVENT_MOUSE_WHEEL: {
-                    Render::Vector2 offset(static_cast<float>(event.wheel.x),
-                                           static_cast<float>(event.wheel.y));
-                    router->QueueMouseWheel(offset, false);
-                    break;
-                }
-                case SDL_EVENT_KEY_DOWN:
-                case SDL_EVENT_KEY_UP: {
-                    bool pressed = (event.type == SDL_EVENT_KEY_DOWN);
-                    bool repeat = pressed && event.key.repeat != 0;
-                    router->QueueKey(static_cast<int>(event.key.scancode), pressed, repeat);
-                    break;
-                }
-                case SDL_EVENT_TEXT_INPUT: {
-                    router->QueueTextInput(event.text.text ? event.text.text : "");
-                    break;
-                }
-                default:
-                    break;
-            }
         }
+        
+        // 注意：不再直接调用 router->QueueXXX()，因为 UIInputRouter 现在通过 EventBus 订阅事件
+        // 这样可以避免重复处理，并实现更好的解耦
 
         if (ctx.globalEventBus) {
             switch (event.type) {
