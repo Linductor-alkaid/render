@@ -6,6 +6,8 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <SDL3/SDL_timer.h>
@@ -251,19 +253,90 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
                 }
             }
             
-            // 渲染sprite
-            // 调试：记录纹理信息（仅在前几次）
-            static int debugRenderCount = 0;
-            if (debugRenderCount < 10) {
-                Logger::GetInstance().DebugFormat(
-                    "[UIRendererBridge] Rendering sprite: isCursor=%s, textureID=%u, size=%dx%d, sourceRect=(%.2f,%.2f,%.2f,%.2f)",
-                    cmd.sprite.isCursor ? "true" : "false",
-                    renderTexture ? renderTexture->GetID() : 0,
-                    renderTexture ? renderTexture->GetWidth() : 0,
-                    renderTexture ? renderTexture->GetHeight() : 0,
-                    cmd.sprite.sourceRect.x, cmd.sprite.sourceRect.y,
-                    cmd.sprite.sourceRect.width, cmd.sprite.sourceRect.height);
-                debugRenderCount++;
+            // ========== 严格验证：防止渲染整个 atlas 纹理 ==========
+            // 这是最后一道防线，必须在这里彻底阻止错误的渲染
+            
+            if (!cmd.sprite.isCursor && m_uiAtlas && renderTexture == m_uiAtlas->GetTexture()) {
+                const Rect& src = cmd.sprite.sourceRect;
+                float posX = cmd.sprite.transform ? cmd.sprite.transform->GetPosition().x() : 0.0f;
+                float posY = cmd.sprite.transform ? cmd.sprite.transform->GetPosition().y() : 0.0f;
+                
+                // 检查0：如果纹理尺寸是 700x701（test_sprite_atlas 的尺寸），这是错误的 atlas 纹理
+                bool isWrongAtlasTexture = false;
+                if (renderTexture) {
+                    int texWidth = renderTexture->GetWidth();
+                    int texHeight = renderTexture->GetHeight();
+                    isWrongAtlasTexture = (texWidth == 700 && texHeight == 701);
+                }
+                
+                // 检查1：sourceRect 是否覆盖了整个纹理（超过 85%，降低阈值更严格）
+                constexpr float kMaxUVCoverage = 0.85f;
+                bool coversFullTexture = (src.x <= 0.05f && src.y <= 0.05f && 
+                                         src.width >= kMaxUVCoverage && src.height >= kMaxUVCoverage);
+                
+                // 检查2：位置是否在可疑区域（左上角附近，可能是错误渲染的位置）
+                bool isSuspiciousPosition = (posX >= -50.0f && posX <= 50.0f && 
+                                            posY >= -50.0f && posY <= 50.0f);
+                
+                // 检查3：sprite 尺寸是否异常大（接近整个纹理尺寸）
+                bool suspiciousSize = false;
+                if (renderTexture) {
+                    float texWidth = static_cast<float>(renderTexture->GetWidth());
+                    float texHeight = static_cast<float>(renderTexture->GetHeight());
+                    // 如果 sprite 尺寸接近纹理尺寸（超过 70%），这是可疑的
+                    if (texWidth > 0.0f && texHeight > 0.0f) {
+                        float sizeRatioX = cmd.sprite.size.x() / texWidth;
+                        float sizeRatioY = cmd.sprite.size.y() / texHeight;
+                        suspiciousSize = (sizeRatioX >= 0.7f || sizeRatioY >= 0.7f);
+                    }
+                }
+                
+                // 如果满足多个可疑条件，拒绝渲染
+                int suspiciousFlags = 0;
+                if (coversFullTexture) suspiciousFlags++;
+                if (isSuspiciousPosition) suspiciousFlags++;
+                if (suspiciousSize) suspiciousFlags++;
+                
+                // 关键：如果 sourceRect 覆盖整个纹理，或者使用了错误的 atlas 纹理，都拒绝渲染
+                if (coversFullTexture || isWrongAtlasTexture || (suspiciousFlags >= 2)) {
+                    static int blockedCount = 0;
+                    blockedCount++;
+                    
+                    if (blockedCount <= 5) {  // 只记录前5次
+                        Logger::GetInstance().ErrorFormat(
+                            "[UIRendererBridge] BLOCKED #%d: Rejecting suspicious atlas sprite render! "
+                            "sourceRect=(%.3f,%.3f,%.3f,%.3f), position=(%.1f,%.1f), size=(%.1f,%.1f), "
+                            "textureSize=%dx%d, coversFullTexture=%s, wrongAtlasTexture=%s, suspiciousPosition=%s, suspiciousSize=%s",
+                            blockedCount,
+                            src.x, src.y, src.width, src.height,
+                            posX, posY,
+                            cmd.sprite.size.x(), cmd.sprite.size.y(),
+                            renderTexture ? renderTexture->GetWidth() : 0,
+                            renderTexture ? renderTexture->GetHeight() : 0,
+                            coversFullTexture ? "YES" : "NO",
+                            isWrongAtlasTexture ? "YES" : "NO",
+                            isSuspiciousPosition ? "YES" : "NO",
+                            suspiciousSize ? "YES" : "NO");
+                    }
+                    // 彻底拒绝渲染
+                    continue;
+                }
+            }
+            
+            // 额外检查：确保非光标命令不使用 solidTexture
+            if (!cmd.sprite.isCursor && m_solidTexture && renderTexture == m_solidTexture) {
+                static bool loggedWrongTexture = false;
+                if (!loggedWrongTexture) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] CRITICAL: Non-cursor sprite using solid texture! "
+                        "This should never happen. Position=(%.1f,%.1f), size=(%.1f,%.1f)",
+                        cmd.sprite.transform ? cmd.sprite.transform->GetPosition().x() : 0.0f,
+                        cmd.sprite.transform ? cmd.sprite.transform->GetPosition().y() : 0.0f,
+                        cmd.sprite.size.x(), cmd.sprite.size.y());
+                    loggedWrongTexture = true;
+                }
+                // 拒绝渲染
+                continue;
             }
             
             SpriteRenderable sprite;
@@ -444,6 +517,81 @@ void UIRendererBridge::EnsureAtlas(Render::Application::AppContext& ctx) {
             m_loggedMissingAtlas = true;
         }
         return;
+    }
+
+    // 验证 atlas 纹理大小：ui_core atlas 应该是 512x512，不是 700x701（test_sprite_atlas）
+    if (atlas->GetTexture()) {
+        int width = atlas->GetTexture()->GetWidth();
+        int height = atlas->GetTexture()->GetHeight();
+        
+        if (width == 700 && height == 701) {
+            Logger::GetInstance().ErrorFormat(
+                "[UIRendererBridge] CRITICAL: Wrong atlas loaded! 'ui_core' atlas has texture size %dx%d (test_sprite_atlas size)! "
+                "This atlas should be 512x512. The wrong atlas texture is being used! "
+                "This may be caused by texture name collision. Atlas will be used but all full-texture frames will be rejected.",
+                width, height);
+            // 不直接 return，而是继续使用但会在渲染时严格拒绝整个纹理的渲染
+            // 这样可以避免 UI 完全不渲染，同时防止错误的纹理显示
+        } else if (width != 512 || height != 512) {
+            Logger::GetInstance().WarningFormat(
+                "[UIRendererBridge] Warning: 'ui_core' atlas has unexpected texture size %dx%d (expected 512x512).",
+                width, height);
+        } else {
+            Logger::GetInstance().InfoFormat(
+                "[UIRendererBridge] 'ui_core' atlas loaded successfully with texture size %dx%d.",
+                width, height);
+        }
+        
+        // 验证所有 frame 的 UV 坐标，确保没有覆盖整个纹理的 frame
+        const auto& allFrames = atlas->GetAllFrames();
+        float texWidth = static_cast<float>(width);
+        float texHeight = static_cast<float>(height);
+        constexpr float kMaxUVCoverage = 0.90f;
+        
+        for (const auto& [frameName, frame] : allFrames) {
+            // 跳过保留关键字
+            if (frameName == "meta" || frameName == "frames" || frameName == "animations") {
+                Logger::GetInstance().ErrorFormat(
+                    "[UIRendererBridge] CRITICAL: Atlas contains reserved keyword '%s' as frame name! "
+                    "This is invalid. Frame will be ignored.",
+                    frameName.c_str());
+                continue;
+            }
+            
+            // 检查 frame 的 UV 坐标
+            Rect uv = frame.uv;
+            bool isPixelCoordinates = (uv.x >= 0.0f && uv.x < texWidth) &&
+                                      (uv.y >= 0.0f && uv.y < texHeight);
+            
+            if (isPixelCoordinates) {
+                // 归一化 UV 坐标
+                float normalizedX = uv.x / texWidth;
+                float normalizedY = uv.y / texHeight;
+                float normalizedW = uv.width / texWidth;
+                float normalizedH = uv.height / texHeight;
+                
+                // 检查是否覆盖整个纹理
+                if (normalizedX <= 0.05f && normalizedY <= 0.05f &&
+                    normalizedW >= kMaxUVCoverage && normalizedH >= kMaxUVCoverage) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] CRITICAL: Frame '%s' in atlas covers entire texture! "
+                        "UV=(%.1f,%.1f,%.1f,%.1f) normalized=(%.3f,%.3f,%.3f,%.3f). "
+                        "This frame will be rejected during rendering.",
+                        frameName.c_str(),
+                        uv.x, uv.y, uv.width, uv.height,
+                        normalizedX, normalizedY, normalizedW, normalizedH);
+                }
+            } else {
+                // 已经是归一化坐标
+                if (uv.x <= 0.05f && uv.y <= 0.05f &&
+                    uv.width >= kMaxUVCoverage && uv.height >= kMaxUVCoverage) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] CRITICAL: Frame '%s' in atlas covers entire texture! "
+                        "UV=(%.3f,%.3f,%.3f,%.3f). This frame will be rejected during rendering.",
+                        frameName.c_str(), uv.x, uv.y, uv.width, uv.height);
+                }
+            }
+        }
     }
 
     m_uiAtlas = atlas;
@@ -655,34 +803,131 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
         Vector2 size(rect.width, rect.height);
 
         auto pushSprite = [&](const std::string& frameName, const Color& tint = Color::White()) {
+            // 严格验证：拒绝渲染保留关键字（JSON metadata 字段）
+            if (frameName == "meta" || frameName == "frames" || frameName == "animations") {
+                static bool loggedReservedFrame = false;
+                if (!loggedReservedFrame) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] CRITICAL: Attempting to render reserved keyword '%s' as frame! "
+                        "Widget ID: '%s'. Reserved keywords are JSON metadata fields, not sprite frames!",
+                        frameName.c_str(), id.c_str());
+                    loggedReservedFrame = true;
+                }
+                return;
+            }
+            
+            // 严格验证：frame 必须存在于 atlas 中
             if (!m_uiAtlas->HasFrame(frameName)) {
-                if (!m_loggedMissingAtlas) {
-                    Logger::GetInstance().WarningFormat("[UIRendererBridge] Frame '%s' missing in atlas.", frameName.c_str());
-                    m_loggedMissingAtlas = true;
+                static std::unordered_set<std::string> loggedMissingFrames;
+                if (loggedMissingFrames.find(frameName) == loggedMissingFrames.end()) {
+                    Logger::GetInstance().WarningFormat(
+                        "[UIRendererBridge] Frame '%s' missing in atlas (widget ID: '%s'). Sprite will not be rendered.",
+                        frameName.c_str(), id.c_str());
+                    loggedMissingFrames.insert(frameName);
                 }
                 return;
             }
 
             const auto& frame = m_uiAtlas->GetFrame(frameName);
 
-            // 将像素坐标转换为归一化 UV 坐标
-            // frame.uv 包含像素坐标（x, y, width, height），需要归一化到 [0, 1] 范围
+            // 严格验证：frame 的 UV 区域必须有效且不是整个纹理
             Rect normalizedUV = frame.uv;
-            if (m_uiAtlas->GetTexture()) {
-                float texWidth = static_cast<float>(m_uiAtlas->GetTexture()->GetWidth());
-                float texHeight = static_cast<float>(m_uiAtlas->GetTexture()->GetHeight());
-                if (texWidth > 0.0f && texHeight > 0.0f) {
-                    // 如果 UV 值大于1.0，说明是像素坐标，需要归一化
-                    if (normalizedUV.x > 1.0f || normalizedUV.y > 1.0f || 
-                        normalizedUV.width > 1.0f || normalizedUV.height > 1.0f) {
-                        normalizedUV.x /= texWidth;
-                        normalizedUV.y /= texHeight;
-                        normalizedUV.width /= texWidth;
-                        normalizedUV.height /= texHeight;
-                    }
+            float texWidth = 0.0f;
+            float texHeight = 0.0f;
+            
+            if (!m_uiAtlas->GetTexture() || !m_uiAtlas->GetTexture()->IsValid()) {
+                static bool loggedInvalidAtlasTexture = false;
+                if (!loggedInvalidAtlasTexture) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] Atlas texture is invalid when rendering frame '%s' (widget ID: '%s').",
+                        frameName.c_str(), id.c_str());
+                    loggedInvalidAtlasTexture = true;
                 }
+                return;
+            }
+            
+            texWidth = static_cast<float>(m_uiAtlas->GetTexture()->GetWidth());
+            texHeight = static_cast<float>(m_uiAtlas->GetTexture()->GetHeight());
+            
+            if (texWidth <= 0.0f || texHeight <= 0.0f) {
+                static bool loggedInvalidTextureSize = false;
+                if (!loggedInvalidTextureSize) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] Atlas texture has invalid size %fx%f when rendering frame '%s' (widget ID: '%s').",
+                        texWidth, texHeight, frameName.c_str(), id.c_str());
+                    loggedInvalidTextureSize = true;
+                }
+                return;
             }
 
+            // 将像素坐标转换为归一化 UV 坐标
+            // 如果 UV 值大于1.0或大于纹理尺寸，说明是像素坐标，需要归一化
+            bool isPixelCoordinates = (normalizedUV.x >= 0.0f && normalizedUV.x < texWidth) &&
+                                      (normalizedUV.y >= 0.0f && normalizedUV.y < texHeight);
+            
+            if (isPixelCoordinates) {
+                normalizedUV.x /= texWidth;
+                normalizedUV.y /= texHeight;
+                normalizedUV.width /= texWidth;
+                normalizedUV.height /= texHeight;
+            }
+            
+            // 严格验证：归一化后的 UV 必须在有效范围内 [0, 1]
+            if (normalizedUV.x < 0.0f || normalizedUV.y < 0.0f ||
+                normalizedUV.x + normalizedUV.width > 1.0f ||
+                normalizedUV.y + normalizedUV.height > 1.0f) {
+                static bool loggedInvalidUV = false;
+                if (!loggedInvalidUV) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] Invalid UV coordinates for frame '%s' (widget ID: '%s'): "
+                        "normalizedUV=(%.3f, %.3f, %.3f, %.3f), textureSize=(%.0f, %.0f)",
+                        frameName.c_str(), id.c_str(),
+                        normalizedUV.x, normalizedUV.y, normalizedUV.width, normalizedUV.height,
+                        texWidth, texHeight);
+                    loggedInvalidUV = true;
+                }
+                return;
+            }
+            
+            // 严格验证：防止渲染整个纹理（UV 覆盖范围接近 [0,0,1,1]）
+            // 如果 UV 覆盖范围超过 90%，直接拒绝（降低阈值，更严格）
+            constexpr float kMaxUVCoverage = 0.90f;
+            bool coversFullTexture = (normalizedUV.x <= 0.05f && normalizedUV.y <= 0.05f &&
+                                      normalizedUV.width >= kMaxUVCoverage && normalizedUV.height >= kMaxUVCoverage);
+            
+            // 额外检查：如果 UV 覆盖范围很大（超过 80%），且位置在可疑区域，也拒绝
+            bool largeCoverage = (normalizedUV.width >= 0.80f || normalizedUV.height >= 0.80f);
+            bool suspiciousPosition = (position.x() >= -50.0f && position.x() <= 50.0f &&
+                                      position.y() >= -50.0f && position.y() <= 50.0f);
+            
+            if (coversFullTexture || (largeCoverage && suspiciousPosition)) {
+                static int blockedCount = 0;
+                blockedCount++;
+                
+                if (blockedCount <= 3) {  // 只记录前3次
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] BLOCKED #%d: Frame '%s' (widget ID: '%s') rejected! "
+                        "UV=(%.3f, %.3f, %.3f, %.3f), position=(%.1f, %.1f), "
+                        "coversFullTexture=%s, largeCoverage=%s, suspiciousPosition=%s. "
+                        "Sprite will not be rendered.",
+                        blockedCount,
+                        frameName.c_str(), id.c_str(),
+                        normalizedUV.x, normalizedUV.y, normalizedUV.width, normalizedUV.height,
+                        position.x(), position.y(),
+                        coversFullTexture ? "YES" : "NO",
+                        largeCoverage ? "YES" : "NO",
+                        suspiciousPosition ? "YES" : "NO");
+                }
+                return;
+            }
+
+            // 验证：确保 widget 尺寸合理
+            Vector2 finalSize = size;
+            if (finalSize.x() <= 0.0f || finalSize.y() <= 0.0f) {
+                finalSize = frame.size;
+            }
+            
+            // 创建 sprite 命令
             UISpriteCommand cmd;
             cmd.transform = CreateRef<Transform>();
             cmd.transform->SetPosition(Vector3(position.x(), position.y(), static_cast<float>(-depth) * 0.001f));
@@ -692,25 +937,6 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             cmd.layerID = 800;
             cmd.depth = static_cast<float>(depth);
             cmd.isCursor = false;  // 明确标识这是图集命令，不是光标命令
-            
-            // 调试：验证图集命令的纹理确实是图集纹理
-            if (m_solidTexture && cmd.texture == m_solidTexture) {
-                static bool loggedAtlasCmdWrongTexture = false;
-                if (!loggedAtlasCmdWrongTexture) {
-                    Logger::GetInstance().ErrorFormat(
-                        "[UIRendererBridge] CRITICAL: Atlas command (frame='%s') has solid texture! "
-                        "Atlas texture ID=%u, Solid texture ID=%u. This should never happen!",
-                        frameName.c_str(),
-                        m_uiAtlas->GetTexture() ? m_uiAtlas->GetTexture()->GetID() : 0,
-                        m_solidTexture ? m_solidTexture->GetID() : 0);
-                    loggedAtlasCmdWrongTexture = true;
-                }
-            }
-
-            Vector2 finalSize = size;
-            if (finalSize.x() <= 0.0f || finalSize.y() <= 0.0f) {
-                finalSize = frame.size;
-            }
             cmd.size = finalSize;
 
             m_commandBuffer.AddSprite(cmd);
@@ -1113,6 +1339,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 m_commandBuffer.AddDebugRect(debugRectCmd);
             }
         }
+        
 
         widget.ForEachChild([&](const UIWidget& child) {
             build(child, depth + 1);
