@@ -196,6 +196,21 @@ void UIGeometryRenderer::RenderFilledPolygon(const std::vector<Vector2>& vertice
         return;
     }
 
+    // 使用三角扇（triangle fan）来渲染多边形
+    // 以第一个顶点为中心，连接相邻的顶点形成三角形
+    // 这样可以正确渲染圆角矩形等复杂形状，而不是使用边界框近似
+    
+    // 计算多边形的中心点（用于三角扇）
+    Vector2 center(0.0f, 0.0f);
+    for (const auto& v : vertices) {
+        center += v;
+    }
+    center /= static_cast<float>(vertices.size());
+    
+    // 使用多个小矩形来近似每个三角形
+    // 为了简化，我们使用扫描线算法：将多边形分解为水平条带
+    // 但更简单的方法是使用多个小的矩形 Sprite 来覆盖多边形区域
+    
     // 计算多边形边界框
     float minX = vertices[0].x();
     float maxX = vertices[0].x();
@@ -209,24 +224,99 @@ void UIGeometryRenderer::RenderFilledPolygon(const std::vector<Vector2>& vertice
         maxY = std::max(maxY, v.y());
     }
 
-    // 使用边界框渲染（简化实现，实际应该使用三角剖分）
-    // 这里使用一个大的Sprite来近似渲染
-    Vector2 center((minX + maxX) * 0.5f, (minY + maxY) * 0.5f);
-    Vector2 size(maxX - minX, maxY - minY);
-
-    auto transform = CreateRef<Transform>();
-    transform->SetPosition(Vector3(center.x(), center.y(), -depth * 0.001f));
-
-    // 从对象池获取 SpriteRenderable 对象，确保在 FlushRenderQueue 处理前保持有效
-    auto* sprite = AcquireSpriteRenderable();
-    sprite->SetTransform(transform);
-    sprite->SetLayerID(layerID);
-    sprite->SetTexture(m_solidTexture);
-    sprite->SetSourceRect(Rect(0.0f, 0.0f, 1.0f, 1.0f));
-    sprite->SetSize(size);
-    sprite->SetTintColor(color);
-    sprite->SetViewProjectionOverride(view, projection);
-    sprite->SubmitToRenderer(renderer);
+    // 使用扫描线方法：将多边形分解为多个水平条带
+    // 每个条带是一个矩形，只渲染在多边形内部的像素
+    // 为了确保没有间隙，我们使用较小的步长，并确保相邻扫描线之间没有间隙
+    const float scanLineStep = 0.25f;  // 使用更小的步长，确保覆盖所有区域，包括圆角过渡区域
+    
+    // 确保完全覆盖整个高度范围，从 minY 到 maxY
+    // 使用连续的扫描线，确保相邻扫描线之间没有间隙
+    float currentY = minY;
+    
+    while (currentY < maxY) {
+        // 计算当前扫描线的顶部和底部
+        float scanLineTop = currentY;
+        float scanLineBottom = std::min(currentY + scanLineStep, maxY);
+        float height = scanLineBottom - scanLineTop;
+        float scanLineCenter = (scanLineTop + scanLineBottom) * 0.5f;
+        
+        // 确保高度至少为 0.01，避免渲染问题
+        if (height < 0.01f) {
+            currentY = maxY;  // 跳过这一条，直接结束
+            break;
+        }
+        
+        // 计算这条扫描线与多边形的所有交点
+        // 使用扫描线的中心位置来计算交点，这样更准确
+        std::vector<float> intersections;
+        
+        for (size_t j = 0; j < vertices.size(); ++j) {
+            size_t next = (j + 1) % vertices.size();
+            const Vector2& v1 = vertices[j];
+            const Vector2& v2 = vertices[next];
+            
+            // 检查线段是否与扫描线相交
+            float yMin = std::min(v1.y(), v2.y());
+            float yMax = std::max(v1.y(), v2.y());
+            
+            // 检查扫描线的范围是否与线段相交
+            // 使用更宽松的边界检查，确保边界上的点也能被包含
+            if (scanLineBottom >= yMin && scanLineTop <= yMax) {
+                // 如果线段是水平的，检查是否在扫描线范围内
+                if (std::abs(v2.y() - v1.y()) < 0.0001f) {
+                    // 水平线段：如果y坐标在扫描线范围内，添加两个端点
+                    if (v1.y() >= scanLineTop && v1.y() <= scanLineBottom) {
+                        intersections.push_back(std::min(v1.x(), v2.x()));
+                        intersections.push_back(std::max(v1.x(), v2.x()));
+                    }
+                } else {
+                    // 非水平线段：计算交点
+                    // 使用扫描线的中心位置来计算交点
+                    float t = (scanLineCenter - v1.y()) / (v2.y() - v1.y());
+                    // 确保交点在线段范围内（使用更宽松的边界）
+                    if (t >= -0.001f && t <= 1.001f) {
+                        float x = v1.x() + t * (v2.x() - v1.x());
+                        intersections.push_back(x);
+                    }
+                }
+            }
+        }
+        
+        // 对交点进行排序并去重（避免重复的交点）
+        std::sort(intersections.begin(), intersections.end());
+        intersections.erase(std::unique(intersections.begin(), intersections.end(), 
+            [](float a, float b) { return std::abs(a - b) < 0.001f; }), intersections.end());
+        
+        // 成对处理交点，每对之间的区域属于多边形内部
+        // 注意：交点数量应该是偶数（因为多边形是封闭的）
+        // 如果交点数量是奇数，可能是边界情况，我们忽略最后一个交点
+        size_t pairCount = intersections.size() / 2;
+        for (size_t k = 0; k < pairCount; ++k) {
+            float x1 = intersections[k * 2];
+            float x2 = intersections[k * 2 + 1];
+            float width = x2 - x1;
+            
+            if (width > 0.0f && height > 0.0f) {
+                // 创建一个小矩形 Sprite 来填充这个区域
+                // Sprite 的中心位置应该是扫描线的中心
+                auto transform = CreateRef<Transform>();
+                transform->SetPosition(Vector3(x1 + width * 0.5f, scanLineCenter, -depth * 0.001f));
+                
+                auto* sprite = AcquireSpriteRenderable();
+                sprite->SetTransform(transform);
+                sprite->SetLayerID(layerID);
+                sprite->SetTexture(m_solidTexture);
+                sprite->SetSourceRect(Rect(0.0f, 0.0f, 1.0f, 1.0f));
+                sprite->SetSize(Vector2(width, height));
+                sprite->SetTintColor(color);
+                sprite->SetViewProjectionOverride(view, projection);
+                sprite->SubmitToRenderer(renderer);
+            }
+        }
+        
+        // 移动到下一条扫描线（确保没有间隙）
+        currentY = scanLineBottom;
+    }
 }
 
 void UIGeometryRenderer::RenderStrokedPolygon(const std::vector<Vector2>& vertices, const Color& color, float strokeWidth, float depth, int layerID, const Matrix4& view, const Matrix4& projection, Render::Renderer* renderer) {

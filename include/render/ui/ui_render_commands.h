@@ -34,6 +34,9 @@ struct UISpriteCommand {
     Color tint{1.0f, 1.0f, 1.0f, 1.0f};
     uint32_t layerID = 800;
     float depth = 0.0f;
+    // 标志位：明确标识这是光标命令还是图集命令
+    // true = 光标命令（使用1x1纯色纹理），false = 图集命令（使用图集纹理）
+    bool isCursor = false;
 };
 
 struct UITextCommand {

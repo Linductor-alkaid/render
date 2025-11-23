@@ -90,7 +90,7 @@ void UIRendererBridge::Shutdown(Render::Application::AppContext&) {
 
 void UIRendererBridge::PrepareFrame(const Render::Application::FrameUpdateArgs& frame,
                                     UICanvas& canvas,
-                                    UIWidgetTree& tree,
+                                    UIWidgetTree& /*tree*/,
                                     Render::Application::AppContext& ctx) {
     if (!m_initialized) {
         Initialize(ctx);
@@ -138,6 +138,21 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
         Logger::GetInstance().Warning("[UIRendererBridge] Renderer is null, cannot submit UI sprites.");
         return;
     }
+    
+    // 调试：统计命令类型
+    size_t cursorCmdCount = 0;
+    size_t atlasCmdCount = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.type == UIRenderCommandType::Sprite) {
+            if (cmd.sprite.isCursor) {
+                cursorCmdCount++;
+            } else {
+                atlasCmdCount++;
+            }
+        }
+    }
+    Logger::GetInstance().DebugFormat("[UIRendererBridge] Command stats: cursor=%zu, atlas=%zu, total=%zu",
+                                     cursorCmdCount, atlasCmdCount, commands.size());
 
     Vector2 canvasSize = canvas.GetState().WindowSize();
     if (canvasSize.x() <= 0.0f || canvasSize.y() <= 0.0f) {
@@ -167,90 +182,94 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
                 continue;
             }
             
-            // 关键修复：首先检查纹理是否是UI图集的纹理
-            // 如果纹理是图集纹理，且渲染尺寸符合光标特征，则跳过渲染
-            // 这可以防止图集纹理被错误地用于光标渲染
-            bool isAtlasTexture = false;
-            if (m_uiAtlas && cmd.sprite.texture && m_uiAtlas->GetTexture()) {
-                // 检查指针是否相同
-                isAtlasTexture = (cmd.sprite.texture == m_uiAtlas->GetTexture());
-                // 如果指针不同，检查OpenGL纹理ID是否相同
-                if (!isAtlasTexture) {
-                    GLuint texID = cmd.sprite.texture->GetID();
-                    GLuint atlasID = m_uiAtlas->GetTexture()->GetID();
-                    isAtlasTexture = (texID != 0 && atlasID != 0 && texID == atlasID);
-                }
-            }
+            // 使用isCursor标志位来明确区分光标命令和图集命令
+            // 这是最可靠的方法，避免了复杂的纹理比较逻辑
+            Ref<Texture> renderTexture;
             
-            // 如果纹理是图集纹理，且渲染尺寸符合光标特征（很窄且高度较小），则跳过渲染
-            // 这可以防止图集纹理被错误地用于光标渲染
-            // 注意：图集纹理是512x512，永远不会是1x1，所以正常的图集元素不会被误判
-            // 只有当纹理是图集纹理且渲染尺寸非常小（可能是错误的光标命令）时才跳过
-            if (isAtlasTexture) {
-                // 检查纹理本身的尺寸（不是渲染尺寸）
-                int texWidth = cmd.sprite.texture ? cmd.sprite.texture->GetWidth() : 0;
-                int texHeight = cmd.sprite.texture ? cmd.sprite.texture->GetHeight() : 0;
-                
-                // 光标特征：
-                // 1. 纹理本身必须是1x1（光标使用纯色纹理）
-                // 2. 渲染尺寸很窄（宽度 <= 5像素）且高度较小（<= 30像素）
-                // 注意：图集纹理是512x512，所以正常的图集元素不会被误判
-                bool is1x1Texture = (texWidth == 1 && texHeight == 1);
-                bool looksLikeCursor = (cmd.sprite.size.x() <= 5.0f && cmd.sprite.size.y() <= 30.0f);
-                
-                // 只有当纹理是1x1且渲染尺寸符合光标特征时，才认为是光标
-                // 这样可以避免误判正常的图集元素（即使它们被缩放到很小）
-                if (is1x1Texture && looksLikeCursor) {
-                    static bool loggedAtlasAsCursorError = false;
-                    if (!loggedAtlasAsCursorError) {
-                        Logger::GetInstance().Error(
-                            "[UIRendererBridge] Atlas texture being used for cursor-like sprite! Skipping render.");
-                        loggedAtlasAsCursorError = true;
+            if (cmd.sprite.isCursor) {
+                // 光标命令：必须使用m_solidTexture（1x1纯色纹理）
+                // 进行简单的验证，确保纹理有效
+                if (!m_solidTexture || !m_solidTexture->IsValid() || 
+                    m_solidTexture->GetWidth() != 1 || m_solidTexture->GetHeight() != 1) {
+                    // 光标纹理无效，跳过渲染
+                    static bool loggedInvalidCursorTexture = false;
+                    if (!loggedInvalidCursorTexture) {
+                        Logger::GetInstance().Warning(
+                            "[UIRendererBridge] Cursor command has invalid solid texture. Skipping render.");
+                        loggedInvalidCursorTexture = true;
                     }
                     continue;
                 }
                 
-                // 调试：如果图集纹理的渲染尺寸很小，记录日志（但不跳过，因为可能是正常的缩放）
-                // 这可以帮助诊断问题
-                if (looksLikeCursor && !is1x1Texture) {
-                    static int debugCount = 0;
-                    if (debugCount < 5) {
-                        Logger::GetInstance().DebugFormat(
-                            "[UIRendererBridge] Atlas texture with small render size: tex=%dx%d, render=%.1fx%.1f",
-                            texWidth, texHeight, cmd.sprite.size.x(), cmd.sprite.size.y());
-                        debugCount++;
+                // 关键：光标命令必须使用m_solidTexture，忽略命令中的纹理
+                // 这样可以确保光标命令永远不会使用图集纹理
+                renderTexture = m_solidTexture;
+                
+                // 安全检查：如果命令中的纹理是图集纹理，这是严重错误
+                if (m_uiAtlas && m_uiAtlas->GetTexture() && cmd.sprite.texture == m_uiAtlas->GetTexture()) {
+                    static int errorCount = 0;
+                    errorCount++;
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] CRITICAL #%d: Cursor command has atlas texture! "
+                        "Cmd texture ID=%u, Atlas texture ID=%u, Solid texture ID=%u. "
+                        "This is a bug in BuildCommands.",
+                        errorCount,
+                        cmd.sprite.texture ? cmd.sprite.texture->GetID() : 0,
+                        m_uiAtlas->GetTexture() ? m_uiAtlas->GetTexture()->GetID() : 0,
+                        m_solidTexture ? m_solidTexture->GetID() : 0);
+                }
+            } else {
+                // 图集命令：必须使用m_uiAtlas->GetTexture()（512x512图集纹理）
+                if (!m_uiAtlas || !m_uiAtlas->GetTexture() || !m_uiAtlas->GetTexture()->IsValid()) {
+                    // 图集无效，跳过渲染
+                    static bool loggedInvalidAtlas = false;
+                    if (!loggedInvalidAtlas) {
+                        Logger::GetInstance().Warning(
+                            "[UIRendererBridge] Atlas command has invalid atlas. Skipping render.");
+                        loggedInvalidAtlas = true;
                     }
+                    continue;
+                }
+                
+                // 关键：图集命令必须使用m_uiAtlas->GetTexture()，忽略命令中的纹理
+                // 这样可以确保图集命令永远不会使用光标纹理
+                Ref<Texture> atlasTexture = m_uiAtlas->GetTexture();
+                renderTexture = atlasTexture;
+                
+                // 安全检查：如果命令中的纹理是光标纹理，这是严重错误
+                if (m_solidTexture && cmd.sprite.texture == m_solidTexture) {
+                    static int errorCount = 0;
+                    errorCount++;
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] CRITICAL #%d: Atlas command has solid texture! "
+                        "Cmd texture ID=%u, Atlas texture ID=%u, Solid texture ID=%u. "
+                        "This is a bug in BuildCommands.",
+                        errorCount,
+                        cmd.sprite.texture ? cmd.sprite.texture->GetID() : 0,
+                        m_uiAtlas->GetTexture() ? m_uiAtlas->GetTexture()->GetID() : 0,
+                        m_solidTexture ? m_solidTexture->GetID() : 0);
                 }
             }
             
-            // 额外检查：如果这是光标纹理（纹理本身是1x1），确保它不是UI图集的纹理
-            // 光标使用1x1的纯色纹理，而UI图集使用test.jpg（512x512）
-            // 通过检查纹理尺寸来判断，这是最可靠的方法
-            bool isCursorTexture = false;
-            if (cmd.sprite.texture && cmd.sprite.texture->IsValid()) {
-                int texWidth = cmd.sprite.texture->GetWidth();
-                int texHeight = cmd.sprite.texture->GetHeight();
-                // 光标纹理应该是1x1的纯色纹理
-                // 同时检查渲染尺寸（光标很窄，高度通常不超过30像素）
-                isCursorTexture = (texWidth == 1 && texHeight == 1 && 
-                                  cmd.sprite.size.x() <= 5.0f && cmd.sprite.size.y() <= 30.0f);
-            }
-            
-            // 对于光标命令，再次验证纹理不是UI图集的纹理（双重检查）
-            if (isCursorTexture && isAtlasTexture) {
-                static bool loggedCursorTextureError = false;
-                if (!loggedCursorTextureError) {
-                    Logger::GetInstance().Error(
-                        "[UIRendererBridge] Cursor command using atlas texture! Skipping render.");
-                    loggedCursorTextureError = true;
-                }
-                continue;
+            // 渲染sprite
+            // 调试：记录纹理信息（仅在前几次）
+            static int debugRenderCount = 0;
+            if (debugRenderCount < 10) {
+                Logger::GetInstance().DebugFormat(
+                    "[UIRendererBridge] Rendering sprite: isCursor=%s, textureID=%u, size=%dx%d, sourceRect=(%.2f,%.2f,%.2f,%.2f)",
+                    cmd.sprite.isCursor ? "true" : "false",
+                    renderTexture ? renderTexture->GetID() : 0,
+                    renderTexture ? renderTexture->GetWidth() : 0,
+                    renderTexture ? renderTexture->GetHeight() : 0,
+                    cmd.sprite.sourceRect.x, cmd.sprite.sourceRect.y,
+                    cmd.sprite.sourceRect.width, cmd.sprite.sourceRect.height);
+                debugRenderCount++;
             }
             
             SpriteRenderable sprite;
             sprite.SetTransform(cmd.sprite.transform);
             sprite.SetLayerID(cmd.sprite.layerID);
-            sprite.SetTexture(cmd.sprite.texture);
+            sprite.SetTexture(renderTexture);
             sprite.SetSourceRect(cmd.sprite.sourceRect);
             sprite.SetSize(cmd.sprite.size);
             sprite.SetTintColor(cmd.sprite.tint);
@@ -508,23 +527,16 @@ void UIRendererBridge::EnsureDebugTexture() {
 void UIRendererBridge::EnsureSolidTexture() {
     // 使用缓存标志避免频繁检查IsValid()，这可能导致纹理状态变化
     if (m_solidTextureValid && m_solidTexture && m_solidTexture->IsValid()) {
-        // 额外验证：确保纹理仍然是1x1且不是UI图集的纹理
-        bool isAtlasTexture = (m_uiAtlas && m_solidTexture == m_uiAtlas->GetTexture());
-        if (m_solidTexture->GetWidth() == 1 && 
-            m_solidTexture->GetHeight() == 1 &&
-            !isAtlasTexture) {
+        // 简单验证：确保纹理仍然是1x1
+        if (m_solidTexture->GetWidth() == 1 && m_solidTexture->GetHeight() == 1) {
             return;  // 纹理仍然有效
         } else {
             // 纹理状态发生了变化，重置它
             static bool loggedTextureStateChange = false;
             if (!loggedTextureStateChange) {
-                if (isAtlasTexture) {
-                    Logger::GetInstance().Warning("[UIRendererBridge] Solid texture became atlas texture! Resetting...");
-                } else {
-                    Logger::GetInstance().WarningFormat(
-                        "[UIRendererBridge] Solid texture size changed to %dx%d! Resetting...",
-                        m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
-                }
+                Logger::GetInstance().WarningFormat(
+                    "[UIRendererBridge] Solid texture size changed to %dx%d! Resetting...",
+                    m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
                 loggedTextureStateChange = true;
             }
             m_solidTexture.reset();
@@ -552,24 +564,17 @@ void UIRendererBridge::EnsureSolidTexture() {
         m_solidTextureValid = false;
     } else {
         // 验证纹理确实创建成功且有效
-        // 确保纹理是1x1的纯色纹理，而不是UI图集的纹理
-        bool isAtlasTexture = (m_uiAtlas && m_solidTexture == m_uiAtlas->GetTexture());
         if (m_solidTexture->IsValid() && 
             m_solidTexture->GetWidth() == 1 && 
-            m_solidTexture->GetHeight() == 1 &&
-            !isAtlasTexture) {  // 确保不是UI图集的纹理
+            m_solidTexture->GetHeight() == 1) {
             m_loggedSolidTexture = false;
             m_solidTextureValid = true;  // 缓存有效性状态
         } else {
-            // 纹理创建失败或尺寸不正确，或者错误地使用了UI图集的纹理
+            // 纹理创建失败或尺寸不正确
             if (!m_loggedSolidTexture) {
-                if (isAtlasTexture) {
-                    Logger::GetInstance().Warning("[UIRendererBridge] Solid UI texture incorrectly set to atlas texture (test.jpg)!");
-                } else {
-                    Logger::GetInstance().WarningFormat(
-                        "[UIRendererBridge] Solid UI texture created but invalid or wrong size: %dx%d (expected 1x1).",
-                        m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
-                }
+                Logger::GetInstance().WarningFormat(
+                    "[UIRendererBridge] Solid UI texture created but invalid or wrong size: %dx%d (expected 1x1).",
+                    m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
                 m_loggedSolidTexture = true;
             }
             m_solidTexture.reset();
@@ -686,6 +691,21 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             cmd.tint = tint;
             cmd.layerID = 800;
             cmd.depth = static_cast<float>(depth);
+            cmd.isCursor = false;  // 明确标识这是图集命令，不是光标命令
+            
+            // 调试：验证图集命令的纹理确实是图集纹理
+            if (m_solidTexture && cmd.texture == m_solidTexture) {
+                static bool loggedAtlasCmdWrongTexture = false;
+                if (!loggedAtlasCmdWrongTexture) {
+                    Logger::GetInstance().ErrorFormat(
+                        "[UIRendererBridge] CRITICAL: Atlas command (frame='%s') has solid texture! "
+                        "Atlas texture ID=%u, Solid texture ID=%u. This should never happen!",
+                        frameName.c_str(),
+                        m_uiAtlas->GetTexture() ? m_uiAtlas->GetTexture()->GetID() : 0,
+                        m_solidTexture ? m_solidTexture->GetID() : 0);
+                    loggedAtlasCmdWrongTexture = true;
+                }
+            }
 
             Vector2 finalSize = size;
             if (finalSize.x() <= 0.0f || finalSize.y() <= 0.0f) {
@@ -945,6 +965,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                             selectionCmd.tint = Color(0.28f, 0.44f, 0.78f, 0.45f);
                             selectionCmd.layerID = 800;
                             selectionCmd.depth = static_cast<float>(depth) - 0.1f;
+                            selectionCmd.isCursor = false;  // 选中区域不是光标
                             m_commandBuffer.AddSprite(selectionCmd);
                         }
                     }
@@ -981,14 +1002,12 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 bool cursorVisible = (currentTicks / kCursorBlinkIntervalMs) % 2 == 0;
                 
                 // 使用缓存的有效性标志，避免频繁检查IsValid()导致纹理状态变化
-                // 额外检查纹理是否有效，确保不会使用错误的纹理
-                // 关键：确保m_solidTexture不是UI图集的纹理
+                // 简单验证：确保光标纹理有效
                 bool isValidSolidTexture = m_solidTextureValid && 
                                          m_solidTexture && 
                                          m_solidTexture->IsValid() &&
                                          m_solidTexture->GetWidth() == 1 &&
-                                         m_solidTexture->GetHeight() == 1 &&
-                                         (!m_uiAtlas || m_solidTexture != m_uiAtlas->GetTexture());
+                                         m_solidTexture->GetHeight() == 1;
                 
                 // 如果纹理无效，记录原因（仅一次）
                 if (isFocused && cursorVisible && !isValidSolidTexture) {
@@ -1002,8 +1021,6 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                             Logger::GetInstance().WarningFormat(
                                 "[UIRendererBridge] Cursor texture size is %dx%d (expected 1x1)!",
                                 m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
-                        } else if (m_uiAtlas && m_solidTexture == m_uiAtlas->GetTexture()) {
-                            Logger::GetInstance().Warning("[UIRendererBridge] Cursor texture is same as atlas texture!");
                         }
                         loggedInvalidTexture = true;
                     }
@@ -1071,60 +1088,20 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                         ? Color(0.0f, 0.0f, 0.0f, 1.0f)  // 黑色光标（浅色背景）
                         : Color(1.0f, 1.0f, 1.0f, 1.0f); // 白色光标（深色背景）
                     
-                    // 最终验证：确保纹理确实是1x1的纯色纹理，而不是UI图集的纹理
-                    // 通过比较OpenGL纹理ID和指针来确保它们是不同的纹理对象
-                    bool isSameAsAtlas = false;
-                    GLuint solidTexID = 0;
-                    GLuint atlasTexID = 0;
-                    
-                    if (m_solidTexture) {
-                        solidTexID = m_solidTexture->GetID();
-                    }
-                    if (m_uiAtlas && m_uiAtlas->GetTexture()) {
-                        atlasTexID = m_uiAtlas->GetTexture()->GetID();
-                        // 检查指针和OpenGL ID
-                        if (m_solidTexture == m_uiAtlas->GetTexture()) {
-                            isSameAsAtlas = true;
-                        } else if (solidTexID != 0 && atlasTexID != 0 && solidTexID == atlasTexID) {
-                            isSameAsAtlas = true;
-                        }
-                    }
-                    
-                    if (isSameAsAtlas) {
-                        // 这是严重错误：m_solidTexture的OpenGL ID与UI图集的纹理ID相同
-                        static bool loggedTextureIDError = false;
-                        if (!loggedTextureIDError) {
-                            Logger::GetInstance().Error(
-                                "[UIRendererBridge] Cursor texture has same ID as atlas texture! Skipping render.");
-                            loggedTextureIDError = true;
-                        }
-                        // 强制重置m_solidTexture，尝试在下一帧重新创建
-                        m_solidTexture.reset();
-                        m_solidTextureValid = false;
-                    } else if (!m_solidTexture || !m_solidTexture->IsValid() || 
-                               m_solidTexture->GetWidth() != 1 || m_solidTexture->GetHeight() != 1) {
-                        // 纹理无效或尺寸不正确（已在上面记录，这里跳过）
-                    } else {
-                        // 纹理有效，创建光标命令
-                        UISpriteCommand caretCmd;
-                        caretCmd.transform = CreateRef<Transform>();
-                        caretCmd.transform->SetPosition(Vector3(caretX, caretY, static_cast<float>(-caretDepth) * 0.001f));
-                        caretCmd.texture = m_solidTexture;
-                        caretCmd.sourceRect = Rect(0.0f, 0.0f, 1.0f, 1.0f);
-                        caretCmd.size = Vector2(caretWidth, finalCaretHeight);
-                        caretCmd.tint = caretColor;
-                        caretCmd.layerID = 800;
-                        caretCmd.depth = caretDepth;
-                        m_commandBuffer.AddSprite(caretCmd);
-                    }
+                    // 创建光标命令（纹理验证已在上面完成）
+                    UISpriteCommand caretCmd;
+                    caretCmd.transform = CreateRef<Transform>();
+                    caretCmd.transform->SetPosition(Vector3(caretX, caretY, static_cast<float>(-caretDepth) * 0.001f));
+                    caretCmd.texture = m_solidTexture;
+                    caretCmd.sourceRect = Rect(0.0f, 0.0f, 1.0f, 1.0f);
+                    caretCmd.size = Vector2(caretWidth, finalCaretHeight);
+                    caretCmd.tint = caretColor;
+                    caretCmd.layerID = 800;
+                    caretCmd.depth = caretDepth;
+                    caretCmd.isCursor = true;  // 明确标识这是光标命令
+                    m_commandBuffer.AddSprite(caretCmd);
                 }
             }
-
-            // 诊断信息：输出焦点状态
-            Logger::GetInstance().InfoFormat(
-                "[UIRendererBridge] TextField %s: IsFocused=%s",
-                textFieldWidget->GetId().c_str(),
-                isFocused ? "true" : "false");
 
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
                 UIDebugRectCommand debugRectCmd;
