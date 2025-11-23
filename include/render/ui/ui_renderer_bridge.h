@@ -6,6 +6,7 @@
 #include "render/ui/ui_render_commands.h"
 #include "render/ui/ui_debug_config.h"
 #include "render/ui/ui_theme.h"
+#include "render/ui/ui_geometry_renderer.h"
 #include "render/sprite/sprite_atlas.h"
 
 namespace Render::Application {
@@ -71,11 +72,13 @@ private:
     bool m_loggedDebugRectShader = false;
     Ref<Render::Texture> m_debugTexture;
     Ref<Render::Texture> m_solidTexture;
+    bool m_solidTextureValid = false;
     bool m_loggedSolidTexture = false;
     const UIDebugConfig* m_debugConfig = nullptr;
     UIThemeManager* m_themeManager = nullptr;
 
     UIRenderCommandBuffer m_commandBuffer;
+    UIGeometryRenderer m_geometryRenderer;
 };
 
 } // namespace Render::UI

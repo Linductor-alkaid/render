@@ -282,6 +282,7 @@ set(RENDER_SOURCES
     src/ui/uicanvas.cpp
     src/ui/ui_layout.cpp
     src/ui/ui_render_commands.cpp
+    src/ui/ui_geometry_renderer.cpp
     src/ui/ui_input_router.cpp
     src/ui/ui_renderer_bridge.cpp
     src/ui/ui_theme.cpp
@@ -397,6 +398,7 @@ set(RENDER_HEADERS
     include/render/ui/uicanvas.h
     include/render/ui/ui_layout.h
     include/render/ui/ui_render_commands.h
+    include/render/ui/ui_geometry_renderer.h
     include/render/ui/ui_debug_config.h
     include/render/ui/ui_input_router.h
     include/render/ui/ui_renderer_bridge.h

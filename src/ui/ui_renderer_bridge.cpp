@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <SDL3/SDL_timer.h>
+
 #include "render/application/app_context.h"
 #include "render/logger.h"
 #include "render/math_utils.h"
@@ -64,6 +66,14 @@ void UIRendererBridge::Initialize(Render::Application::AppContext& ctx) {
         return;
     }
 
+    // 初始化几何图形渲染器
+    if (!m_geometryRenderer.Initialize()) {
+        Logger::GetInstance().Warning("[UIRendererBridge] Failed to initialize geometry renderer.");
+    }
+
+    // 预先创建光标纹理，避免在渲染时频繁检查
+    EnsureSolidTexture();
+
     m_initialized = true;
 }
 
@@ -72,6 +82,9 @@ void UIRendererBridge::Shutdown(Render::Application::AppContext&) {
         return;
     }
 
+    m_geometryRenderer.Shutdown();
+    m_solidTexture.reset();
+    m_solidTextureValid = false;
     m_initialized = false;
 }
 
@@ -86,6 +99,9 @@ void UIRendererBridge::PrepareFrame(const Render::Application::FrameUpdateArgs& 
     if (!m_initialized) {
         return;
     }
+
+    // 重置几何图形渲染器的对象池索引，准备新的一帧
+    m_geometryRenderer.ResetSpritePool();
 
     UploadPerFrameUniforms(frame, canvas, ctx);
 }
@@ -147,9 +163,90 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
     for (const auto& cmd : commands) {
         switch (cmd.type) {
         case UIRenderCommandType::Sprite: {
-            if (!cmd.sprite.texture) {
+            if (!cmd.sprite.texture || !cmd.sprite.texture->IsValid()) {
                 continue;
             }
+            
+            // 关键修复：首先检查纹理是否是UI图集的纹理
+            // 如果纹理是图集纹理，且渲染尺寸符合光标特征，则跳过渲染
+            // 这可以防止图集纹理被错误地用于光标渲染
+            bool isAtlasTexture = false;
+            if (m_uiAtlas && cmd.sprite.texture && m_uiAtlas->GetTexture()) {
+                // 检查指针是否相同
+                isAtlasTexture = (cmd.sprite.texture == m_uiAtlas->GetTexture());
+                // 如果指针不同，检查OpenGL纹理ID是否相同
+                if (!isAtlasTexture) {
+                    GLuint texID = cmd.sprite.texture->GetID();
+                    GLuint atlasID = m_uiAtlas->GetTexture()->GetID();
+                    isAtlasTexture = (texID != 0 && atlasID != 0 && texID == atlasID);
+                }
+            }
+            
+            // 如果纹理是图集纹理，且渲染尺寸符合光标特征（很窄且高度较小），则跳过渲染
+            // 这可以防止图集纹理被错误地用于光标渲染
+            // 注意：图集纹理是512x512，永远不会是1x1，所以正常的图集元素不会被误判
+            // 只有当纹理是图集纹理且渲染尺寸非常小（可能是错误的光标命令）时才跳过
+            if (isAtlasTexture) {
+                // 检查纹理本身的尺寸（不是渲染尺寸）
+                int texWidth = cmd.sprite.texture ? cmd.sprite.texture->GetWidth() : 0;
+                int texHeight = cmd.sprite.texture ? cmd.sprite.texture->GetHeight() : 0;
+                
+                // 光标特征：
+                // 1. 纹理本身必须是1x1（光标使用纯色纹理）
+                // 2. 渲染尺寸很窄（宽度 <= 5像素）且高度较小（<= 30像素）
+                // 注意：图集纹理是512x512，所以正常的图集元素不会被误判
+                bool is1x1Texture = (texWidth == 1 && texHeight == 1);
+                bool looksLikeCursor = (cmd.sprite.size.x() <= 5.0f && cmd.sprite.size.y() <= 30.0f);
+                
+                // 只有当纹理是1x1且渲染尺寸符合光标特征时，才认为是光标
+                // 这样可以避免误判正常的图集元素（即使它们被缩放到很小）
+                if (is1x1Texture && looksLikeCursor) {
+                    static bool loggedAtlasAsCursorError = false;
+                    if (!loggedAtlasAsCursorError) {
+                        Logger::GetInstance().Error(
+                            "[UIRendererBridge] Atlas texture being used for cursor-like sprite! Skipping render.");
+                        loggedAtlasAsCursorError = true;
+                    }
+                    continue;
+                }
+                
+                // 调试：如果图集纹理的渲染尺寸很小，记录日志（但不跳过，因为可能是正常的缩放）
+                // 这可以帮助诊断问题
+                if (looksLikeCursor && !is1x1Texture) {
+                    static int debugCount = 0;
+                    if (debugCount < 5) {
+                        Logger::GetInstance().DebugFormat(
+                            "[UIRendererBridge] Atlas texture with small render size: tex=%dx%d, render=%.1fx%.1f",
+                            texWidth, texHeight, cmd.sprite.size.x(), cmd.sprite.size.y());
+                        debugCount++;
+                    }
+                }
+            }
+            
+            // 额外检查：如果这是光标纹理（纹理本身是1x1），确保它不是UI图集的纹理
+            // 光标使用1x1的纯色纹理，而UI图集使用test.jpg（512x512）
+            // 通过检查纹理尺寸来判断，这是最可靠的方法
+            bool isCursorTexture = false;
+            if (cmd.sprite.texture && cmd.sprite.texture->IsValid()) {
+                int texWidth = cmd.sprite.texture->GetWidth();
+                int texHeight = cmd.sprite.texture->GetHeight();
+                // 光标纹理应该是1x1的纯色纹理
+                // 同时检查渲染尺寸（光标很窄，高度通常不超过30像素）
+                isCursorTexture = (texWidth == 1 && texHeight == 1 && 
+                                  cmd.sprite.size.x() <= 5.0f && cmd.sprite.size.y() <= 30.0f);
+            }
+            
+            // 对于光标命令，再次验证纹理不是UI图集的纹理（双重检查）
+            if (isCursorTexture && isAtlasTexture) {
+                static bool loggedCursorTextureError = false;
+                if (!loggedCursorTextureError) {
+                    Logger::GetInstance().Error(
+                        "[UIRendererBridge] Cursor command using atlas texture! Skipping render.");
+                    loggedCursorTextureError = true;
+                }
+                continue;
+            }
+            
             SpriteRenderable sprite;
             sprite.SetTransform(cmd.sprite.transform);
             sprite.SetLayerID(cmd.sprite.layerID);
@@ -232,6 +329,24 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
         case UIRenderCommandType::DebugRect:
             DrawDebugRect(cmd.debugRect, projection, ctx);
             break;
+        case UIRenderCommandType::Line:
+            m_geometryRenderer.RenderLine(cmd.line, view, projection, ctx.renderer);
+            break;
+        case UIRenderCommandType::BezierCurve:
+            m_geometryRenderer.RenderBezierCurve(cmd.bezierCurve, view, projection, ctx.renderer);
+            break;
+        case UIRenderCommandType::Rectangle:
+            m_geometryRenderer.RenderRectangle(cmd.rectangle, view, projection, ctx.renderer);
+            break;
+        case UIRenderCommandType::Circle:
+            m_geometryRenderer.RenderCircle(cmd.circle, view, projection, ctx.renderer);
+            break;
+        case UIRenderCommandType::RoundedRectangle:
+            m_geometryRenderer.RenderRoundedRectangle(cmd.roundedRectangle, view, projection, ctx.renderer);
+            break;
+        case UIRenderCommandType::Polygon:
+            m_geometryRenderer.RenderPolygon(cmd.polygon, view, projection, ctx.renderer);
+            break;
         default:
             break;
         }
@@ -240,6 +355,15 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
     if (hasTextCommands) {
         textRenderer.End();
     }
+
+    // 注意：这里不调用FlushRenderQueue()，因为：
+    // 1. 主循环会在所有模块更新后统一调用FlushRenderQueue()
+    // 2. 这样可以确保所有UI元素和其他渲染对象在同一帧内按正确顺序渲染
+    // 3. 避免重复调用FlushRenderQueue()导致渲染队列被清空两次，从而引起纹理闪动
+    // 
+    // 关于对象生命周期：虽然Flush中创建了局部变量（如SpriteRenderable），
+    // 但这些对象提交到渲染队列后，主循环的FlushRenderQueue()会在同一帧内处理它们，
+    // 所以不会有生命周期问题
 }
 
 void UIRendererBridge::UploadPerFrameUniforms(const Render::Application::FrameUpdateArgs&,
@@ -382,8 +506,36 @@ void UIRendererBridge::EnsureDebugTexture() {
 }
 
 void UIRendererBridge::EnsureSolidTexture() {
-    if (m_solidTexture && m_solidTexture->IsValid()) {
-        return;
+    // 使用缓存标志避免频繁检查IsValid()，这可能导致纹理状态变化
+    if (m_solidTextureValid && m_solidTexture && m_solidTexture->IsValid()) {
+        // 额外验证：确保纹理仍然是1x1且不是UI图集的纹理
+        bool isAtlasTexture = (m_uiAtlas && m_solidTexture == m_uiAtlas->GetTexture());
+        if (m_solidTexture->GetWidth() == 1 && 
+            m_solidTexture->GetHeight() == 1 &&
+            !isAtlasTexture) {
+            return;  // 纹理仍然有效
+        } else {
+            // 纹理状态发生了变化，重置它
+            static bool loggedTextureStateChange = false;
+            if (!loggedTextureStateChange) {
+                if (isAtlasTexture) {
+                    Logger::GetInstance().Warning("[UIRendererBridge] Solid texture became atlas texture! Resetting...");
+                } else {
+                    Logger::GetInstance().WarningFormat(
+                        "[UIRendererBridge] Solid texture size changed to %dx%d! Resetting...",
+                        m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
+                }
+                loggedTextureStateChange = true;
+            }
+            m_solidTexture.reset();
+            m_solidTextureValid = false;
+        }
+    }
+
+    // 如果纹理存在但无效，重置它
+    if (m_solidTexture && !m_solidTexture->IsValid()) {
+        m_solidTexture.reset();
+        m_solidTextureValid = false;
     }
 
     if (!m_solidTexture) {
@@ -397,13 +549,31 @@ void UIRendererBridge::EnsureSolidTexture() {
             m_loggedSolidTexture = true;
         }
         m_solidTexture.reset();
+        m_solidTextureValid = false;
     } else {
-        m_loggedSolidTexture = false;
-        // 添加成功创建的日志（仅第一次）
-        static bool loggedSuccess = false;
-        if (!loggedSuccess) {
-            Logger::GetInstance().Info("[UIRendererBridge] Solid UI texture created successfully.");
-            loggedSuccess = true;
+        // 验证纹理确实创建成功且有效
+        // 确保纹理是1x1的纯色纹理，而不是UI图集的纹理
+        bool isAtlasTexture = (m_uiAtlas && m_solidTexture == m_uiAtlas->GetTexture());
+        if (m_solidTexture->IsValid() && 
+            m_solidTexture->GetWidth() == 1 && 
+            m_solidTexture->GetHeight() == 1 &&
+            !isAtlasTexture) {  // 确保不是UI图集的纹理
+            m_loggedSolidTexture = false;
+            m_solidTextureValid = true;  // 缓存有效性状态
+        } else {
+            // 纹理创建失败或尺寸不正确，或者错误地使用了UI图集的纹理
+            if (!m_loggedSolidTexture) {
+                if (isAtlasTexture) {
+                    Logger::GetInstance().Warning("[UIRendererBridge] Solid UI texture incorrectly set to atlas texture (test.jpg)!");
+                } else {
+                    Logger::GetInstance().WarningFormat(
+                        "[UIRendererBridge] Solid UI texture created but invalid or wrong size: %dx%d (expected 1x1).",
+                        m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
+                }
+                m_loggedSolidTexture = true;
+            }
+            m_solidTexture.reset();
+            m_solidTextureValid = false;
         }
     }
 }
@@ -490,11 +660,29 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
 
             const auto& frame = m_uiAtlas->GetFrame(frameName);
 
+            // 将像素坐标转换为归一化 UV 坐标
+            // frame.uv 包含像素坐标（x, y, width, height），需要归一化到 [0, 1] 范围
+            Rect normalizedUV = frame.uv;
+            if (m_uiAtlas->GetTexture()) {
+                float texWidth = static_cast<float>(m_uiAtlas->GetTexture()->GetWidth());
+                float texHeight = static_cast<float>(m_uiAtlas->GetTexture()->GetHeight());
+                if (texWidth > 0.0f && texHeight > 0.0f) {
+                    // 如果 UV 值大于1.0，说明是像素坐标，需要归一化
+                    if (normalizedUV.x > 1.0f || normalizedUV.y > 1.0f || 
+                        normalizedUV.width > 1.0f || normalizedUV.height > 1.0f) {
+                        normalizedUV.x /= texWidth;
+                        normalizedUV.y /= texHeight;
+                        normalizedUV.width /= texWidth;
+                        normalizedUV.height /= texHeight;
+                    }
+                }
+            }
+
             UISpriteCommand cmd;
             cmd.transform = CreateRef<Transform>();
             cmd.transform->SetPosition(Vector3(position.x(), position.y(), static_cast<float>(-depth) * 0.001f));
             cmd.texture = m_uiAtlas->GetTexture();
-            cmd.sourceRect = frame.uv;
+            cmd.sourceRect = normalizedUV;
             cmd.tint = tint;
             cmd.layerID = 800;
             cmd.depth = static_cast<float>(depth);
@@ -554,8 +742,19 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                                                             !buttonWidget->IsEnabled(), 
                                                             false);
             
-            Color buttonTint = colorSet.inner;
-            pushSprite("button_base", buttonTint);
+            // 使用圆角矩形渲染按钮背景和边框
+            UIRoundedRectangleCommand rectCmd;
+            rectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+            rectCmd.cornerRadius = 6.0f;  // 圆角半径
+            rectCmd.fillColor = colorSet.inner;
+            rectCmd.strokeColor = colorSet.outline;
+            rectCmd.strokeWidth = 1.0f;
+            rectCmd.filled = true;
+            rectCmd.stroked = true;
+            rectCmd.segments = 8;
+            rectCmd.layerID = 800;
+            rectCmd.depth = static_cast<float>(depth);
+            m_commandBuffer.AddRoundedRectangle(rectCmd);
 
             if (m_defaultFont) {
                 std::string label = buttonWidget->GetLabel();
@@ -595,13 +794,13 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 m_commandBuffer.AddText(textCmd);
             }
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
-                UIDebugRectCommand rectCmd;
-                rectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
-                rectCmd.color = Color(1.0f, 0.5f, 0.0f, 0.4f);
-                rectCmd.thickness = 2.0f;
-                rectCmd.layerID = 999;
-                rectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(rectCmd);
+                UIDebugRectCommand debugRectCmd;
+                debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+                debugRectCmd.color = Color(1.0f, 0.5f, 0.0f, 0.4f);
+                debugRectCmd.thickness = 2.0f;
+                debugRectCmd.layerID = 999;
+                debugRectCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddDebugRect(debugRectCmd);
             }
         } else if (const auto* textFieldWidget = dynamic_cast<const UITextField*>(&widget)) {
             // 使用主题系统获取颜色
@@ -623,8 +822,19 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                                                             !enabled,
                                                             textFieldWidget->IsFocused());
             
-            Color fieldTint = colorSet.inner;
-            pushSprite("button_base", fieldTint);
+            // 使用圆角矩形渲染文本框背景和边框
+            UIRoundedRectangleCommand rectCmd;
+            rectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+            rectCmd.cornerRadius = 6.0f;  // 圆角半径
+            rectCmd.fillColor = colorSet.inner;
+            rectCmd.strokeColor = colorSet.outline;
+            rectCmd.strokeWidth = 1.0f;
+            rectCmd.filled = true;
+            rectCmd.stroked = true;
+            rectCmd.segments = 8;
+            rectCmd.layerID = 800;
+            rectCmd.depth = static_cast<float>(depth);
+            m_commandBuffer.AddRoundedRectangle(rectCmd);
 
             const std::string& actualText = textFieldWidget->GetText();
             std::string drawText = actualText;
@@ -704,14 +914,14 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
 
             // 光标高度应该使用文本高度，而不是整个内容区域的高度
             // contentHeight 是整个widget的内容高度，太大了
-            float caretHeight = textHeight;
-            caretHeight = std::max(caretHeight, 1.0f);
+            float baseCaretHeight = textHeight;
+            baseCaretHeight = std::max(baseCaretHeight, 1.0f);
             const float highlightTop = position.y() + UITextField::kPaddingTop;
             const float textStartY = highlightTop;
 
             if (!caretPositions.empty()) {
                 auto* mutableField = const_cast<UITextField*>(textFieldWidget);
-                mutableField->UpdateCaretMetrics(caretPositions, caretHeight);
+                mutableField->UpdateCaretMetrics(caretPositions, baseCaretHeight);
             }
 
             if (!actualText.empty() && textFieldWidget->HasSelection()) {
@@ -722,7 +932,8 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                     const float selectionWidth = std::max(x1 - x0, 0.0f);
                     if (selectionWidth > 0.5f) {
                         EnsureSolidTexture();
-                        if (m_solidTexture) {
+                        // 确保纹理有效，避免使用错误的纹理
+                        if (m_solidTexture && m_solidTextureValid && m_solidTexture->IsValid()) {
                             UISpriteCommand selectionCmd;
                             selectionCmd.transform = CreateRef<Transform>();
                             selectionCmd.transform->SetPosition(Vector3(x0,
@@ -730,7 +941,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                                                                         static_cast<float>(-depth) * 0.001f));
                             selectionCmd.texture = m_solidTexture;
                             selectionCmd.sourceRect = Rect(0.0f, 0.0f, 1.0f, 1.0f);
-                            selectionCmd.size = Vector2(selectionWidth, caretHeight);
+                            selectionCmd.size = Vector2(selectionWidth, baseCaretHeight);
                             selectionCmd.tint = Color(0.28f, 0.44f, 0.78f, 0.45f);
                             selectionCmd.layerID = 800;
                             selectionCmd.depth = static_cast<float>(depth) - 0.1f;
@@ -761,59 +972,151 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             // 在文本之后渲染光标，确保光标在文本之上（后渲染的会覆盖先渲染的）
             // 注意：isFocused 变量已在上面定义（第538行）
             if (isFocused) {
-                // 计算光标位置
-                size_t caretIndex = textFieldWidget->GetCaretIndex();
-                float caretOffset = 0.0f;
-                
-                // 确保 caretPositions 不为空（应该总是至少有一个元素）
-                if (caretPositions.empty()) {
-                    caretPositions.push_back(0.0f);
-                }
-                
-                // 确保索引在有效范围内
-                size_t clampedIndex = std::min(caretIndex, caretPositions.size() - 1);
-                caretOffset = caretPositions[clampedIndex];
-                
-                // 确保光标纹理已创建
+                // 确保光标纹理已创建（在闪烁检查之外，避免每次闪烁都检查）
                 EnsureSolidTexture();
                 
-                if (m_solidTexture && m_solidTexture->IsValid()) {
-                    UISpriteCommand caretCmd;
-                    caretCmd.transform = CreateRef<Transform>();
-                    // 光标位置：文本起始位置 + 光标偏移
-                    // 文本的左上角位置是 (textStartX, textStartY)
-                    // 光标应该与文本的基线对齐，所以Y坐标与文本Y坐标相同
+                // 计算光标闪烁：每500毫秒切换一次可见性
+                constexpr Uint64 kCursorBlinkIntervalMs = 500;
+                Uint64 currentTicks = SDL_GetTicks();
+                bool cursorVisible = (currentTicks / kCursorBlinkIntervalMs) % 2 == 0;
+                
+                // 使用缓存的有效性标志，避免频繁检查IsValid()导致纹理状态变化
+                // 额外检查纹理是否有效，确保不会使用错误的纹理
+                // 关键：确保m_solidTexture不是UI图集的纹理
+                bool isValidSolidTexture = m_solidTextureValid && 
+                                         m_solidTexture && 
+                                         m_solidTexture->IsValid() &&
+                                         m_solidTexture->GetWidth() == 1 &&
+                                         m_solidTexture->GetHeight() == 1 &&
+                                         (!m_uiAtlas || m_solidTexture != m_uiAtlas->GetTexture());
+                
+                // 如果纹理无效，记录原因（仅一次）
+                if (isFocused && cursorVisible && !isValidSolidTexture) {
+                    static bool loggedInvalidTexture = false;
+                    if (!loggedInvalidTexture) {
+                        if (!m_solidTexture) {
+                            Logger::GetInstance().Warning("[UIRendererBridge] Cursor texture is null!");
+                        } else if (!m_solidTexture->IsValid()) {
+                            Logger::GetInstance().Warning("[UIRendererBridge] Cursor texture is invalid!");
+                        } else if (m_solidTexture->GetWidth() != 1 || m_solidTexture->GetHeight() != 1) {
+                            Logger::GetInstance().WarningFormat(
+                                "[UIRendererBridge] Cursor texture size is %dx%d (expected 1x1)!",
+                                m_solidTexture->GetWidth(), m_solidTexture->GetHeight());
+                        } else if (m_uiAtlas && m_solidTexture == m_uiAtlas->GetTexture()) {
+                            Logger::GetInstance().Warning("[UIRendererBridge] Cursor texture is same as atlas texture!");
+                        }
+                        loggedInvalidTexture = true;
+                    }
+                }
+                
+                if (cursorVisible && isValidSolidTexture) {
+                    // 计算光标位置
+                    size_t caretIndex = textFieldWidget->GetCaretIndex();
+                    float caretOffset = 0.0f;
+                    
+                    // 确保 caretPositions 不为空（应该总是至少有一个元素）
+                    if (caretPositions.empty()) {
+                        caretPositions.push_back(0.0f);
+                    }
+                    
+                    // 确保索引在有效范围内
+                    size_t clampedIndex = std::min(caretIndex, caretPositions.size() - 1);
+                    caretOffset = caretPositions[clampedIndex];
+                    
+                    // 获取实际文本大小，确保光标高度与文本高度完全一致
+                    float actualTextHeight = textHeight;
+                    if (m_defaultFont && !drawText.empty()) {
+                        // 创建临时Text对象获取实际文本大小
+                        auto tempText = CreateRef<Text>(m_defaultFont);
+                        tempText->SetString(drawText);
+                        tempText->SetAlignment(TextAlignment::Left);
+                        tempText->EnsureUpdated();
+                        Vector2 actualTextSize = tempText->GetSize();
+                        if (actualTextSize.y() > 0.0f) {
+                            actualTextHeight = actualTextSize.y();
+                        }
+                    }
+                    
+                    // 光标位置：与文本的上下边界对齐
+                    // TextRenderer的Left对齐：传入position = P（左上角），最终渲染位置 = P + textSize/2（文本中心）
+                    // 所以文本的实际顶部 = 文本中心 - textSize.y/2 = (textStartY + textSize.y/2) - textSize.y/2 = textStartY
+                    // 文本的实际底部 = 文本顶部 + textSize.y = textStartY + textSize.y
+                    // 文本中心 = textStartY + actualTextHeight/2
+                    // 
+                    // SpriteRenderable也以中心为锚点，所以光标中心应该在文本中心位置
+                    // 这样光标顶部 = 光标中心 - caretHeight/2 = (textStartY + actualTextHeight/2) - actualTextHeight/2 = textStartY
+                    // 光标底部 = 光标中心 + caretHeight/2 = (textStartY + actualTextHeight/2) + actualTextHeight/2 = textStartY + actualTextHeight
                     float caretX = textStartX + caretOffset;
-                    float caretY = textStartY; // 与文本的左上角Y坐标对齐
+                    float caretY = textStartY + actualTextHeight * 0.5f; // 光标中心在文本中心位置
                     
                     // 光标尺寸
-                    float caretWidth = std::max(UITextField::kCaretWidth, 3.0f);
-                    float finalCaretHeight = std::min(textHeight, 100.0f);
-                    finalCaretHeight = std::max(finalCaretHeight, 16.0f);
+                    float caretWidth = std::max(UITextField::kCaretWidth, 2.0f);
+                    // 光标高度：使用实际文本高度，确保与文本的上下边界完全对齐
+                    float finalCaretHeight = actualTextHeight;
+                    // 确保最小高度
+                    finalCaretHeight = std::max(finalCaretHeight, 12.0f);
                     
-                    // 使用与文本完全相同的深度值和Z坐标计算方式
+                    // 光标应该使用比文本更靠前的深度值，确保光标始终在文本之上
                     // 文本使用：depth = static_cast<float>(depth)，Z = static_cast<float>(-depth) * 0.001f
                     float textDepth = static_cast<float>(depth);
-                    // 光标使用相同的深度值，但通过渲染顺序确保在文本之上
-                    caretCmd.transform->SetPosition(Vector3(caretX, caretY, static_cast<float>(-textDepth) * 0.001f));
-                    caretCmd.texture = m_solidTexture;
-                    caretCmd.sourceRect = Rect(0.0f, 0.0f, 1.0f, 1.0f);
-                    caretCmd.size = Vector2(caretWidth, finalCaretHeight);
-                    caretCmd.tint = Color(0.0f, 1.0f, 1.0f, 1.0f); // 青色，更明显
-                    caretCmd.layerID = 800;
-                    caretCmd.depth = textDepth; // 使用与文本相同的深度值
-                    m_commandBuffer.AddSprite(caretCmd);
+                    // 光标使用更小的深度值（更靠前），确保在文本之上
+                    float caretDepth = textDepth - 0.01f;
                     
-                    Logger::GetInstance().InfoFormat(
-                        "[UIRendererBridge] Rendering caret for %s: index=%zu offset=%.1f pos=(%.1f,%.1f) size=(%.1f,%.1f) depth=%.3f",
-                        textFieldWidget->GetId().c_str(),
-                        caretIndex,
-                        caretOffset,
-                        caretX,
-                        caretY,
-                        caretWidth,
-                        finalCaretHeight,
-                        textDepth);
+                    // 根据背景颜色自动反色光标
+                    // 计算背景颜色的亮度（使用相对亮度公式）
+                    const Color& bgColor = colorSet.inner;
+                    float luminance = 0.299f * bgColor.r + 0.587f * bgColor.g + 0.114f * bgColor.b;
+                    // 如果背景较亮（亮度 > 0.5），使用黑色光标；否则使用白色光标
+                    Color caretColor = (luminance > 0.5f) 
+                        ? Color(0.0f, 0.0f, 0.0f, 1.0f)  // 黑色光标（浅色背景）
+                        : Color(1.0f, 1.0f, 1.0f, 1.0f); // 白色光标（深色背景）
+                    
+                    // 最终验证：确保纹理确实是1x1的纯色纹理，而不是UI图集的纹理
+                    // 通过比较OpenGL纹理ID和指针来确保它们是不同的纹理对象
+                    bool isSameAsAtlas = false;
+                    GLuint solidTexID = 0;
+                    GLuint atlasTexID = 0;
+                    
+                    if (m_solidTexture) {
+                        solidTexID = m_solidTexture->GetID();
+                    }
+                    if (m_uiAtlas && m_uiAtlas->GetTexture()) {
+                        atlasTexID = m_uiAtlas->GetTexture()->GetID();
+                        // 检查指针和OpenGL ID
+                        if (m_solidTexture == m_uiAtlas->GetTexture()) {
+                            isSameAsAtlas = true;
+                        } else if (solidTexID != 0 && atlasTexID != 0 && solidTexID == atlasTexID) {
+                            isSameAsAtlas = true;
+                        }
+                    }
+                    
+                    if (isSameAsAtlas) {
+                        // 这是严重错误：m_solidTexture的OpenGL ID与UI图集的纹理ID相同
+                        static bool loggedTextureIDError = false;
+                        if (!loggedTextureIDError) {
+                            Logger::GetInstance().Error(
+                                "[UIRendererBridge] Cursor texture has same ID as atlas texture! Skipping render.");
+                            loggedTextureIDError = true;
+                        }
+                        // 强制重置m_solidTexture，尝试在下一帧重新创建
+                        m_solidTexture.reset();
+                        m_solidTextureValid = false;
+                    } else if (!m_solidTexture || !m_solidTexture->IsValid() || 
+                               m_solidTexture->GetWidth() != 1 || m_solidTexture->GetHeight() != 1) {
+                        // 纹理无效或尺寸不正确（已在上面记录，这里跳过）
+                    } else {
+                        // 纹理有效，创建光标命令
+                        UISpriteCommand caretCmd;
+                        caretCmd.transform = CreateRef<Transform>();
+                        caretCmd.transform->SetPosition(Vector3(caretX, caretY, static_cast<float>(-caretDepth) * 0.001f));
+                        caretCmd.texture = m_solidTexture;
+                        caretCmd.sourceRect = Rect(0.0f, 0.0f, 1.0f, 1.0f);
+                        caretCmd.size = Vector2(caretWidth, finalCaretHeight);
+                        caretCmd.tint = caretColor;
+                        caretCmd.layerID = 800;
+                        caretCmd.depth = caretDepth;
+                        m_commandBuffer.AddSprite(caretCmd);
+                    }
                 }
             }
 
@@ -824,13 +1127,13 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 isFocused ? "true" : "false");
 
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
-                UIDebugRectCommand rectCmd;
-                rectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
-                rectCmd.color = Color(0.4f, 0.8f, 0.4f, 0.35f);
-                rectCmd.thickness = 2.0f;
-                rectCmd.layerID = 999;
-                rectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(rectCmd);
+                UIDebugRectCommand debugRectCmd;
+                debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+                debugRectCmd.color = Color(0.4f, 0.8f, 0.4f, 0.35f);
+                debugRectCmd.thickness = 2.0f;
+                debugRectCmd.layerID = 999;
+                debugRectCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddDebugRect(debugRectCmd);
             }
         }
 
