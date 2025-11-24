@@ -512,6 +512,33 @@ void UIInputRouter::DispatchMouseEvents() {
         }
     }
 
+    // 处理鼠标移动事件（特别是拖拽时）
+    for (auto& moveEvent : m_mouseMoveQueue) {
+        UIWidget* receiver = nullptr;
+        
+        // 如果正在捕获鼠标（比如拖拽滑块），将移动事件发送给捕获的控件
+        if (m_capturedWidget) {
+            receiver = m_capturedWidget;
+        } else if (m_hoverWidget) {
+            receiver = m_hoverWidget;
+        }
+        
+        if (receiver) {
+            if (ShouldLog()) {
+                Logger::GetInstance().DebugFormat("[UIInputRouter] MouseMove pos=(%.2f, %.2f) delta=(%.2f, %.2f) target=%s",
+                                                  moveEvent.position.x(),
+                                                  moveEvent.position.y(),
+                                                  moveEvent.delta.x(),
+                                                  moveEvent.delta.y(),
+                                                  receiver->GetId().c_str());
+            }
+            receiver->OnMouseMove(moveEvent.position, moveEvent.delta);
+        }
+    }
+    
+    // 清空已处理的按钮事件队列
+    m_mouseButtonQueue.clear();
+
     for (auto& wheelEvent : m_mouseWheelQueue) {
         if (m_hoverWidget) {
             if (ShouldLog()) {
@@ -523,6 +550,9 @@ void UIInputRouter::DispatchMouseEvents() {
             m_hoverWidget->OnMouseWheel(wheelEvent.offset);
         }
     }
+    
+    // 清空已处理的事件队列
+    m_mouseWheelQueue.clear();
 }
 
 void UIInputRouter::DispatchKeyboardEvents() {

@@ -305,6 +305,8 @@ void UIWidget::OnMouseEnter() {}
 
 void UIWidget::OnMouseLeave() {}
 
+void UIWidget::OnMouseMove(const Vector2&, const Vector2&) {}
+
 void UIWidget::OnMouseButton(uint8_t, bool, const Vector2&) {}
 
 void UIWidget::OnMouseWheel(const Vector2&) {}

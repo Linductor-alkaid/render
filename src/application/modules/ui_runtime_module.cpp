@@ -14,6 +14,12 @@
 #include "render/ui/ui_theme.h"
 #include "render/ui/widgets/ui_button.h"
 #include "render/ui/widgets/ui_text_field.h"
+#include "render/ui/widgets/ui_checkbox.h"
+#include "render/ui/widgets/ui_toggle.h"
+#include "render/ui/widgets/ui_slider.h"
+#include "render/ui/widgets/ui_radio_button.h"
+#include "render/ui/widgets/ui_color_picker.h"
+#include "render/ui/widgets/ui_toggle.h"
 
 namespace Render::Application {
 
@@ -85,6 +91,11 @@ void UIRuntimeModule::OnPreFrame(const FrameUpdateArgs& frame, AppContext& ctx) 
     }
 
     EnsureSampleWidgets();
+    
+    // 更新所有 UIToggle 的动画
+    if (m_widgetTree && m_widgetTree->GetRoot()) {
+        UpdateToggleAnimations(*m_widgetTree->GetRoot(), frame.deltaTime);
+    }
 
     if (m_layoutContext) {
         const auto& canvasState = m_canvas->GetState();
@@ -269,12 +280,98 @@ void UIRuntimeModule::EnsureSampleWidgets() {
         buttonRow->AddChild(std::move(button1));
         buttonRow->AddChild(std::move(button2));
 
+        // 创建高级控件演示区域
+        auto advancedControlsRow = std::make_unique<UI::UIWidget>("ui.panel.advancedControls");
+        advancedControlsRow->SetPreferredSize(Vector2(0.0f, 0.0f)); // 自适应高度
+        advancedControlsRow->SetLayoutMode(UI::UILayoutMode::Flex);
+        advancedControlsRow->SetLayoutDirection(UI::UILayoutDirection::Vertical);
+        advancedControlsRow->SetJustifyContent(UI::UIFlexJustifyContent::FlexStart);
+        advancedControlsRow->SetAlignItems(UI::UIFlexAlignItems::Stretch);
+        advancedControlsRow->SetSpacing(12.0f);
+
+        // Checkbox 演示
+        auto checkbox = std::make_unique<UI::UICheckBox>("ui.panel.checkbox");
+        checkbox->SetLabel("Enable Feature");
+        checkbox->SetState(UI::UICheckBox::State::Checked);
+        checkbox->SetOnChanged([](UI::UICheckBox& cb, bool checked) {
+            Logger::GetInstance().InfoFormat("[UIRuntimeModule] CheckBox '%s' changed to %s",
+                                            cb.GetId().c_str(), checked ? "checked" : "unchecked");
+        });
+
+        // Toggle 演示
+        auto toggle = std::make_unique<UI::UIToggle>("ui.panel.toggle");
+        toggle->SetLabel("Dark Mode");
+        toggle->SetToggled(false); // 初始状态为关闭
+        toggle->SetOnChanged([](UI::UIToggle& tg, bool toggled) {
+            Logger::GetInstance().InfoFormat("[UIRuntimeModule] Toggle '%s' changed to %s",
+                                            tg.GetId().c_str(), toggled ? "on" : "off");
+        });
+
+        // Slider 演示
+        auto slider = std::make_unique<UI::UISlider>("ui.panel.slider");
+        slider->SetLabel("Volume");
+        slider->SetMinValue(0.0f);
+        slider->SetMaxValue(100.0f);
+        slider->SetValue(50.0f);
+        slider->SetStep(1.0f);
+        slider->SetShowValue(true);
+        slider->SetOnChanged([](UI::UISlider& sl, float value) {
+            Logger::GetInstance().InfoFormat("[UIRuntimeModule] Slider '%s' value changed to %.2f",
+                                            sl.GetId().c_str(), value);
+        });
+
+        // RadioButton 组演示（创建组并保存为成员变量）
+        if (!m_sampleRadioGroup) {
+            m_sampleRadioGroup = std::make_unique<UI::UIRadioButtonGroup>();
+        }
+        auto radio1 = std::make_unique<UI::UIRadioButton>("ui.panel.radio1");
+        radio1->SetLabel("Option 1");
+        radio1->SetGroup(m_sampleRadioGroup.get());
+        radio1->SetSelected(true);
+        
+        auto radio2 = std::make_unique<UI::UIRadioButton>("ui.panel.radio2");
+        radio2->SetLabel("Option 2");
+        radio2->SetGroup(m_sampleRadioGroup.get());
+        
+        auto radio3 = std::make_unique<UI::UIRadioButton>("ui.panel.radio3");
+        radio3->SetLabel("Option 3");
+        radio3->SetGroup(m_sampleRadioGroup.get());
+
+        // ColorPicker 演示
+        auto colorPicker = std::make_unique<UI::UIColorPicker>("ui.panel.colorPicker");
+        colorPicker->SetColor(Color(0.2f, 0.6f, 0.9f, 1.0f));
+        colorPicker->SetShowPreview(true);
+        colorPicker->SetShowAlpha(false);
+        colorPicker->SetOnChanged([](UI::UIColorPicker& cp, const Color& color) {
+            Logger::GetInstance().InfoFormat("[UIRuntimeModule] ColorPicker '%s' color changed to (%.2f, %.2f, %.2f, %.2f)",
+                                            cp.GetId().c_str(), color.r, color.g, color.b, color.a);
+        });
+
+        advancedControlsRow->AddChild(std::move(checkbox));
+        advancedControlsRow->AddChild(std::move(toggle));
+        advancedControlsRow->AddChild(std::move(slider));
+        advancedControlsRow->AddChild(std::move(radio1));
+        advancedControlsRow->AddChild(std::move(radio2));
+        advancedControlsRow->AddChild(std::move(radio3));
+        advancedControlsRow->AddChild(std::move(colorPicker));
+
         // 组装 UI 树
         panel->AddChild(std::move(textField));
         panel->AddChild(std::move(gridDemo));
         panel->AddChild(std::move(buttonRow));
+        panel->AddChild(std::move(advancedControlsRow));
         root->AddChild(std::move(panel));
     }
+}
+
+void UIRuntimeModule::UpdateToggleAnimations(UI::UIWidget& widget, float deltaTime) {
+    if (auto* toggle = dynamic_cast<UI::UIToggle*>(&widget)) {
+        toggle->UpdateAnimation(deltaTime);
+    }
+    
+    widget.ForEachChild([&](UI::UIWidget& child) {
+        UpdateToggleAnimations(child, deltaTime);
+    });
 }
 
 void UIRuntimeModule::Shutdown(AppContext& ctx) {

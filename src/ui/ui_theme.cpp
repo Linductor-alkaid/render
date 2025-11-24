@@ -49,28 +49,28 @@ const UIThemeColorSet& UITheme::GetWidgetColorSet(
 UITheme UITheme::CreateDefault() {
     UITheme theme;
     
-    // 按钮颜色
-    theme.button.normal.inner = Color(0.94f, 0.94f, 0.98f, 1.0f);
+    // 按钮颜色（圆角控件默认填充颜色为灰白色）
+    theme.button.normal.inner = Color(0.92f, 0.92f, 0.92f, 1.0f);  // 灰白色
     theme.button.normal.text = Color(0.2f, 0.2f, 0.2f, 1.0f);
-    theme.button.hover.inner = Color(0.98f, 0.98f, 1.0f, 1.0f);
+    theme.button.hover.inner = Color(0.96f, 0.96f, 0.96f, 1.0f);  // 稍亮的灰白色
     theme.button.hover.text = Color(0.2f, 0.2f, 0.2f, 1.0f);
-    theme.button.pressed.inner = Color(0.82f, 0.85f, 0.95f, 1.0f);
+    theme.button.pressed.inner = Color(0.85f, 0.85f, 0.85f, 1.0f);  // 稍暗的灰白色
     theme.button.pressed.text = Color(0.15f, 0.15f, 0.15f, 1.0f);
     theme.button.disabled.inner = Color(0.7f, 0.7f, 0.7f, 1.0f);
     theme.button.disabled.text = Color(0.5f, 0.5f, 0.5f, 1.0f);
     
-    // 文本输入框颜色
-    theme.textField.normal.inner = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    // 文本输入框颜色（圆角控件默认填充颜色为灰白色）
+    theme.textField.normal.inner = Color(0.92f, 0.92f, 0.92f, 1.0f);  // 灰白色
     theme.textField.normal.text = Color(0.2f, 0.2f, 0.2f, 1.0f);
-    theme.textField.hover.inner = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.textField.hover.inner = Color(0.95f, 0.95f, 0.95f, 1.0f);  // 稍亮的灰白色
     theme.textField.hover.text = Color(0.2f, 0.2f, 0.2f, 1.0f);
-    theme.textField.active.inner = Color(0.95f, 0.98f, 1.0f, 1.0f);
+    theme.textField.active.inner = Color(0.98f, 0.98f, 0.98f, 1.0f);  // 更亮的灰白色
     theme.textField.active.text = Color(0.1f, 0.1f, 0.1f, 1.0f);
     theme.textField.disabled.inner = Color(0.9f, 0.9f, 0.9f, 1.0f);
     theme.textField.disabled.text = Color(0.6f, 0.6f, 0.6f, 1.0f);
     
-    // 面板颜色
-    theme.panel.normal.inner = Color(0.95f, 0.95f, 0.95f, 1.0f);
+    // 面板颜色（圆角控件默认填充颜色为灰白色）
+    theme.panel.normal.inner = Color(0.92f, 0.92f, 0.92f, 1.0f);  // 灰白色
     theme.panel.normal.text = Color(0.2f, 0.2f, 0.2f, 1.0f);
     
     // 菜单颜色

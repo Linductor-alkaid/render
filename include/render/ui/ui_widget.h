@@ -127,6 +127,7 @@ protected:
     virtual void OnFocusLost();
     virtual void OnMouseEnter();
     virtual void OnMouseLeave();
+    virtual void OnMouseMove(const Vector2& position, const Vector2& delta);
     virtual void OnMouseButton(uint8_t button, bool pressed, const Vector2& position);
     virtual void OnMouseWheel(const Vector2& offset);
     virtual void OnKey(int scancode, bool pressed, bool repeat);

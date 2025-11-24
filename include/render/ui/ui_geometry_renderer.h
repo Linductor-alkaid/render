@@ -4,11 +4,15 @@
 #include "render/ui/ui_render_commands.h"
 #include <vector>
 #include <memory>
+#include <cstdint>
 
 namespace Render {
 class Renderer;
 class Shader;
 class Texture;
+class Material;
+class MeshRenderable;
+class SpriteRenderable;
 }
 
 namespace Render::UI {
@@ -67,6 +71,11 @@ public:
      */
     void ResetSpritePool();
 
+    /**
+     * @brief 重置网格对象池索引（在每帧开始时调用）
+     */
+    void ResetMeshPool();
+
 private:
     /**
      * @brief 生成贝塞尔曲线顶点
@@ -84,7 +93,12 @@ private:
     std::vector<Vector2> GenerateRoundedRectangle(const Rect& rect, float cornerRadius, int segments);
 
     /**
-     * @brief 使用Sprite渲染填充的多边形
+     * @brief 三角剖分多边形（Ear Clipping算法）
+     */
+    std::vector<uint32_t> TriangulatePolygon(const std::vector<Vector2>& vertices);
+
+    /**
+     * @brief 使用Mesh渲染填充的多边形
      */
     void RenderFilledPolygon(const std::vector<Vector2>& vertices, const Color& color, float depth, int layerID, const Matrix4& view, const Matrix4& projection, Render::Renderer* renderer);
 
@@ -103,14 +117,23 @@ private:
      */
     Render::SpriteRenderable* AcquireSpriteRenderable();
 
+    /**
+     * @brief 从对象池获取或创建 MeshRenderable 对象
+     */
+    Render::MeshRenderable* AcquireMeshRenderable();
+
     bool m_initialized = false;
     Ref<Render::Texture> m_solidTexture;
+    Ref<Render::Material> m_solidMaterial;  // 用于填充多边形的材质
     bool m_loggedTextureError = false;
     
-    // 对象池：存储 SpriteRenderable 对象，确保它们在 FlushRenderQueue 处理前保持有效
-    // 注意：这些对象会在每次渲染时重用，避免频繁分配/释放
+    // 对象池：存储 SpriteRenderable 对象，用于描边和线段渲染
     std::vector<std::unique_ptr<Render::SpriteRenderable>> m_spritePool;
     size_t m_spritePoolIndex = 0;  // 当前使用的对象索引
+    
+    // 对象池：存储 MeshRenderable 对象，用于填充多边形
+    std::vector<std::unique_ptr<Render::MeshRenderable>> m_meshPool;
+    size_t m_meshPoolIndex = 0;  // 当前使用的对象索引
 };
 
 } // namespace Render::UI

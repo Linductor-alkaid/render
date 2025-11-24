@@ -9,6 +9,13 @@
  * - 嵌套布局：Flex 布局中嵌套 Grid 布局
  * - 控件交互：按钮点击、文本输入等基本交互功能
  * 
+ * 本示例还展示了新增的高级控件：
+ * - UICheckBox：复选框控件（支持选中/未选中/不确定状态）
+ * - UIToggle：开关控件（支持动画过渡）
+ * - UISlider：滑块控件（支持水平/垂直，支持拖拽交互）
+ * - UIRadioButton：单选按钮控件（支持单选组）
+ * - UIColorPicker：颜色选择器控件（支持RGB颜色预览）
+ * 
  * 布局系统采用两阶段设计（参考 Blender 实现）：
  * - 测量阶段：计算所有节点的理想尺寸
  * - 排列阶段：根据可用空间和布局属性计算最终位置和尺寸
@@ -113,6 +120,12 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("[UIShowcase] - Demonstrates Flex and Grid layout systems");
     Logger::GetInstance().Info("[UIShowcase] - Two-phase layout algorithm (Measure + Arrange)");
     Logger::GetInstance().Info("[UIShowcase] - Nested layout support");
+    Logger::GetInstance().Info("[UIShowcase] - Advanced UI Controls:");
+    Logger::GetInstance().Info("[UIShowcase]   * UICheckBox (Checkbox with 3-state support)");
+    Logger::GetInstance().Info("[UIShowcase]   * UIToggle (Toggle switch with animation)");
+    Logger::GetInstance().Info("[UIShowcase]   * UISlider (Horizontal/Vertical slider with drag)");
+    Logger::GetInstance().Info("[UIShowcase]   * UIRadioButton (Radio button with group)");
+    Logger::GetInstance().Info("[UIShowcase]   * UIColorPicker (Color picker with RGB preview)");
     Logger::GetInstance().Info("[UIShowcase] Press ESC or close the window to exit.");
 
     while (running) {

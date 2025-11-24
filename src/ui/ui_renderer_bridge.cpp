@@ -24,6 +24,11 @@
 #include "render/ui/ui_widget_tree.h"
 #include "render/ui/widgets/ui_button.h"
 #include "render/ui/widgets/ui_text_field.h"
+#include "render/ui/widgets/ui_checkbox.h"
+#include "render/ui/widgets/ui_toggle.h"
+#include "render/ui/widgets/ui_slider.h"
+#include "render/ui/widgets/ui_radio_button.h"
+#include "render/ui/widgets/ui_color_picker.h"
 #include "render/uniform_manager.h"
 
 namespace Render::UI {
@@ -39,6 +44,33 @@ constexpr const char* kUniformCursor = "uUiCursor";
 constexpr const char* kDefaultFontName = "ui.default";
 constexpr const char* kDefaultFontPath = "assets/fonts/NotoSansSC-Regular.ttf";
 constexpr float kDefaultFontSize = 28.0f;
+
+// 计算颜色的相对亮度（使用标准公式：0.299*R + 0.587*G + 0.114*B）
+float GetColorLuminance(const Color& color) {
+    return 0.299f * color.r + 0.587f * color.g + 0.114f * color.b;
+}
+
+// 获取选中颜色：默认黑色，但如果底部颜色太深则替换为较亮的颜色
+Color GetSelectedColor(const Color& backgroundColor) {
+    const Color defaultColor(0.0f, 0.0f, 0.0f, 1.0f);  // 默认黑色
+    const float backgroundColorLuminance = GetColorLuminance(backgroundColor);
+    const float threshold = 0.3f;  // 亮度阈值，低于此值认为颜色太深
+    
+    if (backgroundColorLuminance < threshold) {
+        // 颜色太深，使用较亮的颜色（基于背景色亮度调整）
+        // 计算一个比背景色更亮的颜色，但保持一定的对比度
+        float targetLuminance = std::max(0.7f, backgroundColorLuminance + 0.4f);
+        float scale = targetLuminance / (backgroundColorLuminance + 0.001f);  // 避免除零
+        return Color(
+            std::min(1.0f, backgroundColor.r * scale),
+            std::min(1.0f, backgroundColor.g * scale),
+            std::min(1.0f, backgroundColor.b * scale),
+            1.0f
+        );
+    }
+    
+    return defaultColor;
+}
 
 void LogWidgetRecursive(const UIWidget& widget, int depth, size_t& totalCount, size_t& visibleCount) {
     ++totalCount;
@@ -104,6 +136,7 @@ void UIRendererBridge::PrepareFrame(const Render::Application::FrameUpdateArgs& 
 
     // 重置几何图形渲染器的对象池索引，准备新的一帧
     m_geometryRenderer.ResetSpritePool();
+    m_geometryRenderer.ResetMeshPool();
 
     UploadPerFrameUniforms(frame, canvas, ctx);
 }
@@ -342,6 +375,9 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
             SpriteRenderable sprite;
             sprite.SetTransform(cmd.sprite.transform);
             sprite.SetLayerID(cmd.sprite.layerID);
+            // 将 depth 值转换为 RenderPriority，确保正确的渲染顺序
+            // depth 值越大，RenderPriority 越小（先渲染），depth 值越小，RenderPriority 越大（后渲染）
+            sprite.SetRenderPriority(static_cast<int32_t>(-cmd.sprite.depth * 1000.0f));
             sprite.SetTexture(renderTexture);
             sprite.SetSourceRect(cmd.sprite.sourceRect);
             sprite.SetSize(cmd.sprite.size);
@@ -1333,6 +1369,674 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 UIDebugRectCommand debugRectCmd;
                 debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
                 debugRectCmd.color = Color(0.4f, 0.8f, 0.4f, 0.35f);
+                debugRectCmd.thickness = 2.0f;
+                debugRectCmd.layerID = 999;
+                debugRectCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddDebugRect(debugRectCmd);
+            }
+        } else if (const auto* checkboxWidget = dynamic_cast<const UICheckBox*>(&widget)) {
+            // 使用主题系统获取颜色
+            const UITheme* theme = nullptr;
+            if (m_themeManager) {
+                theme = &m_themeManager->GetCurrentTheme();
+            }
+            
+            const bool enabled = checkboxWidget->IsEnabled();
+            const bool hovered = checkboxWidget->IsHovered();
+            const bool checked = checkboxWidget->IsChecked();
+            const bool indeterminate = checkboxWidget->GetState() == UICheckBox::State::Indeterminate;
+            
+            // Checkbox 使用 button 主题颜色
+            const UIThemeColorSet& colorSet = theme
+                ? theme->GetWidgetColorSet("button",
+                                          hovered,
+                                          false,  // pressed
+                                          !enabled,
+                                          false)  // active
+                : UITheme::CreateDefault().GetWidgetColorSet("button",
+                                                            hovered,
+                                                            false,
+                                                            !enabled,
+                                                            false);
+            
+            // 计算复选框框的大小（正方形，高度为控件高度）
+            const float checkboxSize = size.y();
+            const float checkboxPadding = 4.0f;
+            const float checkboxBoxSize = checkboxSize - checkboxPadding * 2.0f;
+            
+            // 根据标签位置确定复选框框的位置
+            float checkboxX, checkboxY;
+            float labelX, labelY;
+            
+            if (checkboxWidget->IsLabelOnLeft()) {
+                // 标签在左侧，复选框在右侧
+                checkboxX = position.x() + size.x() - checkboxSize + checkboxPadding;
+                checkboxY = position.y() + checkboxPadding;
+                labelX = position.x() + checkboxPadding;
+                labelY = position.y() + size.y() * 0.5f;
+            } else {
+                // 标签在右侧，复选框在左侧（默认）
+                checkboxX = position.x() + checkboxPadding;
+                checkboxY = position.y() + checkboxPadding;
+                labelX = position.x() + checkboxSize + checkboxPadding * 2.0f;
+                labelY = position.y() + size.y() * 0.5f;
+            }
+            
+            // 绘制复选框框（圆角矩形）
+            UIRoundedRectangleCommand boxCmd;
+            boxCmd.rect = Rect(checkboxX, checkboxY, checkboxBoxSize, checkboxBoxSize);
+            boxCmd.cornerRadius = 4.0f;
+            boxCmd.fillColor = colorSet.inner;
+            boxCmd.strokeColor = colorSet.outline;
+            boxCmd.strokeWidth = 1.5f;
+            boxCmd.filled = true;
+            boxCmd.stroked = true;
+            boxCmd.segments = 16; // 增加分段数
+            boxCmd.layerID = 800;
+            boxCmd.depth = static_cast<float>(depth) + 0.01f; // 框在底层（更大的depth值表示更靠后）
+            m_commandBuffer.AddRoundedRectangle(boxCmd);
+            
+            // 绘制选中标记或不确定标记（确保在框之上）
+            if (indeterminate) {
+                // 不确定状态：绘制一条水平线
+                const float lineY = checkboxY + checkboxBoxSize * 0.5f;
+                const float lineWidth = checkboxBoxSize * 0.6f;
+                const float lineHeight = 3.0f; // 稍微加粗
+                const float lineX = checkboxX + (checkboxBoxSize - lineWidth) * 0.5f;
+                
+                UIRectangleCommand lineCmd;
+                lineCmd.rect = Rect(lineX, lineY - lineHeight * 0.5f, lineWidth, lineHeight);
+                lineCmd.fillColor = colorSet.text;
+                lineCmd.strokeColor = Color(0, 0, 0, 0);
+                lineCmd.strokeWidth = 0.0f;
+                lineCmd.filled = true;
+                lineCmd.stroked = false;
+                lineCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+                lineCmd.depth = static_cast<float>(depth) - 0.01f; // 标记在框之上（更小的depth值表示更靠前）
+                m_commandBuffer.AddRectangle(lineCmd);
+            } else if (checked) {
+                // 选中状态：绘制对勾（使用两条线段组成，加粗）
+                const float checkSize = checkboxBoxSize * 0.6f;
+                const float checkX = checkboxX + checkboxBoxSize * 0.5f;
+                const float checkY = checkboxY + checkboxBoxSize * 0.5f;
+                const float lineWidth = 3.0f; // 加粗对勾
+                
+                // 对勾的第一段（左下到中间）
+                Vector2 p1(checkX - checkSize * 0.3f, checkY);
+                Vector2 p2(checkX - checkSize * 0.1f, checkY + checkSize * 0.3f);
+                UILineCommand line1Cmd;
+                line1Cmd.start = p1;
+                line1Cmd.end = p2;
+                line1Cmd.width = lineWidth;
+                line1Cmd.color = colorSet.text;
+                line1Cmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+                line1Cmd.depth = static_cast<float>(depth) - 0.01f; // 标记在框之上（更小的depth值表示更靠前）
+                m_commandBuffer.AddLine(line1Cmd);
+                
+                // 对勾的第二段（中间到右上）
+                Vector2 p3(checkX + checkSize * 0.3f, checkY - checkSize * 0.2f);
+                UILineCommand line2Cmd;
+                line2Cmd.start = p2;
+                line2Cmd.end = p3;
+                line2Cmd.width = lineWidth;
+                line2Cmd.color = colorSet.text;
+                line2Cmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+                line2Cmd.depth = static_cast<float>(depth) - 0.01f; // 标记在框之上（更小的depth值表示更靠前）
+                m_commandBuffer.AddLine(line2Cmd);
+            }
+            
+            // 绘制标签文本
+            if (m_defaultFont && !checkboxWidget->GetLabel().empty()) {
+                std::string label = checkboxWidget->GetLabel();
+                
+                auto tempText = CreateRef<Text>(m_defaultFont);
+                tempText->SetString(label);
+                tempText->SetAlignment(TextAlignment::Left);
+                tempText->EnsureUpdated();
+                Vector2 textSize = tempText->GetSize();
+                
+                UITextCommand textCmd;
+                textCmd.transform = CreateRef<Transform>();
+                float textY = labelY - textSize.y() * 0.5f;
+                textCmd.transform->SetPosition(Vector3(labelX,
+                                                       textY,
+                                                       static_cast<float>(-depth) * 0.001f));
+                textCmd.text = label;
+                textCmd.font = m_defaultFont;
+                textCmd.color = colorSet.text;
+                textCmd.offset = Vector2(0.0f, 0.0f); // Left对齐
+                textCmd.layerID = 800;
+                textCmd.depth = static_cast<float>(depth);
+                
+                m_commandBuffer.AddText(textCmd);
+            }
+            
+            if (m_debugConfig && m_debugConfig->drawDebugRects) {
+                UIDebugRectCommand debugRectCmd;
+                debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+                debugRectCmd.color = Color(0.8f, 0.4f, 0.8f, 0.35f);
+                debugRectCmd.thickness = 2.0f;
+                debugRectCmd.layerID = 999;
+                debugRectCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddDebugRect(debugRectCmd);
+            }
+        } else if (const auto* toggleWidget = dynamic_cast<const UIToggle*>(&widget)) {
+            // 使用主题系统获取颜色
+            const UITheme* theme = nullptr;
+            if (m_themeManager) {
+                theme = &m_themeManager->GetCurrentTheme();
+            }
+            
+            const bool widgetEnabled = toggleWidget->IsEnabled();
+            const bool toggled = toggleWidget->IsToggled();
+            const bool hovered = toggleWidget->IsHovered();
+            const float animationProgress = toggleWidget->GetAnimationProgress();
+            
+            // Toggle 使用 button 主题颜色
+            const UIThemeColorSet& colorSet = theme
+                ? theme->GetWidgetColorSet("button",
+                                          hovered,
+                                          false,  // pressed
+                                          !widgetEnabled,
+                                          toggled)  // active (使用toggled状态)
+                : UITheme::CreateDefault().GetWidgetColorSet("button",
+                                                            hovered,
+                                                            false,
+                                                            !widgetEnabled,
+                                                            toggled);
+            
+            // 计算开关轨道的大小和位置（优化尺寸比例）
+            const float trackHeight = size.y() * 0.7f; // 轨道高度为控件高度的70%（更粗一些）
+            const float trackWidth = size.y() * 2.0f;  // 轨道宽度为控件高度的2倍（更宽一些）
+            const float trackPadding = (size.y() - trackHeight) * 0.5f;
+            
+            // 根据标签位置确定轨道的位置
+            float trackX, trackY;
+            float labelX, labelY;
+            
+            if (toggleWidget->IsLabelOnLeft()) {
+                // 标签在左侧，轨道在右侧
+                trackX = position.x() + size.x() - trackWidth - trackPadding;
+                trackY = position.y() + trackPadding;
+                labelX = position.x() + trackPadding;
+                labelY = position.y() + size.y() * 0.5f;
+            } else {
+                // 标签在右侧，轨道在左侧（默认）
+                trackX = position.x() + trackPadding;
+                trackY = position.y() + trackPadding;
+                labelX = position.x() + trackWidth + trackPadding * 3.0f;
+                labelY = position.y() + size.y() * 0.5f;
+            }
+            
+            // 绘制开关轨道背景（圆角矩形，胶囊形）
+            // 根据动画进度平滑混合颜色：关闭时浅灰色，开启时使用选中颜色
+            Color trackColor;
+            float t = animationProgress; // 直接使用动画进度
+            Color offColor = Color(0.85f, 0.85f, 0.85f, 1.0f); // 关闭状态：浅灰色
+            // 开启状态：默认黑色，但如果底部颜色太深则替换为较亮的颜色
+            Color onColor = GetSelectedColor(colorSet.inner);
+            trackColor = Color(
+                offColor.r * (1.0f - t) + onColor.r * t,
+                offColor.g * (1.0f - t) + onColor.g * t,
+                offColor.b * (1.0f - t) + onColor.b * t,
+                offColor.a * (1.0f - t) + onColor.a * t
+            );
+            
+            UIRoundedRectangleCommand trackCmd;
+            trackCmd.rect = Rect(trackX, trackY, trackWidth, trackHeight);
+            trackCmd.cornerRadius = trackHeight * 0.5f; // 完全圆角，形成胶囊形
+            trackCmd.fillColor = trackColor;
+            trackCmd.strokeColor = hovered ? Color(0.5f, 0.5f, 0.5f, 1.0f) : Color(0.7f, 0.7f, 0.7f, 1.0f); // 灰色描边，悬停时稍深
+            trackCmd.strokeWidth = hovered ? 1.5f : 1.0f;
+            trackCmd.filled = true;
+            trackCmd.stroked = true;
+            trackCmd.segments = 32; // 增加分段数，减少透明线
+            trackCmd.layerID = 800;
+            trackCmd.depth = static_cast<float>(depth) + 0.01f; // 轨道在底层（更大的depth值表示更靠后）
+            m_commandBuffer.AddRoundedRectangle(trackCmd);
+            
+            // 绘制开关按钮（圆形滑块，优化大小和颜色）
+            const float buttonRadius = trackHeight * 0.45f; // 按钮半径为轨道高度的45%（更大一些）
+            const float buttonPadding = 2.0f; // 固定内边距
+            const float buttonTravel = trackWidth - buttonRadius * 2.0f - buttonPadding * 2.0f;
+            
+            // 根据动画进度计算按钮位置（使用缓动效果）
+            float buttonX = trackX + buttonPadding + buttonRadius + buttonTravel * animationProgress;
+            float buttonY = trackY + trackHeight * 0.5f;
+            
+            // 按钮颜色：白色，与轨道形成对比
+            Color buttonColor = Color(1.0f, 1.0f, 1.0f, 1.0f); // 白色按钮
+            if (hovered) {
+                buttonColor = Color(0.98f, 0.98f, 0.98f, 1.0f); // 悬停时稍微变暗
+            }
+            
+            // 绘制按钮阴影（轻微偏移的深色圆）
+            if (animationProgress > 0.1f && animationProgress < 0.9f) {
+                UICircleCommand shadowCmd;
+                shadowCmd.center = Vector2(buttonX + 1.0f, buttonY + 1.0f);
+                shadowCmd.radius = buttonRadius * 0.95f;
+                shadowCmd.fillColor = Color(0.0f, 0.0f, 0.0f, 0.15f); // 半透明黑色阴影
+                shadowCmd.strokeColor = Color(0, 0, 0, 0);
+                shadowCmd.strokeWidth = 0.0f;
+                shadowCmd.filled = true;
+                shadowCmd.stroked = false;
+                shadowCmd.segments = 32; // 增加分段数
+                shadowCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+                shadowCmd.depth = static_cast<float>(depth) - 0.01f; // 阴影在按钮下方但在轨道上方
+                m_commandBuffer.AddCircle(shadowCmd);
+            }
+            
+            // 绘制按钮主体（确保在最上层）
+            UICircleCommand buttonCmd;
+            buttonCmd.center = Vector2(buttonX, buttonY);
+            buttonCmd.radius = buttonRadius;
+            buttonCmd.fillColor = buttonColor;
+            buttonCmd.strokeColor = Color(0.75f, 0.75f, 0.75f, 1.0f); // 浅灰色描边
+            buttonCmd.strokeWidth = 1.0f;
+            buttonCmd.filled = true;
+            buttonCmd.stroked = true;
+            buttonCmd.segments = 32; // 增加分段数，减少透明线
+            buttonCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+            buttonCmd.depth = static_cast<float>(depth) - 0.02f; // 按钮在最上层（更小的depth值表示更靠前）
+            m_commandBuffer.AddCircle(buttonCmd);
+            
+            // 绘制标签文本
+            if (m_defaultFont && !toggleWidget->GetLabel().empty()) {
+                std::string label = toggleWidget->GetLabel();
+                
+                auto tempText = CreateRef<Text>(m_defaultFont);
+                tempText->SetString(label);
+                tempText->SetAlignment(TextAlignment::Left);
+                tempText->EnsureUpdated();
+                Vector2 textSize = tempText->GetSize();
+                
+                UITextCommand textCmd;
+                textCmd.transform = CreateRef<Transform>();
+                float textY = labelY - textSize.y() * 0.5f;
+                textCmd.transform->SetPosition(Vector3(labelX,
+                                                       textY,
+                                                       static_cast<float>(-depth) * 0.001f));
+                textCmd.text = label;
+                textCmd.font = m_defaultFont;
+                textCmd.color = colorSet.text;
+                textCmd.offset = Vector2(0.0f, 0.0f); // Left对齐
+                textCmd.layerID = 800;
+                textCmd.depth = static_cast<float>(depth);
+                
+                m_commandBuffer.AddText(textCmd);
+            }
+            
+            if (m_debugConfig && m_debugConfig->drawDebugRects) {
+                UIDebugRectCommand debugRectCmd;
+                debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+                debugRectCmd.color = Color(0.4f, 0.8f, 0.4f, 0.35f);
+                debugRectCmd.thickness = 2.0f;
+                debugRectCmd.layerID = 999;
+                debugRectCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddDebugRect(debugRectCmd);
+            }
+        } else if (const auto* sliderWidget = dynamic_cast<const UISlider*>(&widget)) {
+            // 使用主题系统获取颜色
+            const UITheme* theme = nullptr;
+            if (m_themeManager) {
+                theme = &m_themeManager->GetCurrentTheme();
+            }
+            
+            const bool enabled = sliderWidget->IsEnabled();
+            const bool hovered = sliderWidget->IsHovered();
+            const bool dragging = sliderWidget->IsDragging();
+            
+            // Slider 使用 button 主题颜色
+            const UIThemeColorSet& colorSet = theme
+                ? theme->GetWidgetColorSet("button",
+                                          hovered || dragging,
+                                          dragging,  // pressed
+                                          !enabled,
+                                          false)     // active
+                : UITheme::CreateDefault().GetWidgetColorSet("button",
+                                                            hovered || dragging,
+                                                            dragging,
+                                                            !enabled,
+                                                            false);
+            
+            const float normalizedValue = sliderWidget->GetNormalizedValue();
+            const bool isHorizontal = sliderWidget->GetOrientation() == UISlider::Orientation::Horizontal;
+            
+            // 绘制滑块轨道背景
+            UIRoundedRectangleCommand trackCmd;
+            trackCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+            trackCmd.cornerRadius = isHorizontal ? size.y() * 0.5f : size.x() * 0.5f; // 完全圆角
+            trackCmd.fillColor = Color(0.85f, 0.85f, 0.85f, 1.0f); // 浅灰色轨道背景
+            trackCmd.strokeColor = Color(0.7f, 0.7f, 0.7f, 1.0f); // 稍深的灰色描边
+            trackCmd.strokeWidth = 1.0f;
+            trackCmd.filled = true;
+            trackCmd.stroked = true;
+            trackCmd.segments = 32; // 增加分段数，减少透明线
+            trackCmd.layerID = 800;
+            trackCmd.depth = static_cast<float>(depth) + 0.01f; // 轨道在最底层（更大的depth值表示更靠后）
+            m_commandBuffer.AddRoundedRectangle(trackCmd);
+            
+            // 绘制滑块填充部分（已选择的部分）
+            if (normalizedValue > 0.0f) {
+                // 计算手柄位置，填充部分应该延伸到手柄中心
+                const float handleRadius = isHorizontal ? size.y() * 0.4f : size.x() * 0.4f;
+                const float cornerRadius = isHorizontal ? size.y() * 0.5f : size.x() * 0.5f; // 填充区域的圆角半径
+                float fillSize;
+                if (isHorizontal) {
+                    // 水平滑轨：填充部分延伸到手柄中心位置，确保完全覆盖
+                    // 由于填充区域使用完全圆角，右端圆角会从右边缘向内收缩cornerRadius
+                    // 所以需要延伸到手柄中心+手柄半径+圆角半径，确保圆角部分也能完全覆盖
+                    float handleCenterX = position.x() + size.x() * normalizedValue;
+                    fillSize = handleCenterX - position.x() + handleRadius + cornerRadius; // 延伸到手柄中心+半径+圆角半径，确保完全覆盖
+                    fillSize = std::min(fillSize, size.x()); // 限制在轨道范围内
+                } else {
+                    // 垂直滑块：从底部开始，延伸到手柄中心位置
+                    // 由于填充区域使用完全圆角，顶端圆角会从顶部边缘向内收缩cornerRadius
+                    // 所以需要延伸到手柄中心+手柄半径+圆角半径，确保圆角部分也能完全覆盖
+                    float handleCenterY = position.y() + size.y() * (1.0f - normalizedValue);
+                    // 填充部分从底部开始，延伸到手柄中心+半径+圆角半径
+                    fillSize = (position.y() + size.y()) - handleCenterY + handleRadius + cornerRadius;
+                    fillSize = std::max(0.0f, std::min(fillSize, size.y()));
+                }
+                
+                UIRoundedRectangleCommand fillCmd;
+                if (isHorizontal) {
+                    // 水平滑轨：填充部分从左侧开始，只左端圆角，右端直边
+                    // 使用完全圆角，但通过调整宽度确保完全覆盖轨道
+                    fillCmd.rect = Rect(position.x(), position.y(), fillSize, size.y());
+                    fillCmd.cornerRadius = size.y() * 0.5f; // 完全圆角
+                } else {
+                    // 垂直滑块：从底部开始，只底端圆角，顶端直边
+                    fillCmd.rect = Rect(position.x(), position.y() + size.y() - fillSize, size.x(), fillSize);
+                    fillCmd.cornerRadius = size.x() * 0.5f; // 完全圆角
+                }
+                fillCmd.fillColor = Color(0.3f, 0.6f, 1.0f, 1.0f); // 蓝色填充部分
+                fillCmd.strokeColor = Color(0, 0, 0, 0); // 无描边
+                fillCmd.strokeWidth = 0.0f;
+                fillCmd.filled = true;
+                fillCmd.stroked = false;
+                fillCmd.segments = 32; // 增加分段数，确保圆角平滑
+                fillCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+                fillCmd.depth = static_cast<float>(depth) - 0.01f; // 填充在轨道之上（更小的depth值表示更靠前）
+                m_commandBuffer.AddRoundedRectangle(fillCmd);
+            }
+            
+            // 绘制滑块手柄（圆形）
+            const float handleRadius = isHorizontal ? size.y() * 0.4f : size.x() * 0.4f;
+            float handleX, handleY;
+            
+            if (isHorizontal) {
+                handleX = position.x() + size.x() * normalizedValue;
+                handleY = position.y() + size.y() * 0.5f;
+            } else {
+                handleX = position.x() + size.x() * 0.5f;
+                handleY = position.y() + size.y() * (1.0f - normalizedValue);
+            }
+            
+            // 限制手柄在轨道内
+            if (isHorizontal) {
+                handleX = std::clamp(handleX, position.x() + handleRadius, position.x() + size.x() - handleRadius);
+            } else {
+                handleY = std::clamp(handleY, position.y() + handleRadius, position.y() + size.y() - handleRadius);
+            }
+            
+            // 绘制滑块手柄（圆角矩形，胶囊形）
+            const float handleWidth = handleRadius * 2.0f;
+            const float handleHeight = handleRadius * 2.0f;
+            UIRoundedRectangleCommand handleCmd;
+            if (isHorizontal) {
+                handleCmd.rect = Rect(handleX - handleRadius, handleY - handleRadius, handleWidth, handleHeight);
+            } else {
+                handleCmd.rect = Rect(handleX - handleRadius, handleY - handleRadius, handleWidth, handleHeight);
+            }
+            handleCmd.cornerRadius = handleRadius; // 完全圆角，形成胶囊形
+            handleCmd.fillColor = dragging ? Color(0.2f, 0.5f, 0.9f, 1.0f) : Color(1.0f, 1.0f, 1.0f, 1.0f); // 白色手柄，拖拽时变深蓝色
+            handleCmd.strokeColor = dragging ? Color(0.15f, 0.4f, 0.8f, 1.0f) : Color(0.8f, 0.8f, 0.8f, 1.0f); // 浅灰色描边，拖拽时变深蓝色
+            handleCmd.strokeWidth = 1.5f;
+            handleCmd.filled = true;
+            handleCmd.stroked = true;
+            handleCmd.segments = 32; // 增加分段数，减少透明线
+            handleCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+            handleCmd.depth = static_cast<float>(depth) - 0.02f; // 手柄在最上层（更小的depth值表示更靠前）
+            m_commandBuffer.AddRoundedRectangle(handleCmd);
+            
+            // 绘制标签和数值文本
+            if (m_defaultFont) {
+                std::string displayText;
+                if (!sliderWidget->GetLabel().empty()) {
+                    displayText = sliderWidget->GetLabel();
+                    if (sliderWidget->IsShowValue()) {
+                        displayText += ": ";
+                    }
+                }
+                if (sliderWidget->IsShowValue()) {
+                    char valueStr[32];
+                    snprintf(valueStr, sizeof(valueStr), "%.2f", sliderWidget->GetValue());
+                    displayText += valueStr;
+                }
+                
+                if (!displayText.empty()) {
+                    auto tempText = CreateRef<Text>(m_defaultFont);
+                    tempText->SetString(displayText);
+                    tempText->SetAlignment(TextAlignment::Left);
+                    tempText->EnsureUpdated();
+                    Vector2 textSize = tempText->GetSize();
+                    
+                    UITextCommand textCmd;
+                    textCmd.transform = CreateRef<Transform>();
+                    float textX = position.x() + (isHorizontal ? 8.0f : size.x() * 0.5f);
+                    float textY = position.y() + size.y() * 0.5f - textSize.y() * 0.5f;
+                    textCmd.transform->SetPosition(Vector3(textX,
+                                                           textY,
+                                                           static_cast<float>(-depth) * 0.001f));
+                    textCmd.text = displayText;
+                    textCmd.font = m_defaultFont;
+                    textCmd.color = colorSet.text;
+                    textCmd.offset = Vector2(0.0f, 0.0f); // Left对齐
+                    textCmd.layerID = 800;
+                    textCmd.depth = static_cast<float>(depth);
+                    
+                    m_commandBuffer.AddText(textCmd);
+                }
+            }
+            
+            if (m_debugConfig && m_debugConfig->drawDebugRects) {
+                UIDebugRectCommand debugRectCmd;
+                debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+                debugRectCmd.color = Color(0.8f, 0.8f, 0.4f, 0.35f);
+                debugRectCmd.thickness = 2.0f;
+                debugRectCmd.layerID = 999;
+                debugRectCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddDebugRect(debugRectCmd);
+            }
+        } else if (const auto* radioWidget = dynamic_cast<const UIRadioButton*>(&widget)) {
+            // 使用主题系统获取颜色
+            const UITheme* theme = nullptr;
+            if (m_themeManager) {
+                theme = &m_themeManager->GetCurrentTheme();
+            }
+            
+            const bool enabled = radioWidget->IsEnabled();
+            const bool hovered = radioWidget->IsHovered();
+            const bool selected = radioWidget->IsSelected();
+            
+            // RadioButton 使用 button 主题颜色
+            const UIThemeColorSet& colorSet = theme
+                ? theme->GetWidgetColorSet("button",
+                                          hovered,
+                                          false,  // pressed
+                                          !enabled,
+                                          selected)  // active (选中状态)
+                : UITheme::CreateDefault().GetWidgetColorSet("button",
+                                                            hovered,
+                                                            false,
+                                                            !enabled,
+                                                            selected);
+            
+            // 计算单选按钮圆圈的大小（圆形，直径为控件高度）
+            const float circleSize = size.y();
+            const float circlePadding = 4.0f;
+            const float circleRadius = (circleSize - circlePadding * 2.0f) * 0.5f;
+            const float circleX = position.x() + circlePadding + circleRadius;
+            const float circleY = position.y() + size.y() * 0.5f;
+            
+            // 绘制外圈（圆形边框）
+            UICircleCommand outerCmd;
+            outerCmd.center = Vector2(circleX, circleY);
+            outerCmd.radius = circleRadius;
+            outerCmd.fillColor = Color(0, 0, 0, 0); // 透明填充
+            outerCmd.strokeColor = colorSet.outline;
+            outerCmd.strokeWidth = 2.0f;
+            outerCmd.filled = false;
+            outerCmd.stroked = true;
+            outerCmd.segments = 32; // 增加分段数，减少锯齿
+            outerCmd.layerID = 800;
+            outerCmd.depth = static_cast<float>(depth) + 0.01f; // 外圈在底层（更大的depth值表示更靠后）
+            m_commandBuffer.AddCircle(outerCmd);
+            
+            // 如果选中，绘制内圈（实心圆，确保是圆形）
+            if (selected) {
+                const float innerRadius = circleRadius * 0.55f; // 稍微增大内圆半径，更明显
+                UICircleCommand innerCmd;
+                innerCmd.center = Vector2(circleX, circleY);
+                innerCmd.radius = innerRadius;
+                // 选中颜色：默认黑色，但如果底部颜色太深则替换为较亮的颜色
+                innerCmd.fillColor = GetSelectedColor(colorSet.inner);
+                innerCmd.strokeColor = Color(0, 0, 0, 0); // 无描边
+                innerCmd.strokeWidth = 0.0f;
+                innerCmd.filled = true;
+                innerCmd.stroked = false;
+                innerCmd.segments = 32; // 增加分段数，确保是圆形
+                innerCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+                innerCmd.depth = static_cast<float>(depth) - 0.01f; // 内圈在外圈之上（更小的depth值表示更靠前）
+                m_commandBuffer.AddCircle(innerCmd);
+            }
+            
+            // 绘制标签文本
+            if (m_defaultFont && !radioWidget->GetLabel().empty()) {
+                std::string label = radioWidget->GetLabel();
+                
+                auto tempText = CreateRef<Text>(m_defaultFont);
+                tempText->SetString(label);
+                tempText->SetAlignment(TextAlignment::Left);
+                tempText->EnsureUpdated();
+                Vector2 textSize = tempText->GetSize();
+                
+                UITextCommand textCmd;
+                textCmd.transform = CreateRef<Transform>();
+                float labelX = position.x() + circleSize + circlePadding * 2.0f;
+                float labelY = position.y() + size.y() * 0.5f - textSize.y() * 0.5f;
+                textCmd.transform->SetPosition(Vector3(labelX,
+                                                       labelY,
+                                                       static_cast<float>(-depth) * 0.001f));
+                textCmd.text = label;
+                textCmd.font = m_defaultFont;
+                textCmd.color = colorSet.text;
+                textCmd.offset = Vector2(0.0f, 0.0f); // Left对齐
+                textCmd.layerID = 800;
+                textCmd.depth = static_cast<float>(depth);
+                
+                m_commandBuffer.AddText(textCmd);
+            }
+            
+            if (m_debugConfig && m_debugConfig->drawDebugRects) {
+                UIDebugRectCommand debugRectCmd;
+                debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+                debugRectCmd.color = Color(0.4f, 0.4f, 0.8f, 0.35f);
+                debugRectCmd.thickness = 2.0f;
+                debugRectCmd.layerID = 999;
+                debugRectCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddDebugRect(debugRectCmd);
+            }
+        } else if (const auto* colorPickerWidget = dynamic_cast<const UIColorPicker*>(&widget)) {
+            // 使用主题系统获取颜色
+            const UITheme* theme = nullptr;
+            if (m_themeManager) {
+                theme = &m_themeManager->GetCurrentTheme();
+            }
+            
+            const bool enabled = colorPickerWidget->IsEnabled();
+            const bool hovered = colorPickerWidget->IsHovered();
+            
+            // ColorPicker 使用 button 主题颜色
+            const UIThemeColorSet& colorSet = theme
+                ? theme->GetWidgetColorSet("button",
+                                          hovered,
+                                          false,  // pressed
+                                          !enabled,
+                                          false)  // active
+                : UITheme::CreateDefault().GetWidgetColorSet("button",
+                                                            hovered,
+                                                            false,
+                                                            !enabled,
+                                                            false);
+            
+            // 绘制颜色预览色块（如果启用）
+            if (colorPickerWidget->IsShowPreview()) {
+                const float previewPadding = 8.0f;
+                const float previewSize = size.y() - previewPadding * 2.0f;
+                const float previewX = position.x() + previewPadding;
+                const float previewY = position.y() + previewPadding;
+                
+                // 绘制颜色预览（圆角矩形）
+                const Color& previewColor = colorPickerWidget->GetColor();
+                UIRoundedRectangleCommand previewCmd;
+                previewCmd.rect = Rect(previewX, previewY, previewSize, previewSize);
+                previewCmd.cornerRadius = 4.0f;
+                previewCmd.fillColor = previewColor;
+                previewCmd.strokeColor = colorSet.outline;
+                previewCmd.strokeWidth = 2.0f;
+                previewCmd.filled = true;
+                previewCmd.stroked = true;
+                previewCmd.segments = 8;
+                previewCmd.layerID = 800;
+                previewCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddRoundedRectangle(previewCmd);
+            }
+            
+            // 绘制RGB值文本
+            if (m_defaultFont) {
+                char colorText[64];
+                if (colorPickerWidget->IsShowAlpha()) {
+                    snprintf(colorText, sizeof(colorText), "R:%.2f G:%.2f B:%.2f A:%.2f",
+                            colorPickerWidget->GetR(),
+                            colorPickerWidget->GetG(),
+                            colorPickerWidget->GetB(),
+                            colorPickerWidget->GetA());
+                } else {
+                    snprintf(colorText, sizeof(colorText), "R:%.2f G:%.2f B:%.2f",
+                            colorPickerWidget->GetR(),
+                            colorPickerWidget->GetG(),
+                            colorPickerWidget->GetB());
+                }
+                
+                auto tempText = CreateRef<Text>(m_defaultFont);
+                tempText->SetString(colorText);
+                tempText->SetAlignment(TextAlignment::Left);
+                tempText->EnsureUpdated();
+                Vector2 textSize = tempText->GetSize();
+                
+                UITextCommand textCmd;
+                textCmd.transform = CreateRef<Transform>();
+                float textX = position.x() + (colorPickerWidget->IsShowPreview() ? size.y() + 8.0f : 8.0f);
+                float textY = position.y() + size.y() * 0.5f - textSize.y() * 0.5f;
+                textCmd.transform->SetPosition(Vector3(textX,
+                                                       textY,
+                                                       static_cast<float>(-depth) * 0.001f));
+                textCmd.text = colorText;
+                textCmd.font = m_defaultFont;
+                textCmd.color = colorSet.text;
+                textCmd.offset = Vector2(0.0f, 0.0f); // Left对齐
+                textCmd.layerID = 800;
+                textCmd.depth = static_cast<float>(depth);
+                
+                m_commandBuffer.AddText(textCmd);
+            }
+            
+            if (m_debugConfig && m_debugConfig->drawDebugRects) {
+                UIDebugRectCommand debugRectCmd;
+                debugRectCmd.rect = Rect(position.x(), position.y(), size.x(), size.y());
+                debugRectCmd.color = Color(0.8f, 0.4f, 0.4f, 0.35f);
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);

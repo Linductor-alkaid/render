@@ -290,6 +290,11 @@ set(RENDER_SOURCES
     src/ui/ui_widget_tree.cpp
     src/ui/widgets/ui_button.cpp
     src/ui/widgets/ui_text_field.cpp
+    src/ui/widgets/ui_checkbox.cpp
+    src/ui/widgets/ui_toggle.cpp
+    src/ui/widgets/ui_slider.cpp
+    src/ui/widgets/ui_radio_button.cpp
+    src/ui/widgets/ui_color_picker.cpp
 
     # Shaders
     shaders/sprite.vert
@@ -408,6 +413,11 @@ set(RENDER_HEADERS
     include/render/ui/ui_widget_tree.h
     include/render/ui/widgets/ui_button.h
     include/render/ui/widgets/ui_text_field.h
+    include/render/ui/widgets/ui_checkbox.h
+    include/render/ui/widgets/ui_toggle.h
+    include/render/ui/widgets/ui_slider.h
+    include/render/ui/widgets/ui_radio_button.h
+    include/render/ui/widgets/ui_color_picker.h
     
     # Utils
     include/render/logger.h

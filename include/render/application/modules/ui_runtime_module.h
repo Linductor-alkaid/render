@@ -12,6 +12,8 @@ struct UILayoutContext;
 class UIRendererBridge;
 class UIWidgetTree;
 class UIInputRouter;
+class UIWidget;
+class UIRadioButtonGroup;
 } // namespace Render::UI
 
 namespace Render::Application {
@@ -36,6 +38,7 @@ public:
 private:
     void EnsureInitialized(AppContext& ctx);
     void EnsureSampleWidgets();
+    void UpdateToggleAnimations(UI::UIWidget& widget, float deltaTime);
     void Shutdown(AppContext& ctx);
 
     std::unique_ptr<UI::UICanvas> m_canvas;
@@ -45,6 +48,9 @@ private:
     std::unique_ptr<UI::UIInputRouter> m_inputRouter;
     UI::UIDebugConfig m_debugConfig{};
     bool m_registered = false;
+    
+    // 示例控件组（用于演示）
+    std::unique_ptr<UI::UIRadioButtonGroup> m_sampleRadioGroup;
 };
 
 } // namespace Render::Application
