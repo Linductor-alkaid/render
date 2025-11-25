@@ -51,11 +51,31 @@ bool UIGeometryRenderer::Initialize() {
     if (!basicShader) {
         basicShader = ShaderCache::GetInstance().LoadShader("basic", "shaders/basic.vert", "shaders/basic.frag");
     }
-    if (basicShader) {
-        m_solidMaterial->SetShader(basicShader);
+    if (!basicShader) {
+        Logger::GetInstance().Error("[UIGeometryRenderer] Failed to load basic shader! Geometry rendering will not work.");
+        m_solidMaterial.reset();
+        return false;
+    }
+    
+    m_solidMaterial->SetShader(basicShader);
+    
+    // 验证shader是否有必要的uniform
+    auto* uniformMgr = basicShader->GetUniformManager();
+    if (uniformMgr) {
+        bool hasColor = uniformMgr->HasUniform("uColor");
+        bool hasView = uniformMgr->HasUniform("uView");
+        bool hasProjection = uniformMgr->HasUniform("uProjection");
+        
+        if (!hasColor) {
+            Logger::GetInstance().Warning("[UIGeometryRenderer] Basic shader missing 'uColor' uniform. Color rendering may not work.");
+        }
+        if (!hasView || !hasProjection) {
+            Logger::GetInstance().Warning("[UIGeometryRenderer] Basic shader missing view/projection uniforms. Geometry rendering may not work.");
+        }
     }
 
     m_initialized = true;
+    Logger::GetInstance().Info("[UIGeometryRenderer] Initialized successfully with basic shader.");
     return true;
 }
 
@@ -103,14 +123,16 @@ std::vector<Vector2> UIGeometryRenderer::GenerateBezierCurve(const Vector2& p0, 
 
 std::vector<Vector2> UIGeometryRenderer::GenerateCircle(const Vector2& center, float radius, int segments) {
     std::vector<Vector2> vertices;
-    vertices.reserve(segments + 1);
+    // 生成segments个顶点（不包括重复的最后一个点），形成闭合的多边形
+    vertices.reserve(segments);
 
     const float angleStep = 2.0f * 3.14159265359f / static_cast<float>(segments);
-    for (int i = 0; i <= segments; ++i) {
+    for (int i = 0; i < segments; ++i) {
         float angle = static_cast<float>(i) * angleStep;
         Vector2 point(center.x() + radius * std::cos(angle), center.y() + radius * std::sin(angle));
         vertices.push_back(point);
     }
+    // 注意：不需要添加最后一个点（角度=2π），因为三角剖分算法会自动处理闭合多边形
 
     return vertices;
 }
@@ -325,6 +347,10 @@ void UIGeometryRenderer::RenderFilledPolygon(const std::vector<Vector2>& vertice
         vertex.position = Vector3(v.x(), v.y(), -depth * 0.001f);
         vertex.texCoord = Vector2(0.0f, 0.0f);
         vertex.normal = Vector3(0.0f, 0.0f, 1.0f);
+        // 参考实现：顶点颜色直接使用传入的颜色
+        // Material的ApplyProperties会自动设置uUseVertexColor=true
+        // 为了正确显示颜色，需要将Material的diffuseColor设置为白色
+        // 这样最终颜色 = uColor(白色) * VertexColor(color) = color
         vertex.color = color;
         meshVertices.push_back(vertex);
     }
@@ -332,9 +358,26 @@ void UIGeometryRenderer::RenderFilledPolygon(const std::vector<Vector2>& vertice
     auto mesh = CreateRef<Render::Mesh>(meshVertices, indices);
     mesh->Upload();
     
-    m_solidMaterial->SetDiffuseColor(color);
+    // 参考实现：顶点颜色使用传入的color，Material的diffuseColor设置为白色
+    // Material的ApplyProperties会自动设置uUseVertexColor=true
+    // 最终颜色 = uColor(白色) * VertexColor(color) = color，颜色正确显示
+    // 注意：由于m_solidMaterial是共享的，如果同一帧渲染多个不同颜色的图形，
+    // 后面的颜色会覆盖前面的。但由于渲染是提交到队列的，每个MeshRenderable
+    // 在渲染时会使用Material的当前状态，所以需要确保在提交前设置好所有属性。
+    m_solidMaterial->SetDiffuseColor(Color::White());
     m_solidMaterial->SetMatrix4("uView", view);
     m_solidMaterial->SetMatrix4("uProjection", projection);
+    
+    // 调试日志（仅在Debug模式下启用，避免性能影响）
+    #ifdef _DEBUG
+    static int debugLogCount = 0;
+    if (debugLogCount < 10) {  // 只记录前10次
+        Logger::GetInstance().DebugFormat(
+            "[UIGeometryRenderer] RenderFilledPolygon: color=(%.3f,%.3f,%.3f,%.3f), vertices=%zu",
+            color.r, color.g, color.b, color.a, vertices.size());
+        debugLogCount++;
+    }
+    #endif
     
     auto* meshRenderable = AcquireMeshRenderable();
     meshRenderable->SetMesh(mesh);
@@ -440,6 +483,25 @@ void UIGeometryRenderer::RenderCircle(const UICircleCommand& cmd, const Matrix4&
 
     if (cmd.filled) {
         auto vertices = GenerateCircle(cmd.center, cmd.radius, cmd.segments);
+        if (vertices.size() < 3) {
+            Logger::GetInstance().WarningFormat(
+                "[UIGeometryRenderer] RenderCircle: Not enough vertices (%zu) for filled circle, segments=%d",
+                vertices.size(), cmd.segments);
+            return;
+        }
+        
+        // 调试日志：检查填充圆形的渲染
+        static int debugCircleCount = 0;
+        if (debugCircleCount < 10) {
+            Logger::GetInstance().InfoFormat(
+                "[UIGeometryRenderer] RenderCircle filled: center=(%.1f,%.1f), radius=%.2f, "
+                "color=(%.2f,%.2f,%.2f,%.2f), depth=%.3f, vertices=%zu",
+                cmd.center.x(), cmd.center.y(), cmd.radius,
+                cmd.fillColor.r, cmd.fillColor.g, cmd.fillColor.b, cmd.fillColor.a,
+                cmd.depth, vertices.size());
+            debugCircleCount++;
+        }
+        
         RenderFilledPolygon(vertices, cmd.fillColor, cmd.depth, cmd.layerID, view, projection, renderer);
     }
     if (cmd.stroked && cmd.strokeWidth > 0.0f) {

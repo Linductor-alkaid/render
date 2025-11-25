@@ -285,7 +285,7 @@ void Mesh::Upload() {
         // 标记上传完成（原子操作，无锁）
         m_uploadState.store(UploadState::Uploaded, std::memory_order_release);
         
-        Logger::GetInstance().Info("Mesh uploaded: " + std::to_string(vertices_copy.size()) + 
+        Logger::GetInstance().Debug("Mesh uploaded: " + std::to_string(vertices_copy.size()) + 
                                    " vertices, " + std::to_string(indices_copy.size()) + " indices");
                                    
     } catch (const std::exception& e) {

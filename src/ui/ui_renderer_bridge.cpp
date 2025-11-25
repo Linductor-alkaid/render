@@ -421,31 +421,10 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
             
             text->EnsureUpdated();
             
-            // 获取文本大小
             Vector2 textSize = text->GetSize();
             
-            // TextRenderer的Draw方法会根据对齐方式调整anchor，然后添加offset = textSize/2
-            // 对于不同的对齐方式（假设传入position = P，文本大小为S）：
-            // - Left:   anchor = (P.x, P.y), 最终位置 = (P.x + S.x/2, P.y + S.y/2) (文本中心)
-            // - Center: anchor = (P.x - S.x/2, P.y), 最终位置 = (P.x, P.y + S.y/2) (文本中心)
-            // - Right:  anchor = (P.x - S.x, P.y), 最终位置 = (P.x - S.x/2, P.y + S.y/2) (文本中心)
-            // 
-            // 关键理解：TextRenderer的最终位置总是文本中心，不管对齐方式如何
-            // - Left对齐：如果想左上角在P，传入P，文本中心会在P + S/2
-            // - Center对齐：如果想中心在P，传入P，文本中心会在(P.x, P.y + S.y/2) ❌ Y轴有偏差！
-            // - Right对齐：如果想右上角在P，传入P，文本中心会在(P.x - S.x/2, P.y + S.y/2)
-            //
-            // 所以对于Center对齐，如果UI代码传递的是期望的中心位置，需要补偿Y轴的offset
+            // TextRenderer总是以文本中心为最终渲染位置，Y轴对齐已在BuildCommands中补偿
             Vector3 pos = transform->GetPosition();
-            
-            // 根据对齐方式调整位置
-            // 对于Center对齐，虽然按钮文本在BuildCommands中已经补偿了Y轴offset
-            // 但由于tempText和实际text对象可能有差异，这里再次补偿以确保准确性
-            if (alignment == TextAlignment::Center) {
-                // 对于Center对齐，UI代码传递的位置已经补偿了Y轴offset
-                // 但为了保险起见，如果发现位置是按钮中心位置，可以再次微调
-                // 或者完全依赖BuildCommands中的补偿，这里不做额外处理
-            }
             
             // offset.y用于额外的Y轴偏移
             pos.y() += cmd.text.offset.y();
@@ -1880,36 +1859,75 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             const float circleX = position.x() + circlePadding + circleRadius;
             const float circleY = position.y() + size.y() * 0.5f;
             
-            // 绘制外圈（圆形边框）
+            // 绘制外圈（圆形边框）- 使用描边渲染
+            const float strokeWidth = 2.0f;
             UICircleCommand outerCmd;
             outerCmd.center = Vector2(circleX, circleY);
             outerCmd.radius = circleRadius;
             outerCmd.fillColor = Color(0, 0, 0, 0); // 透明填充
             outerCmd.strokeColor = colorSet.outline;
-            outerCmd.strokeWidth = 2.0f;
+            outerCmd.strokeWidth = strokeWidth;
             outerCmd.filled = false;
-            outerCmd.stroked = true;
-            outerCmd.segments = 32; // 增加分段数，减少锯齿
+            outerCmd.stroked = true; // 使用描边渲染（Sprite）
+            outerCmd.segments = 32;
             outerCmd.layerID = 800;
-            outerCmd.depth = static_cast<float>(depth) + 0.01f; // 外圈在底层（更大的depth值表示更靠后）
+            outerCmd.depth = static_cast<float>(depth) + 0.01f; // 外圈在底层
             m_commandBuffer.AddCircle(outerCmd);
             
             // 如果选中，绘制内圈（实心圆，确保是圆形）
             if (selected) {
-                const float innerRadius = circleRadius * 0.55f; // 稍微增大内圆半径，更明显
-                UICircleCommand innerCmd;
-                innerCmd.center = Vector2(circleX, circleY);
-                innerCmd.radius = innerRadius;
-                // 选中颜色：默认黑色，但如果底部颜色太深则替换为较亮的颜色
-                innerCmd.fillColor = GetSelectedColor(colorSet.inner);
-                innerCmd.strokeColor = Color(0, 0, 0, 0); // 无描边
-                innerCmd.strokeWidth = 0.0f;
-                innerCmd.filled = true;
-                innerCmd.stroked = false;
-                innerCmd.segments = 32; // 增加分段数，确保是圆形
-                innerCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
-                innerCmd.depth = static_cast<float>(depth) - 0.01f; // 内圈在外圈之上（更小的depth值表示更靠前）
-                m_commandBuffer.AddCircle(innerCmd);
+                // 增大内圆半径，确保明显可见（应该在圆环内部）
+                // 圆环内部半径 = circleRadius - strokeWidth
+                // 内圆应该小于圆环内部半径，大约是其 50% 左右
+                const float innerRadius = (circleRadius - strokeWidth) * 0.5f;
+                
+                // 确保内圆半径不会太小
+                if (innerRadius < 2.0f) {
+                    Logger::GetInstance().WarningFormat(
+                        "[UIRendererBridge] RadioButton inner radius too small: %.2f (outer=%.2f), skipping inner circle",
+                        innerRadius, circleRadius);
+                } else {
+                    UICircleCommand innerCmd;
+                    innerCmd.center = Vector2(circleX, circleY);
+                    innerCmd.radius = innerRadius;
+                    
+                    // 选中颜色：使用与外圈描边颜色对比明显的颜色
+                    // 外圈描边默认是深灰色(0.2, 0.2, 0.2)，使用浅色填充确保对比度
+                    Color selectedColor;
+                    float outlineLuminance = GetColorLuminance(colorSet.outline);
+                    if (outlineLuminance < 0.5f) {
+                        // 外圈是深色，使用浅色填充（白色，确保明显可见）
+                        selectedColor = Color(1.0f, 1.0f, 1.0f, 1.0f); // 纯白色，最大对比度
+                    } else {
+                        // 外圈是浅色，使用深色填充（黑色，确保明显可见）
+                        selectedColor = Color(0.0f, 0.0f, 0.0f, 1.0f); // 纯黑色，最大对比度
+                    }
+                    
+                    // 内圈使用描边渲染，与外圈保持一致（都使用Sprite）
+                    innerCmd.fillColor = Color(0, 0, 0, 0); // 透明填充
+                    innerCmd.strokeColor = selectedColor; // 使用选中颜色作为描边
+                    innerCmd.strokeWidth = innerRadius * 2.0f; // 描边宽度等于半径的2倍，形成实心圆效果
+                    innerCmd.filled = false;
+                    innerCmd.stroked = true; // 使用描边渲染（Sprite），与外圈一致
+                    innerCmd.segments = 32; // 增加分段数，确保是圆形
+                    innerCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
+                    // 内圈在最上层，确保可见
+                    innerCmd.depth = static_cast<float>(depth); // 顶层渲染（最小的depth值）
+                    
+                    // 调试日志
+                    static int debugLogCount = 0;
+                    if (debugLogCount < 10) {
+                        Logger::GetInstance().InfoFormat(
+                            "[UIRendererBridge] RadioButton selected: center=(%.1f,%.1f), innerRadius=%.2f, outerRadius=%.2f, "
+                            "selectedColor=(%.2f,%.2f,%.2f,%.2f), outlineLuminance=%.3f, depth=%.3f",
+                            circleX, circleY, innerRadius, circleRadius,
+                            selectedColor.r, selectedColor.g, selectedColor.b, selectedColor.a,
+                            outlineLuminance, innerCmd.depth);
+                        debugLogCount++;
+                    }
+                    
+                    m_commandBuffer.AddCircle(innerCmd);
+                }
             }
             
             // 绘制标签文本
