@@ -4,6 +4,8 @@
 #include <sstream>
 
 #include "render/logger.h"
+#include "render/json_serializer.h"
+#include "render/ui/ui_theme_serialization.h"
 
 namespace Render::UI {
 
@@ -159,16 +161,38 @@ UITheme UITheme::CreateDark() {
 }
 
 bool UITheme::LoadFromJSON(const std::string& jsonPath, UITheme& theme) {
-    // TODO: 实现 JSON 加载
-    // 可以使用 nlohmann/json 或其他 JSON 库
-    Logger::GetInstance().Warning("[UITheme] LoadFromJSON not implemented yet.");
-    return false;
+    nlohmann::json j;
+    if (!JsonSerializer::LoadFromFile(jsonPath, j)) {
+        Logger::GetInstance().ErrorFormat("[UITheme] Failed to load JSON from '%s'", jsonPath.c_str());
+        return false;
+    }
+    
+    try {
+        theme = j.get<UITheme>();
+        Logger::GetInstance().InfoFormat("[UITheme] Successfully loaded theme from '%s'", jsonPath.c_str());
+        return true;
+    } catch (const std::exception& e) {
+        Logger::GetInstance().ErrorFormat("[UITheme] Failed to parse theme from '%s': %s", 
+                                         jsonPath.c_str(), e.what());
+        return false;
+    }
 }
 
 bool UITheme::SaveToJSON(const UITheme& theme, const std::string& jsonPath) {
-    // TODO: 实现 JSON 保存
-    Logger::GetInstance().Warning("[UITheme] SaveToJSON not implemented yet.");
-    return false;
+    try {
+        nlohmann::json j = theme;
+        if (!JsonSerializer::SaveToFile(j, jsonPath)) {
+            Logger::GetInstance().ErrorFormat("[UITheme] Failed to save JSON to '%s'", jsonPath.c_str());
+            return false;
+        }
+        
+        Logger::GetInstance().InfoFormat("[UITheme] Successfully saved theme to '%s'", jsonPath.c_str());
+        return true;
+    } catch (const std::exception& e) {
+        Logger::GetInstance().ErrorFormat("[UITheme] Failed to serialize theme to '%s': %s", 
+                                         jsonPath.c_str(), e.what());
+        return false;
+    }
 }
 
 // UIThemeManager 实现

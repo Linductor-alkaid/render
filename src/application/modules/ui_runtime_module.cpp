@@ -12,6 +12,8 @@
 #include "render/ui/ui_widget_tree.h"
 #include "render/ui/ui_debug_config.h"
 #include "render/ui/ui_theme.h"
+#include "render/ui/ui_theme_serialization.h"
+#include "render/json_serializer.h"
 #include "render/ui/widgets/ui_button.h"
 #include "render/ui/widgets/ui_text_field.h"
 #include "render/ui/widgets/ui_checkbox.h"
@@ -318,13 +320,46 @@ void UIRuntimeModule::EnsureSampleWidgets() {
                                             cb.GetId().c_str(), checked ? "checked" : "unchecked");
         });
 
-        // Toggle 演示
+        // Toggle 演示 - 主题切换
         auto toggle = std::make_unique<UI::UIToggle>("ui.panel.toggle");
-        toggle->SetLabel("Dark Mode");
-        toggle->SetToggled(false); // 初始状态为关闭
+        toggle->SetLabel("Dark Theme");
+        toggle->SetToggled(false); // 初始状态为关闭（默认主题）
         toggle->SetOnChanged([](UI::UIToggle& tg, bool toggled) {
-            Logger::GetInstance().InfoFormat("[UIRuntimeModule] Toggle '%s' changed to %s",
-                                            tg.GetId().c_str(), toggled ? "on" : "off");
+            Logger::GetInstance().InfoFormat("[UIRuntimeModule] Theme Toggle '%s' changed to %s",
+                                            tg.GetId().c_str(), toggled ? "Dark" : "Default");
+            
+            // 获取主题管理器
+            auto& themeManager = UI::UIThemeManager::GetInstance();
+            
+            if (toggled) {
+                // 切换到暗色主题
+                UI::UITheme darkTheme;
+                if (UI::UITheme::LoadFromJSON("themes/dark.json", darkTheme)) {
+                    themeManager.RegisterBuiltinTheme("dark", darkTheme);
+                    themeManager.SetCurrentTheme("dark");
+                    Logger::GetInstance().Info("[UIRuntimeModule] Switched to Dark theme");
+                } else {
+                    // 如果加载失败，使用内置的暗色主题
+                    darkTheme = UI::UITheme::CreateDark();
+                    themeManager.RegisterBuiltinTheme("dark", darkTheme);
+                    themeManager.SetCurrentTheme("dark");
+                    Logger::GetInstance().Warning("[UIRuntimeModule] Failed to load dark.json, using built-in dark theme");
+                }
+            } else {
+                // 切换到默认主题
+                UI::UITheme defaultTheme;
+                if (UI::UITheme::LoadFromJSON("themes/default.json", defaultTheme)) {
+                    themeManager.RegisterBuiltinTheme("default", defaultTheme);
+                    themeManager.SetCurrentTheme("default");
+                    Logger::GetInstance().Info("[UIRuntimeModule] Switched to Default theme");
+                } else {
+                    // 如果加载失败，使用内置的默认主题
+                    defaultTheme = UI::UITheme::CreateDefault();
+                    themeManager.RegisterBuiltinTheme("default", defaultTheme);
+                    themeManager.SetCurrentTheme("default");
+                    Logger::GetInstance().Warning("[UIRuntimeModule] Failed to load default.json, using built-in default theme");
+                }
+            }
         });
 
         // Slider 演示

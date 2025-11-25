@@ -308,6 +308,7 @@ set(RENDER_SOURCES
     src/utils/error.cpp
     src/utils/resource_handle.cpp
     src/utils/resource_dependency.cpp
+    src/utils/json_serializer.cpp
     
     # GLAD
     ${GLAD_SRC}
@@ -408,6 +409,7 @@ set(RENDER_HEADERS
     include/render/ui/ui_input_router.h
     include/render/ui/ui_renderer_bridge.h
     include/render/ui/ui_theme.h
+    include/render/ui/ui_theme_serialization.h
     include/render/ui/ui_types.h
     include/render/ui/ui_widget.h
     include/render/ui/ui_widget_tree.h
@@ -424,6 +426,7 @@ set(RENDER_HEADERS
     include/render/file_utils.h
     include/render/error.h
     include/render/resource_dependency.h
+    include/render/json_serializer.h
 )
 
 # ============================================================================
