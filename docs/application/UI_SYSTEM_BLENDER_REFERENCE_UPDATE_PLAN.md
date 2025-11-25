@@ -5,9 +5,9 @@
 # UI 系统参考 Blender 实现更新计划
 
 **创建时间**: 2025-11-22  
-**最后更新**: 2025-11-25（阶段性进度汇报）  
+**最后更新**: 2025-11-25（菜单系统实现完成）  
 **参考来源**: `third_party/blender/source/blender/editors/interface/`  
-**当前状态**: 基于现有 UI 系统（完成度约 70%），已完成布局系统重构、Flex/Grid 布局、主题系统完整实现、几何图形渲染系统和基础控件扩展  
+**当前状态**: 基于现有 UI 系统（完成度约 75%），已完成布局系统重构、Flex/Grid 布局、主题系统完整实现、几何图形渲染系统、基础控件扩展和菜单系统  
 **相关文档**: [UI_DEVELOPMENT_PROGRESS_REPORT.md](UI_DEVELOPMENT_PROGRESS_REPORT.md)
 
 ---
@@ -486,27 +486,56 @@ Blender 使用 GPU 进行 UI 渲染：
 - ✅ 支持主题系统（所有控件已集成主题系统）
 - ✅ 交互流畅
 
-#### 4.3.2 实现菜单系统
+#### 4.3.2 实现菜单系统 ✅ **已完成**
 
 **目标**: 实现下拉菜单和径向菜单
 
-**任务清单**:
-1. **实现 `UIMenu`**:
-   - 支持菜单项（MenuItem）
-   - 支持子菜单（SubMenu）
-   - 支持菜单分隔符（Separator）
-   - 支持快捷键显示
-   - 支持图标菜单项
+**已完成任务**:
+1. ✅ **实现 `UIMenuItem`**:
+   - ✅ 支持菜单项（Normal、Checkable、Separator、SubMenu）
+   - ✅ 支持子菜单（SubMenu）
+   - ✅ 支持菜单分隔符（Separator）
+   - ✅ 支持快捷键显示
+   - ✅ 支持图标菜单项（接口预留）
+   - ✅ 支持工具提示
+   - ✅ 支持点击和状态改变回调
 
-2. **实现 `UIPullDownMenu`**:
-   - 从按钮触发下拉菜单
-   - 支持菜单定位（上/下/左/右）
-   - 支持菜单滚动
+2. ✅ **实现 `UIMenu`**:
+   - ✅ 菜单容器，支持垂直布局
+   - ✅ 支持菜单项管理（添加、删除、查找）
+   - ✅ 支持菜单滚动（长菜单）
+   - ✅ 支持键盘导航（方向键、回车、ESC）
+   - ✅ 支持嵌套子菜单
 
-3. **实现 `UIPieMenu`**（可选）:
-   - 支持径向菜单布局
-   - 支持方向键导航
-   - 支持鼠标方向选择
+3. ✅ **实现 `UIPullDownMenu`**:
+   - ✅ 从按钮触发下拉菜单
+   - ✅ 支持菜单定位（上/下/左/右/自动）
+   - ✅ 支持菜单打开/关闭管理
+   - ✅ 支持事件回调
+
+4. ✅ **实现 `UIMenuRenderer`**:
+   - ✅ 菜单背景和边框渲染
+   - ✅ 菜单项文本和快捷键渲染
+   - ✅ 勾选标记（✓）渲染
+   - ✅ 子菜单箭头（▶）渲染
+   - ✅ 分隔线渲染
+   - ✅ 主题系统集成
+
+5. ✅ **扩展 `UITheme`**:
+   - ✅ 添加菜单颜色配置（menu.normal/hover/pressed/disabled）
+   - ✅ 添加菜单字体配置（menuFont）
+   - ✅ 添加菜单辅助方法（GetMenuBackgroundColor等）
+
+6. ✅ **创建示例和文档**:
+   - ✅ 创建 61_ui_menu_example.cpp 示例程序
+   - ✅ 创建 UI_MENU_SYSTEM.md 详细文档
+   - ✅ 创建完整的API参考文档（UIMenuItem、UIMenu、UIPullDownMenu）
+   - ✅ 更新 CMakeLists.txt 集成菜单系统
+
+7. ⏳ **实现 `UIPieMenu`**（可选，未来改进）:
+   - ⏳ 支持径向菜单布局
+   - ⏳ 支持方向键导航
+   - ⏳ 支持鼠标方向选择
 
 **参考 Blender 实现**:
 ```cpp
@@ -515,9 +544,14 @@ Blender 使用 GPU 进行 UI 渲染：
 ```
 
 **验收标准**:
-- ✅ 菜单功能完整
-- ✅ 支持快捷键
-- ✅ 交互流畅
+- ✅ 菜单功能完整（普通、可选中、分隔符、子菜单）
+- ✅ 支持快捷键显示
+- ✅ 交互流畅（键盘导航、鼠标悬停、点击）
+- ✅ 主题系统集成
+- ✅ 编译通过并成功运行
+- ✅ 完整的API文档
+
+**当前状态**: 菜单系统基础功能已全部完成，编译通过，示例程序成功运行。Pie Menu（径向菜单）作为可选功能留待未来实现。
 
 #### 4.3.3 实现复合控件
 
@@ -816,10 +850,10 @@ Blender 使用 GPU 进行 UI 渲染：
 - **Week 2**: 实现主题配置文件格式，集成到 ResourceManager
 - **Week 3**: 重构控件使用主题，实现 DPI 适配
 
-### 5.3 第三阶段（4-5 周）
-- **Week 1-2**: 实现基础控件扩展（CheckBox、Radio、Slider、Toggle、ColorPicker）
-- **Week 3**: 实现菜单系统（Menu、PullDownMenu）
-- **Week 4-5**: 实现复合控件（PropertyPanel、TreeView、ListView、Table）
+### 5.3 第三阶段（4-5 周）✅ **部分完成**
+- ✅ **Week 1-2**: 实现基础控件扩展（CheckBox、Radio、Slider、Toggle、ColorPicker）- **已完成**
+- ✅ **Week 3**: 实现菜单系统（Menu、PullDownMenu）- **已完成 (2025-11-25)**
+- ⏳ **Week 4-5**: 实现复合控件（PropertyPanel、TreeView、ListView、Table）- **待实现**
 
 ### 5.4 第四阶段（2-3 周）
 - **Week 1**: 实现视觉效果（阴影、渐变、九宫格、圆角）

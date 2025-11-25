@@ -88,6 +88,31 @@
 - **[Font](Font.md)** - SDL_ttf 字体封装与光栅化
 - **[TextRenderer](TextRenderer.md)** - 即时模式文本渲染器
 
+### UI 系统 🎨 **v1.0 菜单系统**
+- **[UIWidget](UIWidget.md)** - UI控件基类（布局、事件、状态管理）
+- **[UICanvas](UICanvas.md)** - UI画布（缩放、DPI适配、状态管理）
+- **[UITheme](UITheme.md)** - UI主题系统（颜色、字体、尺寸配置）
+
+**基础控件**:
+- **[UIButton](UIButton.md)** - 按钮控件
+- **[UITextField](UITextField.md)** - 文本输入框
+- **[UICheckBox](UICheckBox.md)** - 复选框控件
+- **[UIRadioButton](UIRadioButton.md)** - 单选按钮
+- **[UIToggle](UIToggle.md)** - 开关控件
+- **[UISlider](UISlider.md)** - 滑块控件
+- **[UIColorPicker](UIColorPicker.md)** - 颜色选择器
+
+**菜单系统** 🆕 **v1.0**:
+- **[UIMenuItem](UIMenuItem.md)** - 菜单项（普通、可选中、分隔符、子菜单）
+- **[UIMenu](UIMenu.md)** - 菜单容器（滚动、键盘导航）
+- **[UIPullDownMenu](UIPullDownMenu.md)** - 下拉菜单（定位、触发）
+
+**UI 文档**:
+- [UI框架基础计划](../guides/UI_FRAMEWORK_FOUNDATION_PLAN.md) - UI框架设计
+- [UI菜单系统文档](../ui/UI_MENU_SYSTEM.md) - 菜单系统详细文档
+- [UI Blender参考计划](../application/UI_SYSTEM_BLENDER_REFERENCE_UPDATE_PLAN.md) - UI系统整体规划
+- [UI颜色选择器](../ui/UI_COLOR_PICKER_USAGE.md) - 颜色选择器使用指南
+
 ### 数学库
 - **[Types](Types.md)** - 数学类型和基础类型定义（Vector, Matrix, Quaternion, Plane, Ray）
 - **[MathUtils](MathUtils.md)** - 数学工具函数库（角度转换、向量/四元数/矩阵工具）⚡ **性能优化**
@@ -134,7 +159,9 @@
 4. [创建着色器](Shader.md#从文件加载)
 5. [使用着色器缓存](ShaderCache.md#基本使用)
 6. [设置 Uniform](UniformManager.md#基本使用)
-7. [设置相机矩阵](Camera.md#矩阵操作) 
+7. [设置相机矩阵](Camera.md#矩阵操作)
+8. [创建UI控件](UIWidget.md#使用示例) 🎨
+9. [使用菜单系统](UIMenu.md#使用示例) 🆕 
 
 ### 常用任务
 - [创建 ECS 世界](ECS.md#快速开始)
@@ -165,6 +192,10 @@
 - [射线投射](Types.md#ray) 
 - [日志记录](Logger.md#基本使用)
 - [多线程渲染](Renderer.md#线程安全) 🔒
+- [创建UI按钮](UIButton.md#使用示例) 🎨
+- [创建菜单](UIMenu.md#使用示例) 🆕
+- [主题切换](UITheme.md#使用示例) 🎨
+- [颜色选择器](UIColorPicker.md#使用示例) 🎨
 
 ---
 
@@ -431,7 +462,9 @@ MathUtils (静态工具类)
 - [22_gl_thread_safety_test.cpp](../../examples/22_gl_thread_safety_test.cpp) - **OpenGL 线程安全检查测试** 🔒 
 - [29_async_loading_test.cpp](../../examples/29_async_loading_test.cpp) - **异步资源加载测试** ⚡
 - [30_framebuffer_test.cpp](../../examples/30_framebuffer_test.cpp) - **帧缓冲测试（离屏渲染、后处理、MSAA）** 🎨 
-- [33_ecs_async_test.cpp](../../examples/33_ecs_async_test.cpp) - **ECS + 异步加载集成测试** 🏗️ 
+- [33_ecs_async_test.cpp](../../examples/33_ecs_async_test.cpp) - **ECS + 异步加载集成测试** 🏗️
+- [60_ui_framework_showcase.cpp](../../examples/60_ui_framework_showcase.cpp) - **UI框架展示** 🎨
+- [61_ui_menu_example.cpp](../../examples/61_ui_menu_example.cpp) - **UI菜单系统示例** 🆕 
 
 ## 相关文档
 
