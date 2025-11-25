@@ -1,17 +1,21 @@
 #include "render/transform.h"
 #include "render/error.h"
-#include <algorithm>  // for std::find
+#include <algorithm>  // for std::find, std::remove, std::sort, std::reverse
 #include <cmath>       // for std::exp, std::isfinite, std::max, std::min
 #include <sstream>     // for std::ostringstream
 
 namespace Render {
+
+// 静态成员初始化
+std::atomic<uint64_t> Transform::s_nextGlobalId{1};
 
 // ============================================================================
 // 构造和初始化
 // ============================================================================
 
 Transform::Transform()
-    : m_position(Vector3::Zero())
+    : m_globalId(s_nextGlobalId.fetch_add(1, std::memory_order_relaxed))
+    , m_position(Vector3::Zero())
     , m_rotation(Quaternion::Identity())
     , m_scale(Vector3::Ones())
     , m_node(std::make_shared<TransformNode>(this))
@@ -21,12 +25,15 @@ Transform::Transform()
     , m_cachedWorldPosition(Vector3::Zero())
     , m_cachedWorldRotation(Quaternion::Identity())
     , m_cachedWorldScale(Vector3::Ones())
+    , m_worldCache{}
+    , m_localVersion(0)
 {
     m_node->shared_this = m_node;  // 允许从内部获取 shared_ptr
 }
 
 Transform::Transform(const Vector3& position, const Quaternion& rotation, const Vector3& scale)
-    : m_position(position)
+    : m_globalId(s_nextGlobalId.fetch_add(1, std::memory_order_relaxed))
+    , m_position(position)
     , m_rotation(rotation)
     , m_scale(scale)
     , m_node(std::make_shared<TransformNode>(this))
@@ -36,6 +43,8 @@ Transform::Transform(const Vector3& position, const Quaternion& rotation, const 
     , m_cachedWorldPosition(Vector3::Zero())
     , m_cachedWorldRotation(Quaternion::Identity())
     , m_cachedWorldScale(Vector3::Ones())
+    , m_worldCache{}
+    , m_localVersion(0)
 {
     m_node->shared_this = m_node;  // 允许从内部获取 shared_ptr
 }
@@ -44,8 +53,8 @@ Transform::~Transform() {
     if (m_node) {
         m_node->destroyed.store(true, std::memory_order_release);
         
-        // 安全地通知子节点
-        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        // 安全地通知子节点（使用层级锁）
+        std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
         for (auto& childNode : m_node->children) {
             if (childNode && !childNode->destroyed.load(std::memory_order_acquire)) {
                 childNode->parent.reset();
@@ -69,7 +78,7 @@ Transform::~Transform() {
 // ============================================================================
 
 void Transform::SetPosition(const Vector3& position) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 检测 NaN/Inf
     if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(position.z())) {
@@ -80,52 +89,47 @@ void Transform::SetPosition(const Vector3& position) {
     
     m_position = position;
     MarkDirtyNoLock();
+    lock.unlock();  // 释放数据锁，因为InvalidateChildrenCache需要层级锁
+    
+    // 递归使所有子节点的缓存失效（因为父节点变化会影响所有子节点的世界变换）
+    InvalidateChildrenCache();
 }
 
 Vector3 Transform::GetWorldPosition() const {
-    // 检查祖先链是否有任何脏的节点
-    bool ancestorDirty = false;
-    auto ancestorNode = m_node ? m_node->parent.lock() : nullptr;
-    while (ancestorNode && !ancestorDirty) {
-        if (ancestorNode->transform && ancestorNode->transform->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
-            ancestorDirty = true;
-            break;
+    // 第一步：乐观无锁读取（快速路径）
+    // 先检查本地版本号（原子操作，无需加锁）
+    uint64_t localVer = m_localVersion.load(std::memory_order_acquire);
+    
+    // 使用读锁保护缓存读取，确保内存可见性
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
+    uint64_t cachedVersion = m_worldCache.version;
+    
+    // 检查本地是否变化
+    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
+        cachedVersion == localVer) {
+        auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+        if (!parentNode || 
+            m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
+            return m_worldCache.position;
         }
-        ancestorNode = ancestorNode->parent.lock();
     }
+    lock.unlock();  // 释放读锁，进入慢速路径
     
-    // Double-checked locking 优化：检查缓存是否有效
-    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
-        return m_cachedWorldPosition;  // 缓存命中
-    }
-    
-    // 缓存未命中或祖先已改变，需要更新
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    
-    // 二次检查（简化版，只检查自己）
-    if (!m_dirtyWorldTransform.load(std::memory_order_relaxed) && !ancestorDirty) {
-        return m_cachedWorldPosition;
-    }
-    
-    // 更新缓存
-    UpdateWorldTransformCache();
-    
-    return m_cachedWorldPosition;
+    // 第二步：慢速路径 - 需要重新计算
+    return GetWorldPositionSlow();
 }
 
-Vector3 Transform::GetWorldPositionIterative() const {
-    // 迭代版本：收集所有祖先，从根向下计算，避免递归
+Vector3 Transform::GetWorldPositionSlow() const {
+    // 收集祖先链（不持有锁，因为parent指针通过weak_ptr访问是线程安全的）
     std::vector<Transform*> chain;
-    chain.reserve(32);  // 预分配，避免多次重新分配
+    chain.reserve(32);
     
-    // 收集祖先链（从当前节点到根节点）
     Transform* current = const_cast<Transform*>(this);
-    const int MAX_DEPTH = 1000;
-    
-    while (current != nullptr && chain.size() < MAX_DEPTH) {
+    while (current && chain.size() < 1000) {
         chain.push_back(current);
         auto node = GetNode(current);
         if (node) {
+            // parent指针通过weak_ptr访问，线程安全，无需加锁
             auto parentNode = node->parent.lock();
             current = parentNode ? parentNode->transform : nullptr;
         } else {
@@ -133,47 +137,159 @@ Vector3 Transform::GetWorldPositionIterative() const {
         }
     }
     
-    // 从根向下计算（反向遍历）
-    Vector3 worldPosition = Vector3::Zero();
-    Quaternion worldRotation = Quaternion::Identity();
-    Vector3 worldScale = Vector3::Ones();
+    // 按 ID 顺序锁定整个链（避免死锁）
+    std::vector<std::shared_lock<std::shared_mutex>> locks;
+    locks.reserve(chain.size());
     
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        Transform* node = *it;
-        std::lock_guard<std::recursive_mutex> lock(node->m_mutex);
-        
-        // 累积变换
-        if (it != chain.rbegin()) {
-            // 应用父对象的缩放和旋转
-            Vector3 scaledPos = worldScale.cwiseProduct(node->m_position);
-            worldPosition = worldPosition + worldRotation * scaledPos;
-            worldRotation = worldRotation * node->m_rotation;
-            worldScale = worldScale.cwiseProduct(node->m_scale);
-        } else {
-            // 根节点
-            worldPosition = node->m_position;
-            worldRotation = node->m_rotation;
-            worldScale = node->m_scale;
+    // 按ID排序
+    std::sort(chain.begin(), chain.end(), 
+        [](const Transform* a, const Transform* b) {
+            return a->m_globalId < b->m_globalId;
+        });
+    
+    // 按顺序加锁（现在可以安全地加锁，因为之前没有持有任何锁）
+    for (auto* node : chain) {
+        locks.emplace_back(node->m_dataMutex);
+    }
+    
+    // 现在安全地从根到叶计算（需要重新按层级顺序排列）
+    // 先找到根节点（没有父节点的节点）
+    std::vector<Transform*> hierarchyChain;
+    hierarchyChain.reserve(chain.size());
+    
+    // 找到根节点
+    Transform* root = nullptr;
+    for (auto* node : chain) {
+        auto nodePtr = GetNode(node);
+        if (nodePtr) {
+            auto parentNode = nodePtr->parent.lock();
+            if (!parentNode) {
+                root = node;
+                break;
+            }
         }
     }
     
-    return worldPosition;
+    // 如果没找到根，使用第一个节点
+    if (!root && !chain.empty()) {
+        root = chain[0];
+    }
+    
+    // 从根开始构建层级链
+    if (root) {
+        Transform* current = root;
+        while (current && hierarchyChain.size() < chain.size()) {
+            hierarchyChain.push_back(current);
+            
+            // 找到当前节点的子节点（在chain中）
+            bool found = false;
+            for (auto* node : chain) {
+                if (node == current) continue;
+                auto nodePtr = GetNode(node);
+                if (nodePtr) {
+                    auto parentNode = nodePtr->parent.lock();
+                    if (parentNode && parentNode->transform == current) {
+                        current = node;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) break;
+        }
+    }
+    
+    // 如果层级链构建失败，使用原始链的反向
+    if (hierarchyChain.empty()) {
+        hierarchyChain = chain;
+        std::reverse(hierarchyChain.begin(), hierarchyChain.end());
+    }
+    
+    // 计算世界变换
+    Vector3 worldPos = Vector3::Zero();
+    Quaternion worldRot = Quaternion::Identity();
+    Vector3 worldScale = Vector3::Ones();
+    
+    for (size_t i = 0; i < hierarchyChain.size(); ++i) {
+        Transform* node = hierarchyChain[i];
+        
+        if (i == 0) {
+            worldPos = node->m_position;
+            worldRot = node->m_rotation;
+            worldScale = node->m_scale;
+        } else {
+            Vector3 scaledPos = worldScale.cwiseProduct(node->m_position);
+            worldPos = worldPos + worldRot * scaledPos;
+            worldRot = worldRot * node->m_rotation;
+            worldScale = worldScale.cwiseProduct(node->m_scale);
+        }
+    }
+    
+    // 先释放所有读锁，然后获取写锁更新缓存（避免从读锁升级到写锁导致死锁）
+    locks.clear();  // 释放所有读锁
+    
+    // 更新缓存（仅对自己，需要写锁）
+    {
+        std::unique_lock<std::shared_mutex> writeLock(m_dataMutex);
+        m_worldCache.position = worldPos;
+        m_worldCache.rotation = worldRot;
+        m_worldCache.scale = worldScale;
+        m_worldCache.version = m_localVersion.load(std::memory_order_relaxed);
+        
+        auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+        m_worldCache.parentVersion = parentNode ? 
+            parentNode->transform->m_localVersion.load(std::memory_order_acquire) : 0;
+        
+        // 同时更新旧的缓存（向后兼容）
+        m_cachedWorldPosition = worldPos;
+        m_cachedWorldRotation = worldRot;
+        m_cachedWorldScale = worldScale;
+        m_dirtyWorldTransform.store(false, std::memory_order_release);
+    }
+    
+    return worldPos;
+}
+
+Quaternion Transform::GetWorldRotationSlow() const {
+    // 复用GetWorldPositionSlow的逻辑,但只返回旋转
+    // 为了效率,我们直接调用GetWorldPositionSlow来更新缓存,然后返回缓存的旋转
+    GetWorldPositionSlow();  // 这会更新所有缓存
+    return m_worldCache.rotation;
+}
+
+Vector3 Transform::GetWorldScaleSlow() const {
+    // 复用GetWorldPositionSlow的逻辑,但只返回缩放
+    // 为了效率,我们直接调用GetWorldPositionSlow来更新缓存,然后返回缓存的缩放
+    GetWorldPositionSlow();  // 这会更新所有缓存
+    return m_worldCache.scale;
+}
+
+Vector3 Transform::GetWorldPositionIterative() const {
+    // 迭代版本：使用新的慢速路径实现
+    return GetWorldPositionSlow();
 }
 
 void Transform::Translate(const Vector3& translation) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     m_position += translation;
     MarkDirtyNoLock();
+    lock.unlock();  // 释放数据锁
+    
+    // 递归使所有子节点的缓存失效
+    InvalidateChildrenCache();
 }
 
 void Transform::TranslateWorld(const Vector3& translation) {
-    // 使用递归锁，在持锁状态下安全访问父对象
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // 使用写锁保护数据访问
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
     Vector3 localTranslation;
     auto parentNode = m_node ? m_node->parent.lock() : nullptr;
     if (parentNode && parentNode->transform) {
+        // 需要访问父对象，先释放当前锁
+        lock.unlock();
         localTranslation = parentNode->transform->InverseTransformDirection(translation);
+        lock.lock();
     } else {
         localTranslation = translation;
     }
@@ -187,7 +303,7 @@ void Transform::TranslateWorld(const Vector3& translation) {
 // ============================================================================
 
 void Transform::SetRotation(const Quaternion& rotation) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 检查四元数的模长，避免零四元数导致除零错误
     float norm = rotation.norm();
@@ -207,58 +323,63 @@ void Transform::SetRotation(const Quaternion& rotation) {
     }
     
     MarkDirtyNoLock();
+    lock.unlock();  // 释放数据锁
+    
+    // 递归使所有子节点的缓存失效
+    InvalidateChildrenCache();
 }
 
 void Transform::SetRotationEuler(const Vector3& euler) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     m_rotation = MathUtils::FromEuler(euler.x(), euler.y(), euler.z());
     MarkDirtyNoLock();
+    lock.unlock();  // 释放数据锁
+    
+    // 递归使所有子节点的缓存失效
+    InvalidateChildrenCache();
 }
 
 void Transform::SetRotationEulerDegrees(const Vector3& euler) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     m_rotation = MathUtils::FromEulerDegrees(euler.x(), euler.y(), euler.z());
     MarkDirtyNoLock();
+    lock.unlock();  // 释放数据锁
+    
+    // 递归使所有子节点的缓存失效
+    InvalidateChildrenCache();
 }
 
 Vector3 Transform::GetRotationEuler() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     return MathUtils::ToEuler(m_rotation);
 }
 
 Vector3 Transform::GetRotationEulerDegrees() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     return MathUtils::ToEulerDegrees(m_rotation);
 }
 
 Quaternion Transform::GetWorldRotation() const {
-    // 检查祖先链是否有任何脏的节点
-    bool ancestorDirty = false;
-    auto ancestorNode = m_node ? m_node->parent.lock() : nullptr;
-    while (ancestorNode && !ancestorDirty) {
-        if (ancestorNode->transform && ancestorNode->transform->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
-            ancestorDirty = true;
-            break;
+    // 第一步：乐观无锁读取（快速路径）
+    uint64_t cachedVersion = m_worldCache.version;
+    uint64_t localVer = m_localVersion.load(std::memory_order_acquire);
+    
+    // 检查本地是否变化
+    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
+        cachedVersion == localVer) {
+        auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+        if (!parentNode || 
+            m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
+            return m_worldCache.rotation;
         }
-        ancestorNode = ancestorNode->parent.lock();
     }
     
-    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
-        return m_cachedWorldRotation;
-    }
-    
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    
-    if (!m_dirtyWorldTransform.load(std::memory_order_relaxed) && !ancestorDirty) {
-        return m_cachedWorldRotation;
-    }
-    
-    UpdateWorldTransformCache();
-    return m_cachedWorldRotation;
+    // 第二步：慢速路径 - 需要重新计算
+    return GetWorldRotationSlow();
 }
 
 void Transform::Rotate(const Quaternion& rotation) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 应用旋转增量
     Quaternion newRotation = m_rotation * rotation;
@@ -283,7 +404,7 @@ void Transform::Rotate(const Quaternion& rotation) {
 }
 
 void Transform::RotateAround(const Vector3& axis, float angle) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 检查旋转轴是否有效
     if (axis.squaredNorm() < MathUtils::EPSILON) {
@@ -314,8 +435,8 @@ void Transform::RotateAround(const Vector3& axis, float angle) {
 }
 
 void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
-    // 使用递归锁，在持锁状态下安全访问父对象
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // 使用写锁保护数据访问
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 检查旋转轴是否有效
     if (axis.squaredNorm() < MathUtils::EPSILON) {
@@ -326,9 +447,12 @@ void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
     
     Quaternion rot = MathUtils::AngleAxis(angle, axis.normalized());
     
+    // 需要访问父对象，先释放当前锁
+    lock.unlock();
     auto parentNode = m_node ? m_node->parent.lock() : nullptr;
     if (parentNode && parentNode->transform) {
         Quaternion parentRot = parentNode->transform->GetWorldRotation();
+        lock.lock();
         Quaternion worldRot = parentRot * m_rotation;
         worldRot = rot * worldRot;
         
@@ -364,6 +488,7 @@ void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
             localRot.z() * invLocalNorm
         );
     } else {
+        lock.lock();
         Quaternion newRotation = rot * m_rotation;
         float norm = newRotation.norm();
         if (norm < MathUtils::EPSILON) {
@@ -385,11 +510,13 @@ void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
 }
 
 void Transform::LookAt(const Vector3& target, const Vector3& up) {
-    // 使用递归锁，在持锁状态下安全访问父对象
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // 使用写锁保护数据访问
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
-    // 获取世界位置（递归锁允许在持锁状态下调用）
+    // 获取世界位置（需要先释放锁，避免死锁）
+    lock.unlock();
     Vector3 worldPos = GetWorldPosition();
+    lock.lock();
     Vector3 direction = (target - worldPos).normalized();
     
     if (direction.squaredNorm() < MathUtils::EPSILON) {
@@ -414,7 +541,7 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
 // ============================================================================
 
 void Transform::SetScale(const Vector3& scale) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 检测 NaN/Inf
     if (!std::isfinite(scale.x()) || !std::isfinite(scale.y()) || !std::isfinite(scale.z())) {
@@ -445,36 +572,33 @@ void Transform::SetScale(const Vector3& scale) {
     
     m_scale = safeScale;
     MarkDirtyNoLock();
+    lock.unlock();  // 释放数据锁
+    
+    // 递归使所有子节点的缓存失效
+    InvalidateChildrenCache();
 }
 
 void Transform::SetScale(float scale) {
-    SetScale(Vector3(scale, scale, scale));  // 复用带验证的版本
+    SetScale(Vector3(scale, scale, scale));  // 复用带验证的版本，会自动调用InvalidateChildrenCache
 }
 
 Vector3 Transform::GetWorldScale() const {
-    // 检查祖先链是否有任何脏的节点
-    bool ancestorDirty = false;
-    auto ancestorNode = m_node ? m_node->parent.lock() : nullptr;
-    while (ancestorNode && !ancestorDirty) {
-        if (ancestorNode->transform && ancestorNode->transform->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
-            ancestorDirty = true;
-            break;
+    // 第一步：乐观无锁读取（快速路径）
+    uint64_t cachedVersion = m_worldCache.version;
+    uint64_t localVer = m_localVersion.load(std::memory_order_acquire);
+    
+    // 检查本地是否变化
+    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
+        cachedVersion == localVer) {
+        auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+        if (!parentNode || 
+            m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
+            return m_worldCache.scale;
         }
-        ancestorNode = ancestorNode->parent.lock();
     }
     
-    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
-        return m_cachedWorldScale;
-    }
-    
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    
-    if (!m_dirtyWorldTransform.load(std::memory_order_relaxed) && !ancestorDirty) {
-        return m_cachedWorldScale;
-    }
-    
-    UpdateWorldTransformCache();
-    return m_cachedWorldScale;
+    // 第二步：慢速路径 - 需要重新计算
+    return GetWorldScaleSlow();
 }
 
 // ============================================================================
@@ -482,17 +606,17 @@ Vector3 Transform::GetWorldScale() const {
 // ============================================================================
 
 Vector3 Transform::GetForward() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     return m_rotation * Vector3::UnitZ();
 }
 
 Vector3 Transform::GetRight() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     return m_rotation * Vector3::UnitX();
 }
 
 Vector3 Transform::GetUp() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     return m_rotation * Vector3::UnitY();
 }
 
@@ -501,17 +625,19 @@ Vector3 Transform::GetUp() const {
 // ============================================================================
 
 Matrix4 Transform::GetLocalMatrix() const {
-    // 使用递归锁保护数据访问
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // 使用读锁保护数据访问
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     return MathUtils::TRS(m_position, m_rotation, m_scale);
 }
 
 Matrix4 Transform::GetWorldMatrix() const {
-    // 使用递归锁，允许在持锁状态下递归调用父对象的方法
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // 使用读锁保护数据访问
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     
-    Matrix4 localMat = GetLocalMatrix();
+    Matrix4 localMat = MathUtils::TRS(m_position, m_rotation, m_scale);
     
+    // 需要访问父对象，先释放当前锁
+    lock.unlock();
     auto parentNode = m_node ? m_node->parent.lock() : nullptr;
     if (parentNode && parentNode->transform) {
         Matrix4 parentWorldMat = parentNode->transform->GetWorldMatrix();
@@ -521,7 +647,7 @@ Matrix4 Transform::GetWorldMatrix() const {
 }
 
 void Transform::SetFromMatrix(const Matrix4& matrix) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
     MathUtils::DecomposeMatrix(matrix, m_position, m_rotation, m_scale);
     MarkDirtyNoLock();
 }
@@ -531,7 +657,8 @@ void Transform::SetFromMatrix(const Matrix4& matrix) {
 // ============================================================================
 
 bool Transform::SetParent(Transform* parent) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // 层级操作使用层级锁
+    std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
     
     auto myNode = GetNode(this);
     if (!myNode || myNode->destroyed.load(std::memory_order_acquire)) {
@@ -594,7 +721,12 @@ bool Transform::SetParent(Transform* parent) {
     
     // 更新父指针
     myNode->parent = newParentNode;
-    MarkDirtyNoLock();
+    
+    // 标记为脏（需要数据锁）
+    {
+        std::unique_lock<std::shared_mutex> dataLock(m_dataMutex);
+        MarkDirtyNoLock();
+    }
     
     return true;
 }
@@ -637,10 +769,11 @@ Vector3 Transform::InverseTransformDirection(const Vector3& worldDirection) cons
 // ============================================================================
 
 void Transform::MarkDirty() {
-    // 使用原子操作标记为脏（无需加锁）
+    // 使用原子操作标记为脏并递增版本号（无需加锁）
     m_dirtyLocal.store(true, std::memory_order_release);
     m_dirtyWorld.store(true, std::memory_order_release);
     m_dirtyWorldTransform.store(true, std::memory_order_release);
+    m_localVersion.fetch_add(1, std::memory_order_release);
 }
 
 void Transform::MarkDirtyNoLock() {
@@ -648,17 +781,18 @@ void Transform::MarkDirtyNoLock() {
     m_dirtyLocal.store(true, std::memory_order_release);
     m_dirtyWorld.store(true, std::memory_order_release);
     m_dirtyWorldTransform.store(true, std::memory_order_release);
+    m_localVersion.fetch_add(1, std::memory_order_release);
     
     // 注意：不在这里通知子对象，避免死锁
-    // 子对象会在访问时自动检测父对象变化（通过检查父对象的 dirty flag）
+    // 子对象会在访问时自动检测父对象变化（通过检查父对象的版本号）
 }
 
 void Transform::InvalidateWorldTransformCache() {
     // 外部调用版本：标记世界变换缓存为无效，并递归标记所有子对象
     m_dirtyWorldTransform.store(true, std::memory_order_release);
     
-    // 通知所有子对象更新缓存
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    // 通知所有子对象更新缓存（使用层级锁）
+    std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
     if (m_node) {
         for (auto& childNode : m_node->children) {
             if (childNode && childNode->transform) {
@@ -676,9 +810,54 @@ void Transform::InvalidateWorldTransformCacheNoLock() {
     // 子对象在下次访问时会自动检测父对象变化并更新缓存
 }
 
-void Transform::UpdateWorldTransformCache() const {
-    // 注意：调用此函数前必须已经持有 m_mutex 锁
+void Transform::InvalidateChildrenCache() {
+    // 递归使所有子节点的缓存失效（因为父节点变化会影响所有子节点的世界变换）
+    // 使用非递归方式，避免重复获取层级锁
     
+    // 收集所有子节点（需要层级锁）
+    std::vector<Transform*> allChildren;
+    {
+        std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
+        if (m_node) {
+            // 使用队列进行广度优先遍历，收集所有子节点
+            std::vector<Transform*> queue;
+            for (auto& childNode : m_node->children) {
+                if (childNode && childNode->transform) {
+                    queue.push_back(childNode->transform);
+                }
+            }
+            
+            while (!queue.empty()) {
+                Transform* current = queue.back();
+                queue.pop_back();
+                allChildren.push_back(current);
+                
+                // 收集当前节点的子节点
+                std::lock_guard<std::mutex> childLock(current->m_hierarchyMutex);
+                if (current->m_node) {
+                    for (auto& childNode : current->m_node->children) {
+                        if (childNode && childNode->transform) {
+                            queue.push_back(childNode->transform);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 现在释放所有锁，原子地失效所有子节点的缓存
+    for (Transform* child : allChildren) {
+        child->m_dirtyWorldTransform.store(true, std::memory_order_release);
+    }
+}
+
+void Transform::UpdateWorldTransformCache() const {
+    // 注意：此函数已被GetWorldPositionSlow等替代，保留用于向后兼容
+    // 现在直接调用GetWorldPositionSlow来更新缓存
+    GetWorldPositionSlow();
+    
+    // 以下代码已不再使用，但保留以防需要
+    /*
     auto parentNode = m_node ? m_node->parent.lock() : nullptr;
     
     if (parentNode && parentNode->transform) {
@@ -700,6 +879,7 @@ void Transform::UpdateWorldTransformCache() const {
     
     // 标记缓存为有效
     m_dirtyWorldTransform.store(false, std::memory_order_release);
+    */
 }
 
 // ============================================================================
@@ -709,7 +889,7 @@ void Transform::UpdateWorldTransformCache() const {
 void Transform::AddChild(Transform* child) {
     if (!child) return;
     
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
     
     if (!m_node) return;
     
@@ -729,7 +909,7 @@ void Transform::AddChild(Transform* child) {
 void Transform::RemoveChild(Transform* child) {
     if (!child) return;
     
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
     
     if (!m_node) return;
     
@@ -813,7 +993,7 @@ void Transform::SmoothTo(const Transform& target, float smoothness, float deltaT
 // ============================================================================
 
 std::string Transform::DebugString() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     
     std::ostringstream oss;
     oss << "Transform {\n";
@@ -837,7 +1017,7 @@ std::string Transform::DebugString() const {
 }
 
 void Transform::PrintHierarchy(int indent, std::ostream& os) const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 打印缩进
     for (int i = 0; i < indent; ++i) {
@@ -858,7 +1038,7 @@ void Transform::PrintHierarchy(int indent, std::ostream& os) const {
 }
 
 bool Transform::Validate() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
     
     // 1. 检查四元数是否归一化
     float rotNorm = m_rotation.norm();
@@ -940,7 +1120,7 @@ int Transform::GetHierarchyDepth() const {
 }
 
 int Transform::GetChildCount() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
     return static_cast<int>(m_node ? m_node->children.size() : 0);
 }
 

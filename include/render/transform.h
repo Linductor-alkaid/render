@@ -3,12 +3,14 @@
 #include "types.h"
 #include "math_utils.h"
 #include <mutex>
+#include <shared_mutex>
 #include <atomic>
 #include <vector>
 #include <string>
 #include <sstream>
 #include <iostream>
 #include <memory>
+#include <algorithm>
 
 namespace Render {
 
@@ -135,7 +137,7 @@ public:
      */
     ~Transform();
     
-    // 禁用拷贝和移动（因为包含 std::atomic 和 std::recursive_mutex，它们都不可拷贝不可移动）
+    // 禁用拷贝和移动（因为包含 std::atomic 和 std::shared_mutex/std::mutex，它们都不可拷贝不可移动）
     Transform(const Transform&) = delete;
     Transform& operator=(const Transform&) = delete;
     Transform(Transform&&) = delete;
@@ -547,10 +549,8 @@ public:
      */
     void ForceUpdateWorldTransform() {
         if (m_dirtyWorld.load(std::memory_order_acquire)) {
-            std::lock_guard<std::recursive_mutex> lock(m_mutex);
-            if (m_dirtyWorldTransform.load(std::memory_order_relaxed)) {
-                UpdateWorldTransformCache();
-            }
+            // 直接调用GetWorldPositionSlow来更新缓存（内部已处理锁）
+            GetWorldPositionSlow();
         }
     }
     
@@ -597,9 +597,28 @@ private:
     mutable Quaternion m_cachedWorldRotation;
     mutable Vector3 m_cachedWorldScale;
     
-    // 线程安全：使用递归互斥锁保护数据访问
-    // 使用递归锁允许同一线程多次获取锁，避免在递归调用（如GetWorldPosition调用父对象的GetWorldPosition）时死锁
-    mutable std::recursive_mutex m_mutex;  // 主锁：保护基本成员变量
+    // 层级锁协议：版本控制的缓存系统
+    struct WorldTransformCache {
+        Vector3 position;
+        Quaternion rotation;
+        Vector3 scale;
+        uint64_t version{0};
+        uint64_t parentVersion{0};
+    };
+    mutable WorldTransformCache m_worldCache;
+    
+    // 全局唯一ID（用于锁排序，避免死锁）
+    const uint64_t m_globalId;
+    static std::atomic<uint64_t> s_nextGlobalId;
+    
+    // 本地变换版本号（每次修改时递增）
+    std::atomic<uint64_t> m_localVersion{0};
+    
+    // 线程安全：使用读写锁和层级锁
+    // m_dataMutex: 读写锁，保护基本成员变量（读多写少场景）
+    // m_hierarchyMutex: 互斥锁，保护层级操作（父子关系修改）
+    mutable std::shared_mutex m_dataMutex;  // 读写锁：保护数据访问
+    mutable std::mutex m_hierarchyMutex;     // 层级锁：保护父子关系操作
     
     void MarkDirty();
     void MarkDirtyNoLock();  // 无锁版本，供内部已加锁的方法调用
@@ -608,11 +627,38 @@ private:
     void UpdateWorldTransformCache() const;
     void InvalidateWorldTransformCache();
     void InvalidateWorldTransformCacheNoLock();  // 无锁版本，避免死锁
+    void InvalidateChildrenCache();  // 递归失效所有子节点的缓存
     
     // 子对象管理（私有方法，用于生命周期管理）
     void AddChild(Transform* child);
     void RemoveChild(Transform* child);
     void NotifyChildrenParentDestroyed();
+    
+    // 层级锁协议：按ID排序的多对象加锁辅助类
+    template<typename... Transforms>
+    struct ScopedMultiLock {
+        std::vector<std::unique_lock<std::shared_mutex>> locks;
+        
+        ScopedMultiLock(Transforms*... transforms) {
+            std::vector<Transform*> ptrs = {transforms...};
+            // 移除 nullptr 并按 ID 排序
+            ptrs.erase(std::remove(ptrs.begin(), ptrs.end(), nullptr), ptrs.end());
+            std::sort(ptrs.begin(), ptrs.end(), 
+                [](const Transform* a, const Transform* b) {
+                    return a->m_globalId < b->m_globalId;
+                });
+            
+            // 按顺序加锁（避免死锁）
+            for (auto* t : ptrs) {
+                locks.emplace_back(t->m_dataMutex);
+            }
+        }
+    };
+    
+    // 慢速路径：需要重新计算世界变换
+    Vector3 GetWorldPositionSlow() const;
+    Quaternion GetWorldRotationSlow() const;
+    Vector3 GetWorldScaleSlow() const;
 };
 
 } // namespace Render
