@@ -295,6 +295,10 @@ set(RENDER_SOURCES
     src/ui/widgets/ui_slider.cpp
     src/ui/widgets/ui_radio_button.cpp
     src/ui/widgets/ui_color_picker.cpp
+    src/ui/widgets/ui_menu_item.cpp
+    src/ui/widgets/ui_menu.cpp
+    src/ui/widgets/ui_pulldown_menu.cpp
+    src/ui/ui_menu_renderer.cpp
 
     # Shaders
     shaders/sprite.vert

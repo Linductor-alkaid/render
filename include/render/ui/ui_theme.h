@@ -111,6 +111,27 @@ public:
      * @brief 保存主题到 JSON
      */
     static bool SaveToJSON(const UITheme& theme, const std::string& jsonPath);
+
+    // 菜单相关的颜色获取方法
+    [[nodiscard]] Color GetMenuBackgroundColor() const { return menu.normal.inner; }
+    [[nodiscard]] Color GetMenuBorderColor() const { return menu.normal.outline; }
+    [[nodiscard]] float GetMenuBorderWidth() const { return 1.0f; }
+    [[nodiscard]] float GetMenuCornerRadius() const { return 4.0f; }
+    [[nodiscard]] Color GetMenuSeparatorColor() const { return menu.normal.outline; }
+    
+    [[nodiscard]] Color GetMenuItemNormalBackgroundColor() const { return Color::Clear(); }
+    [[nodiscard]] Color GetMenuItemNormalTextColor() const { return menu.normal.text; }
+    
+    [[nodiscard]] Color GetMenuItemHoverBackgroundColor() const { return menu.hover.inner; }
+    [[nodiscard]] Color GetMenuItemHoverTextColor() const { return menu.hover.text; }
+    
+    [[nodiscard]] Color GetMenuItemPressedBackgroundColor() const { return menu.pressed.inner; }
+    [[nodiscard]] Color GetMenuItemPressedTextColor() const { return menu.pressed.text; }
+    
+    [[nodiscard]] Color GetMenuItemDisabledBackgroundColor() const { return Color::Clear(); }
+    [[nodiscard]] Color GetMenuItemDisabledTextColor() const { return menu.disabled.text; }
+    
+    [[nodiscard]] float GetMenuItemFontSize() const { return menuFont.size; }
 };
 
 /**
