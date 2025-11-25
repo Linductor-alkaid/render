@@ -198,14 +198,14 @@ void UIRuntimeModule::EnsureSampleWidgets() {
     if (!root->FindById("ui.panel")) {
         // 创建主面板，使用 Flex 布局（垂直方向）
         auto panel = std::make_unique<UI::UIWidget>("ui.panel");
-        panel->SetPreferredSize(Vector2(600.0f, 500.0f));
+        panel->SetPreferredSize(Vector2(800.0f, 680.0f)); // 增大尺寸以容纳所有控件
         panel->SetMinSize(Vector2(400.0f, 300.0f));
-        panel->SetPadding(Vector4(32.0f, 32.0f, 32.0f, 32.0f));
+        panel->SetPadding(Vector4(20.0f, 20.0f, 20.0f, 20.0f)); // 减小 padding 以节省空间
         panel->SetLayoutMode(UI::UILayoutMode::Flex);  // 明确设置布局模式
         panel->SetLayoutDirection(UI::UILayoutDirection::Vertical);
         panel->SetJustifyContent(UI::UIFlexJustifyContent::FlexStart);
         panel->SetAlignItems(UI::UIFlexAlignItems::Stretch);
-        panel->SetSpacing(16.0f);
+        panel->SetSpacing(12.0f); // 减小间距
 
         // 创建标题区域（Flex 布局 - 水平）
         auto titleRow = std::make_unique<UI::UIWidget>("ui.panel.titleRow");
@@ -219,8 +219,8 @@ void UIRuntimeModule::EnsureSampleWidgets() {
 
         // 创建文本输入框
         auto textField = std::make_unique<UI::UITextField>("ui.panel.input");
-        textField->SetPreferredSize(Vector2(0.0f, 64.0f)); // 宽度自适应（填充父容器）
-        textField->SetMinSize(Vector2(200.0f, 48.0f));
+        textField->SetPreferredSize(Vector2(0.0f, 48.0f)); // 减小高度
+        textField->SetMinSize(Vector2(200.0f, 40.0f));
         textField->SetFlexGrow(0.0f); // 不拉伸
         textField->SetPlaceholder("Type here...");
         textField->SetOnTextChanged([](UI::UITextField& field, const std::string& value) {
@@ -231,13 +231,13 @@ void UIRuntimeModule::EnsureSampleWidgets() {
 
         // 创建 Grid 布局演示区域
         auto gridDemo = std::make_unique<UI::UIWidget>("ui.panel.gridDemo");
-        gridDemo->SetPreferredSize(Vector2(0.0f, 200.0f));
-        gridDemo->SetMinSize(Vector2(200.0f, 150.0f));
+        gridDemo->SetPreferredSize(Vector2(0.0f, 120.0f)); // 减小高度以节省空间
+        gridDemo->SetMinSize(Vector2(200.0f, 100.0f));
         gridDemo->SetLayoutMode(UI::UILayoutMode::Grid);  // 使用 Grid 布局
         gridDemo->SetGridColumns(3);  // 3列
         gridDemo->SetGridRows(2);     // 2行
-        gridDemo->SetGridCellSpacing(Vector2(8.0f, 8.0f));
-        gridDemo->SetPadding(Vector4(8.0f, 8.0f, 8.0f, 8.0f));
+        gridDemo->SetGridCellSpacing(Vector2(6.0f, 6.0f)); // 减小间距
+        gridDemo->SetPadding(Vector4(6.0f, 6.0f, 6.0f, 6.0f));
 
         // 创建 Grid 中的按钮
         for (int i = 0; i < 6; ++i) {
@@ -253,8 +253,8 @@ void UIRuntimeModule::EnsureSampleWidgets() {
 
         // 创建水平布局容器（用于按钮行）
         auto buttonRow = std::make_unique<UI::UIWidget>("ui.panel.buttonRow");
-        buttonRow->SetPreferredSize(Vector2(0.0f, 56.0f)); // 宽度自适应
-        buttonRow->SetMinSize(Vector2(200.0f, 40.0f));
+        buttonRow->SetPreferredSize(Vector2(0.0f, 40.0f)); // 减小高度
+        buttonRow->SetMinSize(Vector2(200.0f, 36.0f));
         buttonRow->SetLayoutMode(UI::UILayoutMode::Flex);
         buttonRow->SetLayoutDirection(UI::UILayoutDirection::Horizontal);
         buttonRow->SetJustifyContent(UI::UIFlexJustifyContent::SpaceEvenly);
@@ -262,16 +262,16 @@ void UIRuntimeModule::EnsureSampleWidgets() {
         buttonRow->SetSpacing(12.0f);
 
         auto button1 = std::make_unique<UI::UIButton>("ui.panel.button1");
-        button1->SetPreferredSize(Vector2(140.0f, 48.0f));
-        button1->SetMinSize(Vector2(100.0f, 36.0f));
+        button1->SetPreferredSize(Vector2(120.0f, 36.0f)); // 减小尺寸
+        button1->SetMinSize(Vector2(100.0f, 32.0f));
         button1->SetLabel("Submit");
         button1->SetOnClicked([](UI::UIButton& btn) {
             Logger::GetInstance().InfoFormat("[UIRuntimeModule] Button '%s' clicked.", btn.GetId().c_str());
         });
 
         auto button2 = std::make_unique<UI::UIButton>("ui.panel.button2");
-        button2->SetPreferredSize(Vector2(140.0f, 48.0f));
-        button2->SetMinSize(Vector2(100.0f, 36.0f));
+        button2->SetPreferredSize(Vector2(120.0f, 36.0f)); // 减小尺寸
+        button2->SetMinSize(Vector2(100.0f, 32.0f));
         button2->SetLabel("Cancel");
         button2->SetOnClicked([](UI::UIButton& btn) {
             Logger::GetInstance().InfoFormat("[UIRuntimeModule] Button '%s' clicked.", btn.GetId().c_str());
@@ -280,14 +280,34 @@ void UIRuntimeModule::EnsureSampleWidgets() {
         buttonRow->AddChild(std::move(button1));
         buttonRow->AddChild(std::move(button2));
 
-        // 创建高级控件演示区域
-        auto advancedControlsRow = std::make_unique<UI::UIWidget>("ui.panel.advancedControls");
-        advancedControlsRow->SetPreferredSize(Vector2(0.0f, 0.0f)); // 自适应高度
-        advancedControlsRow->SetLayoutMode(UI::UILayoutMode::Flex);
-        advancedControlsRow->SetLayoutDirection(UI::UILayoutDirection::Vertical);
-        advancedControlsRow->SetJustifyContent(UI::UIFlexJustifyContent::FlexStart);
-        advancedControlsRow->SetAlignItems(UI::UIFlexAlignItems::Stretch);
-        advancedControlsRow->SetSpacing(12.0f);
+        // 创建高级控件演示区域 - 使用水平布局减少高度
+        auto advancedControlsContainer = std::make_unique<UI::UIWidget>("ui.panel.advancedControlsContainer");
+        advancedControlsContainer->SetPreferredSize(Vector2(0.0f, 0.0f)); // 自适应高度
+        advancedControlsContainer->SetLayoutMode(UI::UILayoutMode::Flex);
+        advancedControlsContainer->SetLayoutDirection(UI::UILayoutDirection::Horizontal); // 改为水平布局
+        advancedControlsContainer->SetJustifyContent(UI::UIFlexJustifyContent::SpaceEvenly);
+        advancedControlsContainer->SetAlignItems(UI::UIFlexAlignItems::FlexStart);
+        advancedControlsContainer->SetSpacing(16.0f);
+        
+        // 左列：CheckBox, Toggle, Slider, RadioButtons
+        auto advancedControlsCol1 = std::make_unique<UI::UIWidget>("ui.panel.advancedControls1");
+        advancedControlsCol1->SetPreferredSize(Vector2(0.0f, 0.0f)); // 自适应
+        advancedControlsCol1->SetFlexGrow(1.0f); // 平分空间
+        advancedControlsCol1->SetLayoutMode(UI::UILayoutMode::Flex);
+        advancedControlsCol1->SetLayoutDirection(UI::UILayoutDirection::Vertical);
+        advancedControlsCol1->SetJustifyContent(UI::UIFlexJustifyContent::FlexStart);
+        advancedControlsCol1->SetAlignItems(UI::UIFlexAlignItems::Stretch);
+        advancedControlsCol1->SetSpacing(8.0f);
+        
+        // 右列：ColorPicker
+        auto advancedControlsCol2 = std::make_unique<UI::UIWidget>("ui.panel.advancedControls2");
+        advancedControlsCol2->SetPreferredSize(Vector2(0.0f, 0.0f)); // 自适应
+        advancedControlsCol2->SetFlexGrow(1.0f); // 平分空间
+        advancedControlsCol2->SetLayoutMode(UI::UILayoutMode::Flex);
+        advancedControlsCol2->SetLayoutDirection(UI::UILayoutDirection::Vertical);
+        advancedControlsCol2->SetJustifyContent(UI::UIFlexJustifyContent::FlexStart);
+        advancedControlsCol2->SetAlignItems(UI::UIFlexAlignItems::Stretch);
+        advancedControlsCol2->SetSpacing(8.0f);
 
         // Checkbox 演示
         auto checkbox = std::make_unique<UI::UICheckBox>("ui.panel.checkbox");
@@ -337,29 +357,37 @@ void UIRuntimeModule::EnsureSampleWidgets() {
         radio3->SetLabel("Option 3");
         radio3->SetGroup(m_sampleRadioGroup.get());
 
-        // ColorPicker 演示
+        // ColorPicker 演示 - 调整尺寸
         auto colorPicker = std::make_unique<UI::UIColorPicker>("ui.panel.colorPicker");
         colorPicker->SetColor(Color(0.2f, 0.6f, 0.9f, 1.0f));
         colorPicker->SetShowPreview(true);
         colorPicker->SetShowAlpha(false);
+        colorPicker->SetPreferredSize(Vector2(0.0f, 120.0f)); // 宽度自适应，高度固定
         colorPicker->SetOnChanged([](UI::UIColorPicker& cp, const Color& color) {
             Logger::GetInstance().InfoFormat("[UIRuntimeModule] ColorPicker '%s' color changed to (%.2f, %.2f, %.2f, %.2f)",
                                             cp.GetId().c_str(), color.r, color.g, color.b, color.a);
         });
 
-        advancedControlsRow->AddChild(std::move(checkbox));
-        advancedControlsRow->AddChild(std::move(toggle));
-        advancedControlsRow->AddChild(std::move(slider));
-        advancedControlsRow->AddChild(std::move(radio1));
-        advancedControlsRow->AddChild(std::move(radio2));
-        advancedControlsRow->AddChild(std::move(radio3));
-        advancedControlsRow->AddChild(std::move(colorPicker));
+        // 左列添加控件（小控件）
+        advancedControlsCol1->AddChild(std::move(checkbox));
+        advancedControlsCol1->AddChild(std::move(toggle));
+        advancedControlsCol1->AddChild(std::move(slider));
+        advancedControlsCol1->AddChild(std::move(radio1));
+        advancedControlsCol1->AddChild(std::move(radio2));
+        advancedControlsCol1->AddChild(std::move(radio3));
+        
+        // 右列添加颜色选择器
+        advancedControlsCol2->AddChild(std::move(colorPicker));
+        
+        // 将两列添加到容器
+        advancedControlsContainer->AddChild(std::move(advancedControlsCol1));
+        advancedControlsContainer->AddChild(std::move(advancedControlsCol2));
 
         // 组装 UI 树
         panel->AddChild(std::move(textField));
         panel->AddChild(std::move(gridDemo));
         panel->AddChild(std::move(buttonRow));
-        panel->AddChild(std::move(advancedControlsRow));
+        panel->AddChild(std::move(advancedControlsContainer));
         root->AddChild(std::move(panel));
     }
 }

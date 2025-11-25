@@ -1975,6 +1975,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             
             const bool enabled = colorPickerWidget->IsEnabled();
             const bool hovered = colorPickerWidget->IsHovered();
+            const bool dragging = colorPickerWidget->IsDragging();
             
             // ColorPicker 使用 button 主题颜色
             const UIThemeColorSet& colorSet = theme
@@ -1989,12 +1990,20 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                                                             !enabled,
                                                             false);
             
+            // 计算布局参数
+            const float padding = 8.0f;
+            const float previewSize = size.y() - padding * 2.0f;
+            const float textStartX = colorPickerWidget->IsShowPreview() ? (previewSize + padding * 2.0f) : padding;
+            const float sliderStartX = position.x() + textStartX;
+            const float sliderWidth = size.x() - textStartX - padding;
+            const float channelCount = colorPickerWidget->IsShowAlpha() ? 4.0f : 3.0f;
+            const float channelHeight = size.y() / channelCount;
+            const float sliderHeight = channelHeight * 0.5f; // 滑块高度为通道高度的一半
+            
             // 绘制颜色预览色块（如果启用）
             if (colorPickerWidget->IsShowPreview()) {
-                const float previewPadding = 8.0f;
-                const float previewSize = size.y() - previewPadding * 2.0f;
-                const float previewX = position.x() + previewPadding;
-                const float previewY = position.y() + previewPadding;
+                const float previewX = position.x() + padding;
+                const float previewY = position.y() + padding;
                 
                 // 绘制颜色预览（圆角矩形）
                 const Color& previewColor = colorPickerWidget->GetColor();
@@ -2012,43 +2021,96 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 m_commandBuffer.AddRoundedRectangle(previewCmd);
             }
             
-            // 绘制RGB值文本
-            if (m_defaultFont) {
-                char colorText[64];
-                if (colorPickerWidget->IsShowAlpha()) {
-                    snprintf(colorText, sizeof(colorText), "R:%.2f G:%.2f B:%.2f A:%.2f",
-                            colorPickerWidget->GetR(),
-                            colorPickerWidget->GetG(),
-                            colorPickerWidget->GetB(),
-                            colorPickerWidget->GetA());
-                } else {
-                    snprintf(colorText, sizeof(colorText), "R:%.2f G:%.2f B:%.2f",
-                            colorPickerWidget->GetR(),
-                            colorPickerWidget->GetG(),
-                            colorPickerWidget->GetB());
+            // 绘制颜色通道滑块
+            auto drawChannelSlider = [&](float channelValue, const Color& channelColor, 
+                                        const char* label, float channelY) {
+                const float sliderY = channelY + (channelHeight - sliderHeight) * 0.5f;
+                
+                // 绘制滑块轨道背景
+                UIRoundedRectangleCommand trackCmd;
+                trackCmd.rect = Rect(sliderStartX, sliderY, sliderWidth, sliderHeight);
+                trackCmd.cornerRadius = sliderHeight * 0.5f;
+                trackCmd.fillColor = Color(0.15f, 0.15f, 0.15f, 1.0f);
+                trackCmd.strokeColor = colorSet.outline;
+                trackCmd.strokeWidth = 1.0f;
+                trackCmd.filled = true;
+                trackCmd.stroked = true;
+                trackCmd.segments = 16;
+                trackCmd.layerID = 800;
+                trackCmd.depth = static_cast<float>(depth);
+                m_commandBuffer.AddRoundedRectangle(trackCmd);
+                
+                // 绘制填充部分（渐变色，从0到当前值）
+                const float fillWidth = sliderWidth * channelValue;
+                if (fillWidth > 0.0f) {
+                    UIRoundedRectangleCommand fillCmd;
+                    fillCmd.rect = Rect(sliderStartX, sliderY, fillWidth, sliderHeight);
+                    fillCmd.cornerRadius = sliderHeight * 0.5f;
+                    fillCmd.fillColor = channelColor;
+                    fillCmd.strokeColor = Color(0, 0, 0, 0);
+                    fillCmd.strokeWidth = 0.0f;
+                    fillCmd.filled = true;
+                    fillCmd.stroked = false;
+                    fillCmd.segments = 16;
+                    fillCmd.layerID = 800;
+                    fillCmd.depth = static_cast<float>(depth) - 0.01f;
+                    m_commandBuffer.AddRoundedRectangle(fillCmd);
                 }
                 
-                auto tempText = CreateRef<Text>(m_defaultFont);
-                tempText->SetString(colorText);
-                tempText->SetAlignment(TextAlignment::Left);
-                tempText->EnsureUpdated();
-                Vector2 textSize = tempText->GetSize();
+                // 绘制滑块手柄
+                const float handleRadius = sliderHeight * 0.6f;
+                const float handleX = sliderStartX + sliderWidth * channelValue;
+                const float handleY = sliderY + sliderHeight * 0.5f;
                 
-                UITextCommand textCmd;
-                textCmd.transform = CreateRef<Transform>();
-                float textX = position.x() + (colorPickerWidget->IsShowPreview() ? size.y() + 8.0f : 8.0f);
-                float textY = position.y() + size.y() * 0.5f - textSize.y() * 0.5f;
-                textCmd.transform->SetPosition(Vector3(textX,
-                                                       textY,
-                                                       static_cast<float>(-depth) * 0.001f));
-                textCmd.text = colorText;
-                textCmd.font = m_defaultFont;
-                textCmd.color = colorSet.text;
-                textCmd.offset = Vector2(0.0f, 0.0f); // Left对齐
-                textCmd.layerID = 800;
-                textCmd.depth = static_cast<float>(depth);
+                UICircleCommand handleCmd;
+                handleCmd.center = Vector2(handleX, handleY);
+                handleCmd.radius = handleRadius;
+                handleCmd.fillColor = dragging ? Color(0.9f, 0.9f, 0.9f, 1.0f) : Color(1.0f, 1.0f, 1.0f, 1.0f);
+                handleCmd.strokeColor = dragging ? channelColor : Color(0.7f, 0.7f, 0.7f, 1.0f);
+                handleCmd.strokeWidth = 2.0f;
+                handleCmd.filled = true;
+                handleCmd.stroked = true;
+                handleCmd.segments = 16;
+                handleCmd.layerID = 800;
+                handleCmd.depth = static_cast<float>(depth) - 0.02f;
+                m_commandBuffer.AddCircle(handleCmd);
                 
-                m_commandBuffer.AddText(textCmd);
+                // 绘制通道标签和数值
+                if (m_defaultFont) {
+                    char channelText[32];
+                    snprintf(channelText, sizeof(channelText), "%s %.2f", label, channelValue);
+                    
+                    auto tempText = CreateRef<Text>(m_defaultFont);
+                    tempText->SetString(channelText);
+                    tempText->SetAlignment(TextAlignment::Left);
+                    tempText->EnsureUpdated();
+                    
+                    UITextCommand textCmd;
+                    textCmd.transform = CreateRef<Transform>();
+                    textCmd.transform->SetPosition(Vector3(sliderStartX - 45.0f,
+                                                           channelY + channelHeight * 0.5f - 8.0f,
+                                                           static_cast<float>(-depth) * 0.001f));
+                    textCmd.text = channelText;
+                    textCmd.font = m_defaultFont;
+                    textCmd.color = colorSet.text;
+                    textCmd.offset = Vector2(0.0f, 0.0f);
+                    textCmd.layerID = 800;
+                    textCmd.depth = static_cast<float>(depth);
+                    m_commandBuffer.AddText(textCmd);
+                }
+            };
+            
+            // 绘制各个通道
+            float currentY = position.y();
+            drawChannelSlider(colorPickerWidget->GetR(), Color(1.0f, 0.3f, 0.3f, 1.0f), "R:", currentY);
+            currentY += channelHeight;
+            drawChannelSlider(colorPickerWidget->GetG(), Color(0.3f, 1.0f, 0.3f, 1.0f), "G:", currentY);
+            currentY += channelHeight;
+            drawChannelSlider(colorPickerWidget->GetB(), Color(0.3f, 0.5f, 1.0f, 1.0f), "B:", currentY);
+            
+            if (colorPickerWidget->IsShowAlpha()) {
+                currentY += channelHeight;
+                drawChannelSlider(colorPickerWidget->GetA(), Color(0.7f, 0.7f, 0.7f, 1.0f), "A:", currentY);
             }
             
             if (m_debugConfig && m_debugConfig->drawDebugRects) {

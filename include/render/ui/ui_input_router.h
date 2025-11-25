@@ -24,7 +24,7 @@ class UICanvas;
 class UIWidget;
 
 /**
- * @brief UI 输入事件类型
+ * @brief UI input event types
  */
 enum class UIInputEventType {
     MouseMove,
@@ -63,7 +63,15 @@ struct UITextInputEvent {
 };
 
 /**
- * @brief UI Input Router 负责将原始输入事件转换为 Widget 事件
+ * @brief UI Input Router handles routing raw input events to widgets
+ * 
+ * Responsibilities:
+ * - Convert window coordinates to UI coordinates
+ * - Perform hit testing to find widgets under cursor
+ * - Route mouse/keyboard/text events to appropriate widgets
+ * - Manage focus and hover states
+ * - Handle mouse capture for drag operations
+ * - Detect and fix "dangling capture" when mouse is released outside window
  */
 class UIInputRouter {
 public:
@@ -81,21 +89,21 @@ public:
     void BeginFrame();
     void EndFrame();
 
-    // 兼容旧接口（已废弃，建议使用 EventBus）
+    // Legacy interface (deprecated, recommend using EventBus instead)
     void QueueMouseMove(const Vector2& position, const Vector2& delta);
     void QueueMouseButton(uint8_t button, bool pressed, const Vector2& position);
     void QueueMouseWheel(const Vector2& offset, bool precise);
     void QueueKey(int scancode, bool pressed, bool repeat);
     void QueueTextInput(const std::string& text);
     
-    // 手势处理
+    // Gesture handling
     void HandleGesture(const Application::Events::GestureEvent& gesture);
 
     UIWidget* GetFocusWidget() const { return m_focusWidget; }
     void SetFocusWidget(UIWidget* widget);
 
 private:
-    // EventBus 订阅回调
+    // EventBus subscription callbacks
     void OnMouseMotion(const Application::Events::MouseMotionEvent& event);
     void OnMouseButton(const Application::Events::MouseButtonEvent& event);
     void OnMouseWheel(const Application::Events::MouseWheelEvent& event);
@@ -103,15 +111,28 @@ private:
     void OnTextInput(const Application::Events::TextInputEvent& event);
     void OnGesture(const Application::Events::GestureEvent& event);
     
+    // Core routing logic
     Vector2 ConvertWindowToUICoordinates(const Vector2& windowPoint) const;
     UIWidget* HitTest(const Vector2& point) const;
     void DispatchMouseEvents();
     void DispatchKeyboardEvents();
 
+    // Focus management
     void RequestFocus(UIWidget* widget);
     void ClearFocus();
     
-    // 手势识别辅助
+    /**
+     * @brief Check and fix "dangling mouse capture" state
+     * 
+     * This handles the case where mouse button is released outside the window,
+     * causing the application to miss the MouseButtonUp event. Without this fix,
+     * widgets like sliders would continue tracking the mouse even after release.
+     * 
+     * Called automatically by BeginFrame() every frame.
+     */
+    void CheckAndFixDanglingCapture();
+    
+    // Gesture recognition helpers
     void ProcessGesture(const Application::Events::GestureEvent& gesture);
     void HandleDragGesture(const Application::Events::GestureEvent& gesture);
     void HandleClickGesture(const Application::Events::GestureEvent& gesture);
@@ -124,28 +145,33 @@ private:
     SDL_Window* m_window = nullptr;
     Application::EventBus* m_eventBus = nullptr;
 
-    UIWidget* m_focusWidget = nullptr;
-    UIWidget* m_hoverWidget = nullptr;
-    UIWidget* m_capturedWidget = nullptr;
-    uint8_t m_capturedButton = 0;
+    // Widget state tracking
+    UIWidget* m_focusWidget = nullptr;      // Widget with keyboard focus
+    UIWidget* m_hoverWidget = nullptr;      // Widget under cursor
+    UIWidget* m_capturedWidget = nullptr;   // Widget capturing mouse (for drag operations)
+    uint8_t m_capturedButton = 0;           // Which button is captured
 
     std::optional<Vector2> m_lastCursorPosition;
 
+    // Event queues (processed in EndFrame)
     std::vector<UIMouseMoveEvent> m_mouseMoveQueue;
     std::vector<UIMouseButtonEvent> m_mouseButtonQueue;
     std::vector<UIMouseWheelEvent> m_mouseWheelQueue;
     std::vector<UIKeyEvent> m_keyQueue;
     std::vector<UITextInputEvent> m_textQueue;
 
+    // Debug configuration
     const UIDebugConfig* m_debugConfig = nullptr;
+    
+    // Logging state (to avoid spam)
     bool m_loggedMissingWindow = false;
     bool m_loggedStartTextInputFailure = false;
     bool m_loggedStopTextInputFailure = false;
     
-    // EventBus 订阅 ID
+    // EventBus subscription IDs
     std::vector<Application::EventBus::ListenerId> m_subscriptionIds;
     
-    // 手势状态
+    // Gesture tracking state
     struct GestureTracking {
         Application::Events::GestureType type = Application::Events::GestureType::Click;
         Vector2 startPosition = Vector2::Zero();
@@ -158,5 +184,3 @@ private:
 };
 
 } // namespace Render::UI
-
-

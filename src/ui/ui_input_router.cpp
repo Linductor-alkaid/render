@@ -31,13 +31,12 @@ void UIInputRouter::Initialize(UIWidgetTree* widgetTree, UICanvas* canvas, Appli
     m_textQueue.clear();
     m_gestureTracking = GestureTracking{};
     
-    // 订阅 EventBus 事件
     if (m_eventBus) {
         auto mouseMotionId = m_eventBus->Subscribe<Application::Events::MouseMotionEvent>(
             [this](const Application::Events::MouseMotionEvent& event) {
                 OnMouseMotion(event);
             },
-            100  // 高优先级，UI 优先处理
+            100
         );
         m_subscriptionIds.push_back(mouseMotionId);
         
@@ -89,7 +88,6 @@ void UIInputRouter::Initialize(UIWidgetTree* widgetTree, UICanvas* canvas, Appli
 }
 
 void UIInputRouter::Shutdown() {
-    // 取消 EventBus 订阅
     if (m_eventBus) {
         for (auto id : m_subscriptionIds) {
             m_eventBus->Unsubscribe(id);
@@ -153,12 +151,75 @@ void UIInputRouter::SetWindow(SDL_Window* window) {
 }
 
 void UIInputRouter::BeginFrame() {
-    // 清理上一帧状态
+    // Clear previous frame state BEFORE checking for dangling capture
     m_mouseMoveQueue.clear();
     m_mouseButtonQueue.clear();
     m_mouseWheelQueue.clear();
     m_keyQueue.clear();
     m_textQueue.clear();
+    
+    // CRITICAL FIX: Check for dangling mouse capture
+    // This happens when mouse is released outside the window
+    CheckAndFixDanglingCapture();
+}
+
+void UIInputRouter::CheckAndFixDanglingCapture() {
+    if (!m_capturedWidget || m_capturedButton == 0) {
+        return;
+    }
+    
+    Uint32 mouseState = SDL_GetMouseState(nullptr, nullptr);
+    bool buttonPressed = false;
+    
+    // Check if the captured button is actually still pressed
+    switch (m_capturedButton) {
+        case SDL_BUTTON_LEFT:
+            buttonPressed = (mouseState & SDL_BUTTON_LMASK) != 0;
+            break;
+        case SDL_BUTTON_RIGHT:
+            buttonPressed = (mouseState & SDL_BUTTON_RMASK) != 0;
+            break;
+        case SDL_BUTTON_MIDDLE:
+            buttonPressed = (mouseState & SDL_BUTTON_MMASK) != 0;
+            break;
+        default:
+            break;
+    }
+    
+    // If button is released but we're still capturing, we missed the MouseButtonUp event
+    if (!buttonPressed) {
+        Logger::GetInstance().WarningFormat(
+            "[UIInputRouter] Detected dangling mouse capture on widget '%s' (button=%u released outside window). Force-releasing capture.",
+            m_capturedWidget->GetId().c_str(),
+            m_capturedButton
+        );
+        
+        // Force release the capture immediately with synthesized event
+        Vector2 currentPos = m_lastCursorPosition.value_or(Vector2::Zero());
+        UIMouseButtonEvent releaseEvent{
+            currentPos,
+            m_capturedButton,
+            false,  // pressed = false
+            true,   // released = true
+            true    // synthesized = true (NEW FLAG to indicate this is injected)
+        };
+        
+        // Dispatch the release event immediately to the captured widget
+        if (ShouldLog()) {
+            Logger::GetInstance().DebugFormat(
+                "[UIInputRouter] Force-dispatching MouseButtonUp to '%s' at pos=(%.1f, %.1f)",
+                m_capturedWidget->GetId().c_str(),
+                currentPos.x(),
+                currentPos.y()
+            );
+        }
+        
+        m_capturedWidget->OnMouseButton(m_capturedButton, false, currentPos);
+        
+        // Clear capture state
+        m_capturedWidget = nullptr;
+        m_capturedButton = 0;
+    }
 }
 
 void UIInputRouter::EndFrame() {
@@ -207,7 +268,6 @@ void UIInputRouter::QueueTextInput(const std::string& text) {
     }
 }
 
-// EventBus 事件回调
 void UIInputRouter::OnMouseMotion(const Application::Events::MouseMotionEvent& event) {
     Vector2 position(static_cast<float>(event.x), static_cast<float>(event.y));
     Vector2 delta(static_cast<float>(event.dx), static_cast<float>(event.dy));
@@ -269,11 +329,9 @@ void UIInputRouter::ProcessGesture(const Application::Events::GestureEvent& gest
         HandleZoomGesture(gesture);
         break;
     case Application::Events::GestureType::Rotate:
-        // 旋转手势通常用于3D视图，UI不需要处理
-        break;
     case Application::Events::GestureType::BoxSelect:
     case Application::Events::GestureType::LassoSelect:
-        // 框选和套索选择通常用于场景视图，UI不需要处理
+        // Not handled by UI
         break;
     }
 }
@@ -283,24 +341,19 @@ void UIInputRouter::HandleDragGesture(const Application::Events::GestureEvent& g
     Vector2 delta(static_cast<float>(gesture.deltaX), static_cast<float>(gesture.deltaY));
     
     if (gesture.isActive) {
-        // 拖拽开始或进行中
         if (!m_gestureTracking.active) {
             m_gestureTracking.active = true;
             m_gestureTracking.type = gesture.type;
             m_gestureTracking.startPosition = Vector2(static_cast<float>(gesture.startX), static_cast<float>(gesture.startY));
             m_gestureTracking.button = gesture.button;
             
-            // 发送鼠标按下事件
             QueueMouseButton(gesture.button, true, m_gestureTracking.startPosition);
         }
         
-        // 发送鼠标移动事件
         QueueMouseMove(position, delta);
         m_gestureTracking.lastPosition = position;
     } else {
-        // 拖拽结束
         if (m_gestureTracking.active && m_gestureTracking.type == Application::Events::GestureType::Drag) {
-            // 发送鼠标释放事件
             QueueMouseButton(gesture.button, false, position);
             m_gestureTracking.active = false;
         }
@@ -311,28 +364,23 @@ void UIInputRouter::HandleClickGesture(const Application::Events::GestureEvent& 
     Vector2 position(static_cast<float>(gesture.currentX), static_cast<float>(gesture.currentY));
     
     if (!gesture.isActive) {
-        // 点击完成
         if (ShouldLog()) {
             Logger::GetInstance().DebugFormat("[UIInputRouter] ClickGesture completed at (%.1f, %.1f) button=%u",
                                              position.x(), position.y(), gesture.button);
         }
         
-        // 发送点击事件
         QueueMouseButton(gesture.button, true, position);
         QueueMouseButton(gesture.button, false, position);
     }
 }
 
 void UIInputRouter::HandlePanGesture(const Application::Events::GestureEvent& gesture) {
-    // 平移手势通常用于3D视图，但也可以用于可滚动的UI区域
     Vector2 position(static_cast<float>(gesture.currentX), static_cast<float>(gesture.currentY));
     Vector2 delta(static_cast<float>(gesture.deltaX), static_cast<float>(gesture.deltaY));
     
     if (gesture.isActive) {
-        // 发送鼠标移动事件（中键拖拽）
         QueueMouseMove(position, delta);
         
-        // 如果中键按下，发送按钮事件
         if (!m_gestureTracking.active) {
             m_gestureTracking.active = true;
             m_gestureTracking.type = gesture.type;
@@ -341,7 +389,6 @@ void UIInputRouter::HandlePanGesture(const Application::Events::GestureEvent& ge
             QueueMouseButton(gesture.button, true, m_gestureTracking.startPosition);
         }
     } else {
-        // 平移结束
         if (m_gestureTracking.active && m_gestureTracking.type == Application::Events::GestureType::Pan) {
             QueueMouseButton(gesture.button, false, position);
             m_gestureTracking.active = false;
@@ -350,7 +397,6 @@ void UIInputRouter::HandlePanGesture(const Application::Events::GestureEvent& ge
 }
 
 void UIInputRouter::HandleZoomGesture(const Application::Events::GestureEvent& gesture) {
-    // 缩放手势（滚轮）
     Vector2 offset(static_cast<float>(gesture.deltaX), static_cast<float>(gesture.deltaY));
     QueueMouseWheel(offset, false);
 }
@@ -370,19 +416,12 @@ Vector2 UIInputRouter::ConvertWindowToUICoordinates(const Vector2& windowPoint) 
     const auto& state = m_canvas->GetState();
     Vector2 windowSize = state.WindowSize();
     
-    // 如果窗口大小为0，直接返回原始坐标
     if (windowSize.x() <= 0.0f || windowSize.y() <= 0.0f) {
         return windowPoint;
     }
     
-    // UI坐标系统与窗口坐标系统应该一致（都是Y向下为正，原点在左上角）
-    // 由于UI渲染使用窗口大小作为canvas大小，坐标应该直接匹配
-    // 但如果存在DPI缩放，需要处理
+    // Direct mapping - UI coordinates match window coordinates
     Vector2 uiPoint = windowPoint;
-    
-    // 注意：如果UI使用了scaleFactor进行缩放，那么鼠标坐标也需要相应缩放
-    // 但通常UI应该使用窗口的实际像素大小，所以这里不需要转换
-    // 如果将来需要支持UI缩放，可以在这里添加相应的转换逻辑
     
     return uiPoint;
 }
@@ -392,7 +431,6 @@ UIWidget* UIInputRouter::HitTest(const Vector2& point) const {
         return nullptr;
     }
     
-    // 将窗口坐标转换为UI坐标
     Vector2 uiPoint = ConvertWindowToUICoordinates(point);
     
     UIWidget* result = nullptr;
@@ -408,7 +446,6 @@ UIWidget* UIInputRouter::HitTest(const Vector2& point) const {
 
         const Rect& rect = current->GetLayoutRect();
         if (rect.width > 0.0f && rect.height > 0.0f) {
-            // 使用转换后的UI坐标进行碰撞检测
             if (uiPoint.x() >= rect.x && uiPoint.x() <= rect.x + rect.width &&
                 uiPoint.y() >= rect.y && uiPoint.y() <= rect.y + rect.height) {
                 result = current;
@@ -428,7 +465,7 @@ void UIInputRouter::DispatchMouseEvents() {
         return;
     }
 
-    // 更新 hover
+    // Update hover state
     if (m_lastCursorPosition.has_value()) {
         UIWidget* hitWidget = HitTest(*m_lastCursorPosition);
         Logger::GetInstance().InfoFormat("[UIInputRouter] HitTest hover point=(%.1f, %.1f) -> %s",
@@ -452,6 +489,7 @@ void UIInputRouter::DispatchMouseEvents() {
         }
     }
 
+    // Dispatch button events
     for (auto& buttonEvent : m_mouseButtonQueue) {
         UIWidget* hitWidget = HitTest(buttonEvent.position);
         Logger::GetInstance().InfoFormat("[UIInputRouter] DispatchMouseButton button=%u pressed=%s pos=(%.1f, %.1f) hit=%s focus=%s",
@@ -511,12 +549,13 @@ void UIInputRouter::DispatchMouseEvents() {
             }
         }
     }
+    m_mouseButtonQueue.clear();
 
-    // 处理鼠标移动事件（特别是拖拽时）
+    // Dispatch move events (especially important during drag)
     for (auto& moveEvent : m_mouseMoveQueue) {
         UIWidget* receiver = nullptr;
         
-        // 如果正在捕获鼠标（比如拖拽滑块），将移动事件发送给捕获的控件
+        // If capturing (e.g., dragging slider), send move events to captured widget
         if (m_capturedWidget) {
             receiver = m_capturedWidget;
         } else if (m_hoverWidget) {
@@ -535,10 +574,9 @@ void UIInputRouter::DispatchMouseEvents() {
             receiver->OnMouseMove(moveEvent.position, moveEvent.delta);
         }
     }
-    
-    // 清空已处理的按钮事件队列
-    m_mouseButtonQueue.clear();
+    m_mouseMoveQueue.clear();
 
+    // Dispatch wheel events
     for (auto& wheelEvent : m_mouseWheelQueue) {
         if (m_hoverWidget) {
             if (ShouldLog()) {
@@ -550,8 +588,6 @@ void UIInputRouter::DispatchMouseEvents() {
             m_hoverWidget->OnMouseWheel(wheelEvent.offset);
         }
     }
-    
-    // 清空已处理的事件队列
     m_mouseWheelQueue.clear();
 }
 
@@ -648,5 +684,3 @@ void UIInputRouter::ClearFocus() {
 }
 
 } // namespace Render::UI
-
-
