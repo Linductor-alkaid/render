@@ -8,6 +8,7 @@
 #include <string>
 #include <sstream>
 #include <iostream>
+#include <memory>
 
 namespace Render {
 
@@ -407,7 +408,12 @@ public:
      * @return 父变换指针（可能为 nullptr）
      */
     Transform* GetParent() const { 
-        return m_parent.load(std::memory_order_acquire); 
+        if (m_node) {
+            if (auto p = m_node->parent.lock()) {
+                return p->transform;
+            }
+        }
+        return nullptr;
     }
     
     /**
@@ -415,7 +421,10 @@ public:
      * @return 如果有父变换返回 true
      */
     bool HasParent() const { 
-        return m_parent.load(std::memory_order_acquire) != nullptr; 
+        if (m_node) {
+            return !m_node->parent.expired();
+        }
+        return false;
     }
     
     // ========================================================================
@@ -546,18 +555,34 @@ public:
     }
     
 private:
+    // 内部使用智能指针管理生命周期，但保持外部接口为裸指针
+    struct TransformNode {
+        Transform* transform;
+        std::shared_ptr<TransformNode> shared_this;
+        std::weak_ptr<TransformNode> parent;
+        std::vector<std::shared_ptr<TransformNode>> children;
+        std::atomic<bool> destroyed{false};
+        
+        TransformNode(Transform* t) : transform(t) {}
+    };
+    
+    std::shared_ptr<TransformNode> m_node;  // 内部节点，使用智能指针管理
+    
+    // 辅助方法：从裸指针获取节点（const 和非 const 版本）
+    static std::shared_ptr<TransformNode> GetNode(Transform* t) {
+        return t ? t->m_node : nullptr;
+    }
+    
+    static std::shared_ptr<const TransformNode> GetNode(const Transform* t) {
+        return t ? std::const_pointer_cast<const TransformNode>(t->m_node) : nullptr;
+    }
+    
     Vector3 m_position;      // 本地位置
     Quaternion m_rotation;   // 本地旋转
     Vector3 m_scale;         // 本地缩放
     
-    // 父变换指针（原子类型，保证多线程读写安全）
-    // 注意：这是观察指针（non-owning），不负责生命周期管理
-    // 父对象销毁时会自动通知子对象清除父指针
-    std::atomic<Transform*> m_parent;
-    
-    // 子对象列表（用于生命周期管理）
-    // 父对象销毁时通知所有子对象清除父指针，避免悬空指针
-    std::vector<Transform*> m_children;
+    // 注意：m_parent 和 m_children 已移除，改为通过 m_node 访问
+    // 为了向后兼容，保留 GetParent() 等方法的实现，但内部使用智能指针
     
     // 缓存系统：使用 dirty flag 避免重复计算
     mutable std::atomic<bool> m_dirtyLocal;  // 本地矩阵是否需要更新

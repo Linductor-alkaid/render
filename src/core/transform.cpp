@@ -14,7 +14,7 @@ Transform::Transform()
     : m_position(Vector3::Zero())
     , m_rotation(Quaternion::Identity())
     , m_scale(Vector3::Ones())
-    , m_parent(nullptr)  // 原子类型可以用 nullptr 初始化
+    , m_node(std::make_shared<TransformNode>(this))
     , m_dirtyLocal(true)
     , m_dirtyWorld(true)
     , m_dirtyWorldTransform(true)
@@ -22,13 +22,14 @@ Transform::Transform()
     , m_cachedWorldRotation(Quaternion::Identity())
     , m_cachedWorldScale(Vector3::Ones())
 {
+    m_node->shared_this = m_node;  // 允许从内部获取 shared_ptr
 }
 
 Transform::Transform(const Vector3& position, const Quaternion& rotation, const Vector3& scale)
     : m_position(position)
     , m_rotation(rotation)
     , m_scale(scale)
-    , m_parent(nullptr)  // 原子类型可以用 nullptr 初始化
+    , m_node(std::make_shared<TransformNode>(this))
     , m_dirtyLocal(true)
     , m_dirtyWorld(true)
     , m_dirtyWorldTransform(true)
@@ -36,16 +37,30 @@ Transform::Transform(const Vector3& position, const Quaternion& rotation, const 
     , m_cachedWorldRotation(Quaternion::Identity())
     , m_cachedWorldScale(Vector3::Ones())
 {
+    m_node->shared_this = m_node;  // 允许从内部获取 shared_ptr
 }
 
 Transform::~Transform() {
-    // 通知所有子对象：父对象即将销毁
-    NotifyChildrenParentDestroyed();
-    
-    // 从父对象的子对象列表中移除自己
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        parent->RemoveChild(this);
+    if (m_node) {
+        m_node->destroyed.store(true, std::memory_order_release);
+        
+        // 安全地通知子节点
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        for (auto& childNode : m_node->children) {
+            if (childNode && !childNode->destroyed.load(std::memory_order_acquire)) {
+                childNode->parent.reset();
+            }
+        }
+        m_node->children.clear();
+        
+        // 从父节点移除
+        if (auto parentNode = m_node->parent.lock()) {
+            if (!parentNode->destroyed.load(std::memory_order_acquire)) {
+                if (parentNode->transform) {
+                    parentNode->transform->RemoveChild(this);
+                }
+            }
+        }
     }
 }
 
@@ -70,13 +85,13 @@ void Transform::SetPosition(const Vector3& position) {
 Vector3 Transform::GetWorldPosition() const {
     // 检查祖先链是否有任何脏的节点
     bool ancestorDirty = false;
-    Transform* ancestor = m_parent.load(std::memory_order_acquire);
-    while (ancestor != nullptr && !ancestorDirty) {
-        if (ancestor->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
+    auto ancestorNode = m_node ? m_node->parent.lock() : nullptr;
+    while (ancestorNode && !ancestorDirty) {
+        if (ancestorNode->transform && ancestorNode->transform->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
             ancestorDirty = true;
             break;
         }
-        ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+        ancestorNode = ancestorNode->parent.lock();
     }
     
     // Double-checked locking 优化：检查缓存是否有效
@@ -109,7 +124,13 @@ Vector3 Transform::GetWorldPositionIterative() const {
     
     while (current != nullptr && chain.size() < MAX_DEPTH) {
         chain.push_back(current);
-        current = current->m_parent.load(std::memory_order_acquire);
+        auto node = GetNode(current);
+        if (node) {
+            auto parentNode = node->parent.lock();
+            current = parentNode ? parentNode->transform : nullptr;
+        } else {
+            current = nullptr;
+        }
     }
     
     // 从根向下计算（反向遍历）
@@ -150,9 +171,9 @@ void Transform::TranslateWorld(const Vector3& translation) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
     Vector3 localTranslation;
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        localTranslation = parent->InverseTransformDirection(translation);
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+    if (parentNode && parentNode->transform) {
+        localTranslation = parentNode->transform->InverseTransformDirection(translation);
     } else {
         localTranslation = translation;
     }
@@ -213,13 +234,13 @@ Vector3 Transform::GetRotationEulerDegrees() const {
 Quaternion Transform::GetWorldRotation() const {
     // 检查祖先链是否有任何脏的节点
     bool ancestorDirty = false;
-    Transform* ancestor = m_parent.load(std::memory_order_acquire);
-    while (ancestor != nullptr && !ancestorDirty) {
-        if (ancestor->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
+    auto ancestorNode = m_node ? m_node->parent.lock() : nullptr;
+    while (ancestorNode && !ancestorDirty) {
+        if (ancestorNode->transform && ancestorNode->transform->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
             ancestorDirty = true;
             break;
         }
-        ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+        ancestorNode = ancestorNode->parent.lock();
     }
     
     if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
@@ -305,9 +326,9 @@ void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
     
     Quaternion rot = MathUtils::AngleAxis(angle, axis.normalized());
     
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        Quaternion parentRot = parent->GetWorldRotation();
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+    if (parentNode && parentNode->transform) {
+        Quaternion parentRot = parentNode->transform->GetWorldRotation();
         Quaternion worldRot = parentRot * m_rotation;
         worldRot = rot * worldRot;
         
@@ -377,9 +398,9 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
     
     Quaternion lookRotation = MathUtils::LookRotation(-direction, up);
     
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        Quaternion parentRot = parent->GetWorldRotation();
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+    if (parentNode && parentNode->transform) {
+        Quaternion parentRot = parentNode->transform->GetWorldRotation();
         m_rotation = parentRot.inverse() * lookRotation;
     } else {
         m_rotation = lookRotation;
@@ -433,13 +454,13 @@ void Transform::SetScale(float scale) {
 Vector3 Transform::GetWorldScale() const {
     // 检查祖先链是否有任何脏的节点
     bool ancestorDirty = false;
-    Transform* ancestor = m_parent.load(std::memory_order_acquire);
-    while (ancestor != nullptr && !ancestorDirty) {
-        if (ancestor->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
+    auto ancestorNode = m_node ? m_node->parent.lock() : nullptr;
+    while (ancestorNode && !ancestorDirty) {
+        if (ancestorNode->transform && ancestorNode->transform->m_dirtyWorldTransform.load(std::memory_order_acquire)) {
             ancestorDirty = true;
             break;
         }
-        ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+        ancestorNode = ancestorNode->parent.lock();
     }
     
     if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && !ancestorDirty) {
@@ -491,9 +512,9 @@ Matrix4 Transform::GetWorldMatrix() const {
     
     Matrix4 localMat = GetLocalMatrix();
     
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        Matrix4 parentWorldMat = parent->GetWorldMatrix();
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+    if (parentNode && parentNode->transform) {
+        Matrix4 parentWorldMat = parentNode->transform->GetWorldMatrix();
         return parentWorldMat * localMat;
     }
     return localMat;
@@ -512,56 +533,70 @@ void Transform::SetFromMatrix(const Matrix4& matrix) {
 bool Transform::SetParent(Transform* parent) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
-    Transform* currentParent = m_parent.load(std::memory_order_acquire);
-    if (currentParent == parent) {
-        return true;  // 已经是目标父对象，视为成功
+    auto myNode = GetNode(this);
+    if (!myNode || myNode->destroyed.load(std::memory_order_acquire)) {
+        return false;
     }
     
-    // 检查自引用
+    auto currentParentNode = myNode->parent.lock();
+    auto newParentNode = GetNode(parent);
+    
+    if (currentParentNode == newParentNode) {
+        return true;
+    }
+    
+    // 自引用检查
     if (parent == this) {
         HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
             "Transform::SetParent: 不能将自己设置为父对象"));
         return false;
     }
     
-    // 检查循环引用（遍历祖先链）
-    if (parent != nullptr) {
-        Transform* ancestor = parent;
+    // 循环引用检查（使用智能指针）
+    if (newParentNode) {
+        auto ancestor = newParentNode;
         int depth = 0;
-        const int MAX_DEPTH = 1000;  // 防止无限循环，同时限制层级深度
+        const int MAX_DEPTH = 1000;
         
-        while (ancestor != nullptr && depth < MAX_DEPTH) {
-            if (ancestor == this) {
+        while (ancestor && depth < MAX_DEPTH) {
+            if (ancestor->destroyed.load(std::memory_order_acquire)) {
                 HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
-                    "Transform::SetParent: 检测到循环引用，操作被拒绝"));
+                    "Transform::SetParent: 父对象已被销毁"));
                 return false;
             }
-            // 原子读取祖先的父指针
-            ancestor = ancestor->m_parent.load(std::memory_order_acquire);
+            
+            if (ancestor == myNode) {
+                HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                    "Transform::SetParent: 检测到循环引用"));
+                return false;
+            }
+            
+            ancestor = ancestor->parent.lock();
             depth++;
         }
         
         if (depth >= MAX_DEPTH) {
             HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange,
-                "Transform::SetParent: 父对象层级过深（超过1000层），操作被拒绝"));
+                "Transform::SetParent: 父对象层级过深"));
             return false;
         }
     }
     
-    // 从旧父对象的子对象列表中移除自己
-    if (currentParent) {
-        currentParent->RemoveChild(this);
+    // 从旧父节点移除
+    if (currentParentNode && currentParentNode->transform) {
+        currentParentNode->transform->RemoveChild(this);
     }
     
-    // 添加到新父对象的子对象列表
-    if (parent) {
-        parent->AddChild(this);
+    // 添加到新父节点
+    if (newParentNode && newParentNode->transform) {
+        newParentNode->transform->AddChild(this);
     }
     
-    // 使用原子操作存储父指针
-    m_parent.store(parent, std::memory_order_release);
+    // 更新父指针
+    myNode->parent = newParentNode;
     MarkDirtyNoLock();
-    return true;  // 成功
+    
+    return true;
 }
 
 // ============================================================================
@@ -624,9 +659,11 @@ void Transform::InvalidateWorldTransformCache() {
     
     // 通知所有子对象更新缓存
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    for (Transform* child : m_children) {
-        if (child) {
-            child->InvalidateWorldTransformCacheNoLock();
+    if (m_node) {
+        for (auto& childNode : m_node->children) {
+            if (childNode && childNode->transform) {
+                childNode->transform->InvalidateWorldTransformCacheNoLock();
+            }
         }
     }
 }
@@ -642,13 +679,13 @@ void Transform::InvalidateWorldTransformCacheNoLock() {
 void Transform::UpdateWorldTransformCache() const {
     // 注意：调用此函数前必须已经持有 m_mutex 锁
     
-    Transform* parent = m_parent.load(std::memory_order_acquire);
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
     
-    if (parent) {
+    if (parentNode && parentNode->transform) {
         // 有父对象：递归计算（会利用父对象的缓存）
-        Vector3 parentPos = parent->GetWorldPosition();
-        Quaternion parentRot = parent->GetWorldRotation();
-        Vector3 parentScale = parent->GetWorldScale();
+        Vector3 parentPos = parentNode->transform->GetWorldPosition();
+        Quaternion parentRot = parentNode->transform->GetWorldRotation();
+        Vector3 parentScale = parentNode->transform->GetWorldScale();
         
         // 计算世界变换
         m_cachedWorldPosition = parentPos + parentRot * (parentScale.cwiseProduct(m_position));
@@ -674,10 +711,18 @@ void Transform::AddChild(Transform* child) {
     
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
+    if (!m_node) return;
+    
+    auto childNode = GetNode(child);
+    if (!childNode) return;
+    
     // 检查是否已存在（避免重复添加）
-    auto it = std::find(m_children.begin(), m_children.end(), child);
-    if (it == m_children.end()) {
-        m_children.push_back(child);
+    auto it = std::find_if(m_node->children.begin(), m_node->children.end(),
+        [childNode](const std::shared_ptr<TransformNode>& node) {
+            return node == childNode;
+        });
+    if (it == m_node->children.end()) {
+        m_node->children.push_back(childNode);
     }
 }
 
@@ -686,27 +731,25 @@ void Transform::RemoveChild(Transform* child) {
     
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     
+    if (!m_node) return;
+    
+    auto childNode = GetNode(child);
+    if (!childNode) return;
+    
     // 移除子对象
-    auto it = std::find(m_children.begin(), m_children.end(), child);
-    if (it != m_children.end()) {
-        m_children.erase(it);
+    auto it = std::find_if(m_node->children.begin(), m_node->children.end(),
+        [childNode](const std::shared_ptr<TransformNode>& node) {
+            return node == childNode;
+        });
+    if (it != m_node->children.end()) {
+        m_node->children.erase(it);
     }
 }
 
+// NotifyChildrenParentDestroyed 方法已在析构函数中实现，不再需要此方法
+// 但为了向后兼容，保留空实现
 void Transform::NotifyChildrenParentDestroyed() {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    
-    // 通知所有子对象：父对象即将销毁，清除父指针
-    for (Transform* child : m_children) {
-        if (child) {
-            // 直接设置子对象的父指针为 nullptr
-            // 注意：不调用 child->SetParent(nullptr)，避免死锁和递归
-            child->m_parent.store(nullptr, std::memory_order_release);
-        }
-    }
-    
-    // 清空子对象列表
-    m_children.clear();
+    // 已在析构函数中实现，此方法不再需要
 }
 
 // ============================================================================
@@ -779,14 +822,14 @@ std::string Transform::DebugString() const {
         << m_rotation.y() << ", " << m_rotation.z() << ")\n";
     oss << "  Scale: (" << m_scale.x() << ", " << m_scale.y() << ", " << m_scale.z() << ")\n";
     
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent) {
-        oss << "  Parent: " << static_cast<const void*>(parent) << "\n";
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+    if (parentNode && parentNode->transform) {
+        oss << "  Parent: " << static_cast<const void*>(parentNode->transform) << "\n";
     } else {
         oss << "  Parent: nullptr\n";
     }
     
-    oss << "  Children: " << m_children.size() << "\n";
+    oss << "  Children: " << (m_node ? m_node->children.size() : 0) << "\n";
     oss << "  Hierarchy Depth: " << GetHierarchyDepth() << "\n";
     oss << "}";
     
@@ -805,7 +848,7 @@ void Transform::PrintHierarchy(int indent, std::ostream& os) const {
     os << "Transform [";
     os << "pos=(" << m_position.x() << "," << m_position.y() << "," << m_position.z() << ")";
     os << ", scale=(" << m_scale.x() << "," << m_scale.y() << "," << m_scale.z() << ")";
-    os << ", children=" << m_children.size();
+    os << ", children=" << (m_node ? m_node->children.size() : 0);
     os << "]\n";
     
     // 递归打印子节点（需要解锁以避免死锁）
@@ -852,15 +895,17 @@ bool Transform::Validate() const {
     }
     
     // 7. 检查父指针自引用
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent == this) {
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+    if (parentNode && parentNode->transform == this) {
         return false;  // 自引用
     }
     
     // 8. 检查子对象列表中是否有空指针或自引用
-    for (Transform* child : m_children) {
-        if (child == nullptr || child == this) {
-            return false;
+    if (m_node) {
+        for (auto& childNode : m_node->children) {
+            if (!childNode || !childNode->transform || childNode->transform == this) {
+                return false;
+            }
         }
     }
     
@@ -874,19 +919,19 @@ bool Transform::Validate() const {
 }
 
 int Transform::GetHierarchyDepth() const {
-    Transform* parent = m_parent.load(std::memory_order_acquire);
-    if (parent == nullptr) {
+    auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+    if (!parentNode) {
         return 0;
     }
     
     // 递归计算深度
     int depth = 1;
-    Transform* current = parent;
+    auto current = parentNode;
     const int MAX_DEPTH = 1000;  // 防止无限循环
     
-    while (current != nullptr && depth < MAX_DEPTH) {
-        current = current->m_parent.load(std::memory_order_acquire);
-        if (current != nullptr) {
+    while (current && depth < MAX_DEPTH) {
+        current = current->parent.lock();
+        if (current) {
             depth++;
         }
     }
@@ -896,7 +941,7 @@ int Transform::GetHierarchyDepth() const {
 
 int Transform::GetChildCount() const {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    return static_cast<int>(m_children.size());
+    return static_cast<int>(m_node ? m_node->children.size() : 0);
 }
 
 // ============================================================================
