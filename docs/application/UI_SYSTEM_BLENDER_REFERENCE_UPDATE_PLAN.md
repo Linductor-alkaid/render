@@ -161,29 +161,31 @@ Blender 使用 GPU 进行 UI 渲染：
 
 | 特性 | 当前系统 | Blender 系统 | 差距 |
 |------|---------|--------------|------|
-| 基础控件 | ✅ Button, TextField | ✅ 20+ 种控件类型 | 缺少 18+ 种控件 |
-| 状态管理 | ✅ Hover/Pressed | ✅ Select/Hover/Hidden/Disabled/Active | 缺少 Select/Active |
-| 回调系统 | ✅ 基础回调 | ✅ 多种回调类型 | 缺少高级回调 |
+| 基础控件 | ✅ Button, TextField, CheckBox, Radio, Slider, Toggle, ColorPicker（7种） | ✅ 20+ 种控件类型 | 缺少 13+ 种控件 |
+| 状态管理 | ✅ Hover/Pressed/Selected/Disabled | ✅ Select/Hover/Hidden/Disabled/Active | ✅ **已对齐** |
+| 回调系统 | ✅ Click/Change/CheckChanged 回调 | ✅ 多种回调类型 | 缺少部分高级回调 |
 | 拖拽支持 | ❌ 不支持 | ✅ 完整支持 | 完全缺失 |
-| 菜单系统 | ❌ 不支持 | ✅ PullDown/PieMenu | 完全缺失 |
+| 菜单系统 | ✅ **PullDownMenu 已实现** | ✅ PullDown/PieMenu | 缺少 PieMenu |
 
 ### 3.3 主题系统对比
 
 | 特性 | 当前系统 | Blender 系统 | 差距 |
 |------|---------|--------------|------|
-| 主题支持 | ❌ 无 | ✅ 完整主题系统 | 完全缺失 |
-| 颜色管理 | 🟡 硬编码 | ✅ 主题颜色表 | 需要重构 |
-| 字体管理 | ✅ 基础支持 | ✅ 完整字体样式系统 | 缺少样式配置 |
-| DPI 适配 | ✅ 基础支持 | ✅ 完整 DPI 适配 | 缺少样式缩放 |
-| 主题切换 | ❌ 不支持 | ✅ 运行时切换 | 完全缺失 |
+| 主题支持 | ✅ **完整主题系统** | ✅ 完整主题系统 | ✅ **已对齐** |
+| 颜色管理 | ✅ **主题颜色表（UITheme）** | ✅ 主题颜色表 | ✅ **已对齐** |
+| 字体管理 | ✅ **完整字体样式系统** | ✅ 完整字体样式系统 | ✅ **已对齐** |
+| DPI 适配 | ✅ **GetThemeForDPI 支持** | ✅ 完整 DPI 适配 | ✅ **已对齐** |
+| 主题切换 | ✅ **运行时切换（SetCurrentTheme）** | ✅ 运行时切换 | ✅ **已对齐** |
+| JSON配置 | ✅ **LoadFromJSON/SaveToJSON** | ✅ 配置文件支持 | ✅ **已对齐** |
 
 ### 3.4 渲染系统对比
 
 | 特性 | 当前系统 | Blender 系统 | 差距 |
 |------|---------|--------------|------|
-| 渲染方式 | ✅ Sprite/Text | ✅ GPU Batch/Immediate | 架构不同但功能相当 |
+| 渲染方式 | ✅ Sprite/Text/Geometry | ✅ GPU Batch/Immediate | 架构不同但功能相当 |
 | 批处理 | ✅ 基础批处理 | ✅ 高级批处理优化 | 缺少优化策略 |
-| 特效支持 | ❌ 无 | ✅ 阴影/渐变/九宫格 | 完全缺失 |
+| 几何图形 | ✅ **Line/Bezier/Circle/Polygon/RoundedRect** | ✅ 完整几何图形 | ✅ **已对齐** |
+| 特效支持 | 🟡 圆角矩形已支持 | ✅ 阴影/渐变/九宫格 | 缺少阴影和渐变 |
 | 性能优化 | 🟡 基础优化 | ✅ 深度优化 | 缺少高级优化 |
 
 ---
@@ -944,8 +946,30 @@ Blender 使用 GPU 进行 UI 渲染：
 - **渲染系统**: `third_party/blender/source/blender/gpu/`（GPU 抽象层）
 
 ### 8.2 相关文档
+
+**UI系统文档**:
 - [UI_DEVELOPMENT_PROGRESS_REPORT.md](UI_DEVELOPMENT_PROGRESS_REPORT.md) - 当前 UI 系统进度
 - [UI_FRAMEWORK_FOUNDATION_PLAN.md](../guides/UI_FRAMEWORK_FOUNDATION_PLAN.md) - UI 框架基础计划
+- [UI_MENU_SYSTEM.md](../ui/UI_MENU_SYSTEM.md) - 菜单系统详细文档 🆕
+- [UI_COLOR_PICKER_USAGE.md](../ui/UI_COLOR_PICKER_USAGE.md) - 颜色选择器使用指南
+- [UI_DRAG_BUG_FIX_V2.md](../ui/UI_DRAG_BUG_FIX_V2.md) - UI 拖拽bug修复
+
+**API参考文档**:
+- [UIWidget API](../api/UIWidget.md) - UI控件基类 🆕
+- [UIButton API](../api/UIButton.md) - 按钮控件 🆕
+- [UITextField API](../api/UITextField.md) - 文本输入框 🆕
+- [UICheckBox API](../api/UICheckBox.md) - 复选框 🆕
+- [UIRadioButton API](../api/UIRadioButton.md) - 单选按钮 🆕
+- [UISlider API](../api/UISlider.md) - 滑块 🆕
+- [UIToggle API](../api/UIToggle.md) - 开关 🆕
+- [UIColorPicker API](../api/UIColorPicker.md) - 颜色选择器 🆕
+- [UIMenu API](../api/UIMenu.md) - 菜单容器 🆕
+- [UIMenuItem API](../api/UIMenuItem.md) - 菜单项 🆕
+- [UIPullDownMenu API](../api/UIPullDownMenu.md) - 下拉菜单 🆕
+- [UITheme API](../api/UITheme.md) - 主题系统 🆕
+- [UICanvas API](../api/UICanvas.md) - UI画布 🆕
+
+**技术规范参考**:
 - [CSS Flexbox 规范](https://www.w3.org/TR/css-flexbox-1/) - Flex 布局参考
 - [CSS Grid 规范](https://www.w3.org/TR/css-grid-1/) - Grid 布局参考
 
@@ -956,17 +980,25 @@ Blender 使用 GPU 进行 UI 渲染：
 本更新计划基于对 Blender UI 系统的深入分析，制定了分阶段的改进方案。通过引入 Blender 的优秀设计模式，可以显著提升 UI 系统的功能性和可维护性。
 
 **核心改进点**:
-1. **布局系统**: 从单一 Vertical Stack 扩展到 10+ 种布局类型
-2. **主题系统**: 从硬编码样式到完整的主题管理系统
-3. **控件库**: 从 2 种基础控件扩展到 20+ 种控件
-4. **渲染系统**: 从基础渲染到支持高级视觉效果和性能优化
-5. **输入系统**: 从基础输入到语义化输入映射和拖拽系统
+1. ✅ **布局系统**: 从单一 Vertical Stack 扩展到 Flex/Grid 布局（**已完成**）
+2. ✅ **主题系统**: 从硬编码样式到完整的主题管理系统（**已完成**）
+3. 🟡 **控件库**: 从 2 种基础控件扩展到 7+ 种控件，菜单系统已完成（**进行中，75%**）
+4. 🟡 **渲染系统**: 从基础渲染到支持几何图形和圆角矩形（**进行中，60%**）
+5. ⏳ **输入系统**: 从基础输入到语义化输入映射和拖拽系统（**待实现**）
 
-**预期收益**:
-- 开发效率提升：丰富的控件和布局系统减少重复代码
-- 用户体验提升：主题系统和高级视觉效果提升 UI 美观度
-- 性能提升：优化的渲染系统支持更复杂的 UI
-- 可维护性提升：模块化设计便于后续扩展
+**已实现收益**:
+- ✅ **开发效率提升**: 丰富的控件库（7种控件）和布局系统（Flex/Grid）大幅减少重复代码
+- ✅ **用户体验提升**: 完整的主题系统支持暗色/亮色主题切换，菜单系统提供标准化交互
+- ✅ **功能完整性**: 菜单系统（下拉菜单、子菜单、快捷键）满足基本应用需求
+- ✅ **可维护性提升**: 模块化设计，所有UI组件都有完整的API文档
+- 🟡 **性能优化**: 基础渲染优化已完成，高级批处理策略待实现
+
+**剩余工作**:
+- ⏳ 复合控件（TreeView、ListView、Table、PropertyPanel）
+- ⏳ Split 布局（可拆分面板）
+- ⏳ 视觉效果（阴影、渐变、九宫格）
+- ⏳ 拖拽系统
+- ⏳ Pie Menu（径向菜单）
 
 ---
 
