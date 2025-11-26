@@ -471,7 +471,7 @@ void MeshRenderSystem::Update(World* world, float dt) {
 **方案**：利用 Transform 的批量操作进行实例化渲染
 
 ```cpp
-// mesh_render_system.cpp
+// system.cpp
 void MeshRenderSystem::SubmitInstancedRendering(
     const std::vector<EntityID>& entities,
     const std::vector<Transform*>& transforms) {
@@ -516,7 +516,7 @@ void MeshRenderSystem::SubmitInstancedRendering(
 **方案**：批量计算世界位置用于视锥体裁剪
 
 ```cpp
-// mesh_render_system.cpp
+// system.cpp
 void MeshRenderSystem::BatchFrustumCull(
     const std::vector<EntityID>& entities,
     const Frustum& frustum) {

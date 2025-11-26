@@ -84,6 +84,7 @@ public:
         size_t dirtyTransforms = 0;    ///< 需要更新的 Transform 数
         size_t syncedParents = 0;      ///< 同步的父子关系数
         size_t clearedParents = 0;     ///< 清除的无效父子关系数
+        size_t batchGroups = 0;        ///< 批量更新组数（阶段2.1优化）
     };
     
     [[nodiscard]] const UpdateStats& GetStats() const { return m_stats; }
