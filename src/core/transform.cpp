@@ -1244,12 +1244,146 @@ void Transform::TransformDirectionsSIMD(const Quaternion& rot,
                                        const Vector3* input,
                                        Vector3* output,
                                        size_t count) {
-    // 方向变换使用四元数旋转
-    // 对于 SIMD 优化，四元数乘法比较复杂，这里使用标量版本
-    // TODO: 可以进一步优化为 SIMD 版本
+    // P1-2.2-6: 四元数旋转的 SIMD 优化
+    // 使用优化公式：v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v)
+    // 展开为：t = 2 * cross(q.xyz, v)
+    //         v' = v + q.w * t + cross(q.xyz, t)
+    
+#if defined(__AVX2__) && defined(__FMA__)
+    // AVX2 + FMA 实现：一次处理 4 个向量
+    const size_t simdCount = count & ~3ULL;
+    
+    if (simdCount >= 4) {
+        // 提取四元数分量
+        float qx = rot.x();
+        float qy = rot.y();
+        float qz = rot.z();
+        float qw = rot.w();
+        
+        // 广播四元数分量到 SIMD 寄存器
+        __m256 qx_vec = _mm256_set1_ps(qx);
+        __m256 qy_vec = _mm256_set1_ps(qy);
+        __m256 qz_vec = _mm256_set1_ps(qz);
+        __m256 qw_vec = _mm256_set1_ps(qw);
+        __m256 two = _mm256_set1_ps(2.0f);
+        
+        for (size_t i = 0; i < simdCount; i += 4) {
+            // 加载 4 个向量的 x, y, z 分量
+            __m256 vx = _mm256_set_ps(
+                input[i+3].x(), input[i+2].x(), input[i+1].x(), input[i].x(),
+                input[i+3].x(), input[i+2].x(), input[i+1].x(), input[i].x()
+            );
+            __m256 vy = _mm256_set_ps(
+                input[i+3].y(), input[i+2].y(), input[i+1].y(), input[i].y(),
+                input[i+3].y(), input[i+2].y(), input[i+1].y(), input[i].y()
+            );
+            __m256 vz = _mm256_set_ps(
+                input[i+3].z(), input[i+2].z(), input[i+1].z(), input[i].z(),
+                input[i+3].z(), input[i+2].z(), input[i+1].z(), input[i].z()
+            );
+            
+            // 第一次叉乘：t1 = cross(q.xyz, v)
+            // cross(a, b) = (a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x)
+            __m256 t1x = _mm256_sub_ps(
+                _mm256_mul_ps(qy_vec, vz),
+                _mm256_mul_ps(qz_vec, vy)
+            );
+            __m256 t1y = _mm256_sub_ps(
+                _mm256_mul_ps(qz_vec, vx),
+                _mm256_mul_ps(qx_vec, vz)
+            );
+            __m256 t1z = _mm256_sub_ps(
+                _mm256_mul_ps(qx_vec, vy),
+                _mm256_mul_ps(qy_vec, vx)
+            );
+            
+            // t1 += q.w * v
+            t1x = _mm256_fmadd_ps(qw_vec, vx, t1x);
+            t1y = _mm256_fmadd_ps(qw_vec, vy, t1y);
+            t1z = _mm256_fmadd_ps(qw_vec, vz, t1z);
+            
+            // 第二次叉乘：t2 = cross(q.xyz, t1)
+            __m256 t2x = _mm256_sub_ps(
+                _mm256_mul_ps(qy_vec, t1z),
+                _mm256_mul_ps(qz_vec, t1y)
+            );
+            __m256 t2y = _mm256_sub_ps(
+                _mm256_mul_ps(qz_vec, t1x),
+                _mm256_mul_ps(qx_vec, t1z)
+            );
+            __m256 t2z = _mm256_sub_ps(
+                _mm256_mul_ps(qx_vec, t1y),
+                _mm256_mul_ps(qy_vec, t1x)
+            );
+            
+            // 最终结果：v' = v + 2 * t2
+            __m256 rx = _mm256_fmadd_ps(two, t2x, vx);
+            __m256 ry = _mm256_fmadd_ps(two, t2y, vy);
+            __m256 rz = _mm256_fmadd_ps(two, t2z, vz);
+            
+            // 存储结果
+            alignas(32) float tempX[8], tempY[8], tempZ[8];
+            _mm256_store_ps(tempX, rx);
+            _mm256_store_ps(tempY, ry);
+            _mm256_store_ps(tempZ, rz);
+            
+            output[i].x() = tempX[0];
+            output[i].y() = tempY[0];
+            output[i].z() = tempZ[0];
+            
+            output[i+1].x() = tempX[1];
+            output[i+1].y() = tempY[1];
+            output[i+1].z() = tempZ[1];
+            
+            output[i+2].x() = tempX[2];
+            output[i+2].y() = tempY[2];
+            output[i+2].z() = tempZ[2];
+            
+            output[i+3].x() = tempX[3];
+            output[i+3].y() = tempY[3];
+            output[i+3].z() = tempZ[3];
+        }
+    }
+    
+    // 处理剩余向量（标量）
+    for (size_t i = simdCount; i < count; ++i) {
+        output[i] = rot * input[i];
+    }
+    
+#elif defined(__SSE__)
+    // SSE 实现：使用优化的标量版本（一次一个向量）
+    float qx = rot.x();
+    float qy = rot.y();
+    float qz = rot.z();
+    float qw = rot.w();
+    
+    for (size_t i = 0; i < count; ++i) {
+        float vx = input[i].x();
+        float vy = input[i].y();
+        float vz = input[i].z();
+        
+        // 第一次叉乘：t1 = cross(q.xyz, v) + q.w * v
+        float t1x = qy * vz - qz * vy + qw * vx;
+        float t1y = qz * vx - qx * vz + qw * vy;
+        float t1z = qx * vy - qy * vx + qw * vz;
+        
+        // 第二次叉乘：t2 = cross(q.xyz, t1)
+        float t2x = qy * t1z - qz * t1y;
+        float t2y = qz * t1x - qx * t1z;
+        float t2z = qx * t1y - qy * t1x;
+        
+        // 最终结果：v' = v + 2 * t2
+        output[i].x() = vx + 2.0f * t2x;
+        output[i].y() = vy + 2.0f * t2y;
+        output[i].z() = vz + 2.0f * t2z;
+    }
+    
+#else
+    // 标量回退实现
     for (size_t i = 0; i < count; ++i) {
         output[i] = rot * input[i];
     }
+#endif
 }
 
 // ============================================================================
