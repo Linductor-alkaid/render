@@ -13,6 +13,29 @@
 
 namespace Render {
 
+// ============================================================================
+// 内部访问辅助宏（简化代码，避免重复写 m_hotData. 和 m_coldData->）
+// ============================================================================
+// 注意：这些宏只在 transform.cpp 中使用，避免污染全局命名空间
+
+#define m_position m_hotData.position
+#define m_rotation m_hotData.rotation
+#define m_scale m_hotData.scale
+#define m_localVersion m_hotData.localVersion
+#define m_dirtyLocal m_hotData.dirtyLocal
+#define m_dirtyWorld m_hotData.dirtyWorld
+#define m_dirtyWorldTransform m_hotData.dirtyWorldTransform
+
+#define m_node m_coldData->node
+#define m_localMatrix m_coldData->cachedLocalMatrix
+#define m_worldMatrix m_coldData->cachedWorldMatrix
+#define m_cachedWorldPosition m_coldData->cachedWorldPosition
+#define m_cachedWorldRotation m_coldData->cachedWorldRotation
+#define m_cachedWorldScale m_coldData->cachedWorldScale
+#define m_worldCache m_coldData->worldCache
+#define m_dataMutex m_coldData->dataMutex
+#define m_hierarchyMutex m_coldData->hierarchyMutex
+
 // 静态成员初始化
 std::atomic<uint64_t> Transform::s_nextGlobalId{1};
 
@@ -76,7 +99,7 @@ void Transform::SetPosition(const Vector3& position) {
     
     // 检测 NaN/Inf
     if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(position.z())) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformInvalidPosition,
             "Transform::SetPosition: 位置包含 NaN 或 Inf，操作被忽略"));
         return;
     }
@@ -87,6 +110,30 @@ void Transform::SetPosition(const Vector3& position) {
     
     // 递归使所有子节点的缓存失效（因为父节点变化会影响所有子节点的世界变换）
     InvalidateChildrenCache();
+}
+
+Transform::Result Transform::TrySetPosition(const Vector3& position) {
+    RENDER_TRY {
+        std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+        
+        // 检测 NaN/Inf
+        if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(position.z())) {
+            return Result::Failure(ErrorCode::TransformInvalidPosition,
+                "位置包含 NaN 或 Inf");
+        }
+        
+        m_position = position;
+        MarkDirtyNoLock();
+        lock.unlock();
+        
+        InvalidateChildrenCache();
+        return Result::Success();
+    }
+    RENDER_CATCH_ALL {
+        return Result::Failure(ErrorCode::OperationFailed, "设置位置时发生未知错误");
+    }
+    
+    return Result::Failure(ErrorCode::OperationFailed, "设置位置失败");
 }
 
 Vector3 Transform::GetWorldPosition() const {
@@ -354,7 +401,7 @@ void Transform::SetRotation(const Quaternion& rotation) {
     // 检查四元数的模长，避免零四元数导致除零错误
     float norm = rotation.norm();
     if (norm < MathUtils::EPSILON) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformInvalidRotation,
             "Transform::SetRotation: 四元数接近零向量，使用单位四元数替代"));
         m_rotation = Quaternion::Identity();
     } else {
@@ -373,6 +420,46 @@ void Transform::SetRotation(const Quaternion& rotation) {
     
     // 递归使所有子节点的缓存失效
     InvalidateChildrenCache();
+}
+
+Transform::Result Transform::TrySetRotation(const Quaternion& rotation) {
+    RENDER_TRY {
+        std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+        
+        // 检查四元数的模长
+        float norm = rotation.norm();
+        if (norm < MathUtils::EPSILON) {
+            return Result::Failure(ErrorCode::TransformInvalidRotation,
+                "四元数接近零向量，模长 = " + std::to_string(norm));
+        }
+        
+        // 检查 NaN/Inf
+        if (!std::isfinite(rotation.w()) || !std::isfinite(rotation.x()) ||
+            !std::isfinite(rotation.y()) || !std::isfinite(rotation.z())) {
+            return Result::Failure(ErrorCode::TransformInvalidRotation,
+                "四元数包含 NaN 或 Inf");
+        }
+        
+        // 手动归一化
+        float invNorm = 1.0f / norm;
+        m_rotation = Quaternion(
+            rotation.w() * invNorm,
+            rotation.x() * invNorm,
+            rotation.y() * invNorm,
+            rotation.z() * invNorm
+        );
+        
+        MarkDirtyNoLock();
+        lock.unlock();
+        
+        InvalidateChildrenCache();
+        return Result::Success();
+    }
+    RENDER_CATCH_ALL {
+        return Result::Failure(ErrorCode::OperationFailed, "设置旋转时发生未知错误");
+    }
+    
+    return Result::Failure(ErrorCode::OperationFailed, "设置旋转失败");
 }
 
 void Transform::SetRotationEuler(const Vector3& euler) {
@@ -611,7 +698,7 @@ void Transform::SetScale(const Vector3& scale) {
     
     // 检测 NaN/Inf
     if (!std::isfinite(scale.x()) || !std::isfinite(scale.y()) || !std::isfinite(scale.z())) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformInvalidScale,
             "Transform::SetScale: 缩放包含 NaN 或 Inf，操作被忽略"));
         return;
     }
@@ -621,17 +708,17 @@ void Transform::SetScale(const Vector3& scale) {
     Vector3 safeScale = scale;
     
     if (std::abs(safeScale.x()) < MIN_SCALE) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformInvalidScale,
             "Transform::SetScale: X 缩放过小，限制为最小值"));
         safeScale.x() = (safeScale.x() >= 0.0f) ? MIN_SCALE : -MIN_SCALE;
     }
     if (std::abs(safeScale.y()) < MIN_SCALE) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformInvalidScale,
             "Transform::SetScale: Y 缩放过小，限制为最小值"));
         safeScale.y() = (safeScale.y() >= 0.0f) ? MIN_SCALE : -MIN_SCALE;
     }
     if (std::abs(safeScale.z()) < MIN_SCALE) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformInvalidScale,
             "Transform::SetScale: Z 缩放过小，限制为最小值"));
         safeScale.z() = (safeScale.z() >= 0.0f) ? MIN_SCALE : -MIN_SCALE;
     }
@@ -642,6 +729,48 @@ void Transform::SetScale(const Vector3& scale) {
     
     // 递归使所有子节点的缓存失效
     InvalidateChildrenCache();
+}
+
+Transform::Result Transform::TrySetScale(const Vector3& scale) {
+    RENDER_TRY {
+        std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+        
+        // 检测 NaN/Inf
+        if (!std::isfinite(scale.x()) || !std::isfinite(scale.y()) || !std::isfinite(scale.z())) {
+            return Result::Failure(ErrorCode::TransformInvalidScale,
+                "缩放包含 NaN 或 Inf");
+        }
+        
+        // 检测零缩放或极小缩放
+        const float MIN_SCALE = 1e-6f;
+        if (std::abs(scale.x()) < MIN_SCALE || 
+            std::abs(scale.y()) < MIN_SCALE || 
+            std::abs(scale.z()) < MIN_SCALE) {
+            return Result::Failure(ErrorCode::TransformInvalidScale,
+                "缩放值过小 (< " + std::to_string(MIN_SCALE) + ")");
+        }
+        
+        // 检测过大缩放
+        const float MAX_SCALE = 1e6f;
+        if (std::abs(scale.x()) > MAX_SCALE || 
+            std::abs(scale.y()) > MAX_SCALE || 
+            std::abs(scale.z()) > MAX_SCALE) {
+            return Result::Failure(ErrorCode::TransformInvalidScale,
+                "缩放值过大 (> " + std::to_string(MAX_SCALE) + ")");
+        }
+        
+        m_scale = scale;
+        MarkDirtyNoLock();
+        lock.unlock();
+        
+        InvalidateChildrenCache();
+        return Result::Success();
+    }
+    RENDER_CATCH_ALL {
+        return Result::Failure(ErrorCode::OperationFailed, "设置缩放时发生未知错误");
+    }
+    
+    return Result::Failure(ErrorCode::OperationFailed, "设置缩放失败");
 }
 
 void Transform::SetScale(float scale) {
@@ -738,6 +867,58 @@ void Transform::SetFromMatrix(const Matrix4& matrix) {
     MarkDirtyNoLock();
 }
 
+Transform::Result Transform::TrySetFromMatrix(const Matrix4& matrix) {
+    RENDER_TRY {
+        std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+        
+        // 检查矩阵是否包含 NaN/Inf
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                if (!std::isfinite(matrix(i, j))) {
+                    return Result::Failure(ErrorCode::TransformInvalidMatrix,
+                        "矩阵包含 NaN 或 Inf（位置: [" + 
+                        std::to_string(i) + "," + std::to_string(j) + "]）");
+                }
+            }
+        }
+        
+        // 分解矩阵
+        Vector3 position, scale;
+        Quaternion rotation;
+        MathUtils::DecomposeMatrix(matrix, position, rotation, scale);
+        
+        // 验证分解结果
+        if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(position.z())) {
+            return Result::Failure(ErrorCode::TransformInvalidPosition,
+                "矩阵分解后的位置包含 NaN 或 Inf");
+        }
+        
+        if (!std::isfinite(rotation.w()) || !std::isfinite(rotation.x()) ||
+            !std::isfinite(rotation.y()) || !std::isfinite(rotation.z())) {
+            return Result::Failure(ErrorCode::TransformInvalidRotation,
+                "矩阵分解后的旋转包含 NaN 或 Inf");
+        }
+        
+        if (!std::isfinite(scale.x()) || !std::isfinite(scale.y()) || !std::isfinite(scale.z())) {
+            return Result::Failure(ErrorCode::TransformInvalidScale,
+                "矩阵分解后的缩放包含 NaN 或 Inf");
+        }
+        
+        // 应用分解结果
+        m_position = position;
+        m_rotation = rotation;
+        m_scale = scale;
+        MarkDirtyNoLock();
+        
+        return Result::Success();
+    }
+    RENDER_CATCH_ALL {
+        return Result::Failure(ErrorCode::OperationFailed, "从矩阵设置变换时发生未知错误");
+    }
+    
+    return Result::Failure(ErrorCode::OperationFailed, "从矩阵设置变换失败");
+}
+
 // ============================================================================
 // 父子关系
 // ============================================================================
@@ -760,7 +941,7 @@ bool Transform::SetParent(Transform* parent) {
     
     // 自引用检查
     if (parent == this) {
-        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformSelfReference,
             "Transform::SetParent: 不能将自己设置为父对象"));
         return false;
     }
@@ -773,13 +954,13 @@ bool Transform::SetParent(Transform* parent) {
         
         while (ancestor && depth < MAX_DEPTH) {
             if (ancestor->destroyed.load(std::memory_order_acquire)) {
-                HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformParentDestroyed,
                     "Transform::SetParent: 父对象已被销毁"));
                 return false;
             }
             
             if (ancestor == myNode) {
-                HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+                HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformCircularReference,
                     "Transform::SetParent: 检测到循环引用"));
                 return false;
             }
@@ -789,7 +970,7 @@ bool Transform::SetParent(Transform* parent) {
         }
         
         if (depth >= MAX_DEPTH) {
-            HANDLE_ERROR(RENDER_WARNING(ErrorCode::OutOfRange,
+            HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformHierarchyTooDeep,
                 "Transform::SetParent: 父对象层级过深"));
             return false;
         }
@@ -815,6 +996,86 @@ bool Transform::SetParent(Transform* parent) {
     }
     
     return true;
+}
+
+Transform::Result Transform::TrySetParent(Transform* parent) {
+    RENDER_TRY {
+        // 层级操作使用层级锁
+        std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
+        
+        auto myNode = GetNode(this);
+        if (!myNode || myNode->destroyed.load(std::memory_order_acquire)) {
+            return Result::Failure(ErrorCode::TransformObjectDestroyed,
+                "当前对象已被销毁");
+        }
+        
+        auto currentParentNode = myNode->parent.lock();
+        auto newParentNode = GetNode(parent);
+        
+        // 相同父对象，直接返回成功
+        if (currentParentNode == newParentNode) {
+            return Result::Success();
+        }
+        
+        // 自引用检查
+        if (parent == this) {
+            return Result::Failure(ErrorCode::TransformSelfReference,
+                "不能将自己设置为父对象");
+        }
+        
+        // 循环引用检查
+        if (newParentNode) {
+            auto ancestor = newParentNode;
+            int depth = 0;
+            const int MAX_DEPTH = 1000;
+            
+            while (ancestor && depth < MAX_DEPTH) {
+                if (ancestor->destroyed.load(std::memory_order_acquire)) {
+                    return Result::Failure(ErrorCode::TransformParentDestroyed,
+                        "父对象已被销毁");
+                }
+                
+                if (ancestor == myNode) {
+                    return Result::Failure(ErrorCode::TransformCircularReference,
+                        "检测到循环引用（层级深度: " + std::to_string(depth) + "）");
+                }
+                
+                ancestor = ancestor->parent.lock();
+                depth++;
+            }
+            
+            if (depth >= MAX_DEPTH) {
+                return Result::Failure(ErrorCode::TransformHierarchyTooDeep,
+                    "父对象层级过深（>= " + std::to_string(MAX_DEPTH) + "）");
+            }
+        }
+        
+        // 从旧父节点移除
+        if (currentParentNode && currentParentNode->transform) {
+            currentParentNode->transform->RemoveChild(this);
+        }
+        
+        // 添加到新父节点
+        if (newParentNode && newParentNode->transform) {
+            newParentNode->transform->AddChild(this);
+        }
+        
+        // 更新父指针
+        myNode->parent = newParentNode;
+        
+        // 标记为脏
+        {
+            std::unique_lock<std::shared_mutex> dataLock(m_dataMutex);
+            MarkDirtyNoLock();
+        }
+        
+        return Result::Success();
+    }
+    RENDER_CATCH_ALL {
+        return Result::Failure(ErrorCode::OperationFailed, "设置父对象时发生未知错误");
+    }
+    
+    return Result::Failure(ErrorCode::OperationFailed, "设置父对象失败");
 }
 
 // ============================================================================

@@ -166,9 +166,9 @@ private:
 
 class TestPointLightNode : public SceneNode {
 public:
-    TestPointLightNode(Vector3 position, Color color)
+    TestPointLightNode(Vector3 pos, Color color)
         : SceneNode("SceneGraphDemo.Light")
-        , m_position(position)
+        , m_position(pos)
         , m_color(color) {}
 
 protected:

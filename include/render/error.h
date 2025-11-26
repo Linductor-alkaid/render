@@ -43,6 +43,9 @@ enum class ErrorCategory {
     // 初始化错误 (6000-6999)
     Initialization = 6000,
     
+    // Transform 错误 (7000-7999)
+    Transform = 7000,
+    
     // 通用错误 (9000-9999)
     Generic = 9000
 };
@@ -97,6 +100,18 @@ enum class ErrorCode {
     AlreadyInitialized,
     NotInitialized,
     ConfigurationInvalid,
+    
+    // Transform 错误 (7000-7999)
+    TransformCircularReference = 7000,
+    TransformSelfReference,
+    TransformHierarchyTooDeep,
+    TransformParentDestroyed,
+    TransformObjectDestroyed,
+    TransformInvalidPosition,
+    TransformInvalidRotation,
+    TransformInvalidScale,
+    TransformInvalidMatrix,
+    TransformLockTimeout,
     
     // 通用错误 (9000-9999)
     NotImplemented = 9000,

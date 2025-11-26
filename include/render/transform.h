@@ -2,6 +2,7 @@
 
 #include "types.h"
 #include "math_utils.h"
+#include "error.h"
 #include <mutex>
 #include <shared_mutex>
 #include <atomic>
@@ -13,6 +14,9 @@
 #include <algorithm>
 
 namespace Render {
+
+// 前向声明
+class Transform;
 
 /**
  * @class Transform
@@ -116,6 +120,45 @@ class Transform {
     
 public:
     /**
+     * @brief Transform 操作的结果类型
+     * 
+     * 用于显式错误检查的接口，提供详细的错误信息
+     */
+    struct Result {
+        ErrorCode code;
+        std::string message;
+        
+        /**
+         * @brief 检查操作是否成功
+         */
+        explicit operator bool() const { return code == ErrorCode::Success; }
+        
+        /**
+         * @brief 检查操作是否成功
+         */
+        bool Ok() const { return code == ErrorCode::Success; }
+        
+        /**
+         * @brief 检查操作是否失败
+         */
+        bool Failed() const { return code != ErrorCode::Success; }
+        
+        /**
+         * @brief 创建成功结果
+         */
+        static Result Success() {
+            return {ErrorCode::Success, ""};
+        }
+        
+        /**
+         * @brief 创建失败结果
+         */
+        static Result Failure(ErrorCode errorCode, const std::string& errorMessage) {
+            return {errorCode, errorMessage};
+        }
+    };
+    
+    /**
      * @brief 默认构造函数
      * 创建一个单位变换（位置为原点，无旋转，缩放为1）
      */
@@ -152,6 +195,15 @@ public:
      * @param position 新的本地位置
      */
     void SetPosition(const Vector3& position);
+    
+    /**
+     * @brief 设置本地位置（显式错误检查）
+     * @param position 新的本地位置
+     * @return Result 包含操作结果和错误信息
+     * 
+     * @note 与 SetPosition() 相同，但返回详细的错误信息
+     */
+    Result TrySetPosition(const Vector3& position);
     
     /**
      * @brief 获取本地位置
@@ -234,6 +286,13 @@ public:
     void SetRotation(const Quaternion& rotation);
     
     /**
+     * @brief 设置本地旋转（显式错误检查）
+     * @param rotation 新的本地旋转
+     * @return Result 包含操作结果和错误信息
+     */
+    Result TrySetRotation(const Quaternion& rotation);
+    
+    /**
      * @brief 设置本地旋转（欧拉角，弧度）
      * @param euler 欧拉角（弧度）
      */
@@ -307,6 +366,13 @@ public:
     void SetScale(const Vector3& scale);
     
     /**
+     * @brief 设置本地缩放（显式错误检查）
+     * @param scale 新的本地缩放
+     * @return Result 包含操作结果和错误信息
+     */
+    Result TrySetScale(const Vector3& scale);
+    
+    /**
      * @brief 设置统一缩放
      * @param scale 统一缩放值
      */
@@ -368,6 +434,13 @@ public:
      */
     void SetFromMatrix(const Matrix4& matrix);
     
+    /**
+     * @brief 从矩阵设置变换（显式错误检查）
+     * @param matrix 变换矩阵
+     * @return Result 包含操作结果和错误信息
+     */
+    Result TrySetFromMatrix(const Matrix4& matrix);
+    
     // ========================================================================
     // 父子关系
     // ========================================================================
@@ -404,6 +477,26 @@ public:
      * @endcode
      */
     bool SetParent(Transform* parent);
+    
+    /**
+     * @brief 设置父变换（显式错误检查）
+     * @param parent 父变换指针（nullptr 表示无父对象）
+     * @return Result 包含操作结果和详细错误信息
+     * 
+     * @note 提供比 SetParent() 更详细的错误信息
+     * @example
+     * @code
+     * Transform parent, child;
+     * auto result = child.TrySetParent(&parent);
+     * if (result.Ok()) {
+     *     // 成功
+     * } else {
+     *     // 失败，result.message 包含详细错误信息
+     *     std::cerr << "设置父对象失败: " << result.message << std::endl;
+     * }
+     * @endcode
+     */
+    Result TrySetParent(Transform* parent);
     
     /**
      * @brief 获取父变换
@@ -717,26 +810,8 @@ private:
     // 内部访问辅助宏（简化代码，避免重复写 m_hotData. 和 m_coldData->）
     // ========================================================================
     
-    // 注意：以下是兼容性宏，用于最小化代码修改
-    // 在实现文件（transform.cpp）中使用这些宏来访问成员
-    
-    #define m_position m_hotData.position
-    #define m_rotation m_hotData.rotation
-    #define m_scale m_hotData.scale
-    #define m_localVersion m_hotData.localVersion
-    #define m_dirtyLocal m_hotData.dirtyLocal
-    #define m_dirtyWorld m_hotData.dirtyWorld
-    #define m_dirtyWorldTransform m_hotData.dirtyWorldTransform
-    
-    #define m_node m_coldData->node
-    #define m_localMatrix m_coldData->cachedLocalMatrix
-    #define m_worldMatrix m_coldData->cachedWorldMatrix
-    #define m_cachedWorldPosition m_coldData->cachedWorldPosition
-    #define m_cachedWorldRotation m_coldData->cachedWorldRotation
-    #define m_cachedWorldScale m_coldData->cachedWorldScale
-    #define m_worldCache m_coldData->worldCache
-    #define m_dataMutex m_coldData->dataMutex
-    #define m_hierarchyMutex m_coldData->hierarchyMutex
+    // 注意：这些宏已移到 transform.cpp 实现文件中，避免污染全局命名空间
+    // 在实现文件中使用这些宏来访问成员
     
     // ========================================================================
     // P1-2.1: 三层缓存策略

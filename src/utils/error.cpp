@@ -40,6 +40,8 @@ ErrorCategory RenderError::GetCategoryFromCode(ErrorCode code) {
         return ErrorCategory::IO;
     } else if (codeValue >= 6000 && codeValue < 7000) {
         return ErrorCategory::Initialization;
+    } else if (codeValue >= 7000 && codeValue < 8000) {
+        return ErrorCategory::Transform;
     } else {
         return ErrorCategory::Generic;
     }
@@ -337,6 +339,18 @@ const char* ErrorCodeToString(ErrorCode code) {
         case ErrorCode::NotInitialized: return "NotInitialized";
         case ErrorCode::ConfigurationInvalid: return "ConfigurationInvalid";
         
+        // Transform 错误
+        case ErrorCode::TransformCircularReference: return "TransformCircularReference";
+        case ErrorCode::TransformSelfReference: return "TransformSelfReference";
+        case ErrorCode::TransformHierarchyTooDeep: return "TransformHierarchyTooDeep";
+        case ErrorCode::TransformParentDestroyed: return "TransformParentDestroyed";
+        case ErrorCode::TransformObjectDestroyed: return "TransformObjectDestroyed";
+        case ErrorCode::TransformInvalidPosition: return "TransformInvalidPosition";
+        case ErrorCode::TransformInvalidRotation: return "TransformInvalidRotation";
+        case ErrorCode::TransformInvalidScale: return "TransformInvalidScale";
+        case ErrorCode::TransformInvalidMatrix: return "TransformInvalidMatrix";
+        case ErrorCode::TransformLockTimeout: return "TransformLockTimeout";
+        
         // 通用错误
         case ErrorCode::NotImplemented: return "NotImplemented";
         case ErrorCode::InvalidArgument: return "InvalidArgument";
@@ -369,6 +383,7 @@ const char* ErrorCategoryToString(ErrorCategory category) {
         case ErrorCategory::Rendering: return "Rendering";
         case ErrorCategory::IO: return "IO";
         case ErrorCategory::Initialization: return "Initialization";
+        case ErrorCategory::Transform: return "Transform";
         case ErrorCategory::Generic: return "Generic";
         default: return "Unknown";
     }

@@ -18,6 +18,11 @@ add_executable(scene_manager_stress_test scene_manager_stress_test.cpp)
 # ============================================================================
 add_executable(test_memory_layout_optimization test_memory_layout_optimization.cpp)
 
+# ============================================================================
+# P2-3.1: Transform 统一错误处理测试
+# ============================================================================
+add_executable(test_transform_error_handling test_transform_error_handling.cpp)
+
 target_link_libraries(mesh_tangent_test PRIVATE RenderEngine)
 target_link_libraries(model_loader_regression_test PRIVATE RenderEngine)
 target_link_libraries(renderer_layer_mask_test PRIVATE RenderEngine)
@@ -29,6 +34,7 @@ target_link_libraries(async_resource_loader_failure_test PRIVATE RenderEngine)
 target_link_libraries(scene_manager_resource_test PRIVATE RenderEngine)
 target_link_libraries(scene_manager_stress_test PRIVATE RenderEngine)
 target_link_libraries(test_memory_layout_optimization PRIVATE RenderEngine)
+target_link_libraries(test_transform_error_handling PRIVATE RenderEngine)
 
 target_compile_definitions(mesh_tangent_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(model_loader_regression_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
@@ -41,6 +47,7 @@ target_compile_definitions(async_resource_loader_failure_test PRIVATE PROJECT_SO
 target_compile_definitions(scene_manager_resource_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(scene_manager_stress_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(test_memory_layout_optimization PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+target_compile_definitions(test_transform_error_handling PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 
 if(MSVC)
     target_compile_options(mesh_tangent_test PRIVATE /utf-8)
@@ -54,6 +61,7 @@ if(MSVC)
     target_compile_options(scene_manager_resource_test PRIVATE /utf-8)
     target_compile_options(scene_manager_stress_test PRIVATE /utf-8)
     target_compile_options(test_memory_layout_optimization PRIVATE /utf-8)
+    target_compile_options(test_transform_error_handling PRIVATE /utf-8)
 endif()
 
 add_test(NAME mesh_tangent_test COMMAND mesh_tangent_test)
@@ -67,4 +75,5 @@ add_test(NAME async_resource_loader_failure_test COMMAND async_resource_loader_f
 add_test(NAME scene_manager_resource_test COMMAND scene_manager_resource_test)
 add_test(NAME scene_manager_stress_test COMMAND scene_manager_stress_test)
 add_test(NAME test_memory_layout_optimization COMMAND test_memory_layout_optimization)
+add_test(NAME test_transform_error_handling COMMAND test_transform_error_handling)
 
