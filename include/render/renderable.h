@@ -130,6 +130,15 @@ public:
      */
     void UpdateMatrixCache() const;
     
+    /**
+     * @brief 直接设置缓存的矩阵（用于批量预取优化）
+     * @param matrix 预计算的世界变换矩阵
+     * 
+     * @note 阶段 1.2 优化：直接设置预计算的矩阵，避免重复获取锁
+     * @note 调用者应确保 matrix 与当前 Transform 的世界矩阵一致
+     */
+    void SetCachedWorldMatrix(const Matrix4& matrix) const;
+    
     // ==================== 可见性 ====================
     
     /**

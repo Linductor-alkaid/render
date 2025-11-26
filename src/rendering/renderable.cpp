@@ -331,6 +331,20 @@ void Renderable::UpdateMatrixCache() const {
     }
 }
 
+void Renderable::SetCachedWorldMatrix(const Matrix4& matrix) const {
+    std::unique_lock lock(m_mutex);
+    
+    if (m_transform) {
+        m_cachedWorldMatrix = matrix;
+        m_cachedTransformPtr = m_transform.get();
+        m_matrixCacheValid = true;
+    } else {
+        m_cachedWorldMatrix = Matrix4::Identity();
+        m_cachedTransformPtr = nullptr;
+        m_matrixCacheValid = false;
+    }
+}
+
 void Renderable::SetVisible(bool visible) {
     std::unique_lock lock(m_mutex);
     m_visible = visible;

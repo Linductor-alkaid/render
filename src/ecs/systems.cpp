@@ -23,6 +23,7 @@
 #include <limits>
 #include <functional>
 #include <unordered_set>
+#include <unordered_map>
 
 namespace Render {
 namespace ECS {
@@ -1501,35 +1502,33 @@ void MeshRenderSystem::SubmitRenderables() {
             throw RENDER_WARNING(ErrorCode::NullPointer, "MeshRenderSystem: RenderState is null");
         }
         
-        for (const auto& entity : entities) {
+        // ==================== 阶段 1.2: 批量矩阵预取优化 ====================
+        // 第一遍：快速筛选有效实体（可见性、资源加载、视锥体裁剪）
+        // 并按 Transform 分组，准备批量预取矩阵
+        std::unordered_map<Transform*, std::vector<size_t>> transformGroups;
+        std::vector<std::pair<size_t, Transform*>> validEntities;  // 存储有效实体的索引和 Transform 指针
+        
+        for (size_t i = 0; i < entities.size(); ++i) {
+            const auto& entity = entities[i];
             auto& transform = m_world->GetComponent<TransformComponent>(entity);
             auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
             
-            // 检查可见性
-            if (!meshComp.visible) {
-                Logger::GetInstance().DebugFormat("[MeshRenderSystem] Entity %u not visible, skip", entity.index);
+            // 快速检查：可见性和资源加载状态
+            if (!meshComp.visible || !meshComp.resourcesLoaded || !meshComp.mesh || !meshComp.material) {
                 continue;
             }
             
-            // 检查资源是否已加载
-            if (!meshComp.resourcesLoaded || !meshComp.mesh || !meshComp.material) {
-                Logger::GetInstance().DebugFormat("[MeshRenderSystem] Entity %u not ready: resourcesLoaded=%d, hasMesh=%d, hasMaterial=%d", 
-                                                 entity.index, meshComp.resourcesLoaded, 
-                                                 (meshComp.mesh != nullptr), (meshComp.material != nullptr));
+            if (!transform.transform) {
                 continue;
             }
             
-            // 视锥体裁剪优化
+            // 视锥体裁剪优化（在批量预取之前进行，避免为被裁剪的实体预取）
             Vector3 position = transform.GetPosition();
-            
-            // 从网格包围盒计算半径
             float radius = 1.0f;  // 默认半径
             if (meshComp.mesh) {
                 AABB bounds = meshComp.mesh->CalculateBounds();
                 Vector3 size = bounds.max - bounds.min;
-                radius = size.norm() * 0.5f;  // 包围盒对角线的一半作为半径
-                
-                // 考虑Transform的缩放
+                radius = size.norm() * 0.5f;
                 Vector3 scale = transform.GetScale();
                 float maxScale = std::max(std::max(scale.x(), scale.y()), scale.z());
                 radius *= maxScale;
@@ -1539,6 +1538,27 @@ void MeshRenderSystem::SubmitRenderables() {
                 m_stats.culledMeshes++;
                 continue;
             }
+            
+            // 实体通过所有检查，加入有效列表并按 Transform 分组
+            Transform* transformPtr = transform.transform.get();
+            transformGroups[transformPtr].push_back(i);
+            validEntities.push_back({i, transformPtr});
+        }
+        
+        // 批量预取矩阵：对每个 Transform 使用批量句柄（只获取一次锁）
+        std::unordered_map<Transform*, Matrix4> cachedMatrices;
+        for (auto& [transformPtr, indices] : transformGroups) {
+            // 使用批量句柄获取矩阵（只获取一次锁）
+            auto batch = transformPtr->BeginBatch();
+            Matrix4 worldMatrix = batch.GetMatrix();
+            cachedMatrices[transformPtr] = worldMatrix;
+        }
+        
+        // ==================== 处理有效实体 ====================
+        for (const auto& [entityIdx, transformPtr] : validEntities) {
+            const auto& entity = entities[entityIdx];
+            auto& transform = m_world->GetComponent<TransformComponent>(entity);
+            auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
             
             // ==================== 材质属性覆盖处理 ====================
             // ✅ 注意：MaterialOverride 不应该修改共享的 Material 对象
@@ -1592,6 +1612,16 @@ void MeshRenderSystem::SubmitRenderables() {
             renderable.SetRenderPriority(meshComp.renderPriority);
             renderable.SetCastShadows(meshComp.castShadows);
             renderable.SetReceiveShadows(meshComp.receiveShadows);
+            
+            // 阶段 1.2: 预更新矩阵缓存（使用批量预取的矩阵）
+            if (transform.transform) {
+                Transform* transformPtr = transform.transform.get();
+                auto it = cachedMatrices.find(transformPtr);
+                if (it != cachedMatrices.end()) {
+                    // 直接设置批量预取的矩阵，避免重复获取锁
+                    renderable.SetCachedWorldMatrix(it->second);
+                }
+            }
             
             // ==================== ✅ MaterialOverride 处理 ====================
             // 将ECS组件的MaterialOverride传递给MeshRenderable
