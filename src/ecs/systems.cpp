@@ -331,6 +331,25 @@ void TransformSystem::SyncParentChildRelations() {
                         comp.transform->SetParent(nullptr);
                         m_stats.clearedParents++;
                     }
+                } else {
+                    // 如果transform或parentComp.transform为nullptr，清除父实体
+                    // 这可以防止在BatchUpdateTransforms中访问无效的父Transform
+                    if (!comp.transform) {
+                        Logger::GetInstance().WarningFormat(
+                            "[TransformSystem] Entity %u has null Transform, clearing parent", 
+                            entity.index
+                        );
+                    } else if (!parentComp.transform) {
+                        Logger::GetInstance().WarningFormat(
+                            "[TransformSystem] Parent entity %u has null Transform, clearing parent for entity %u", 
+                            comp.parentEntity.index, entity.index
+                        );
+                    }
+                    comp.parentEntity = EntityID::Invalid();
+                    if (comp.transform) {
+                        comp.transform->SetParent(nullptr);
+                    }
+                    m_stats.clearedParents++;
                 }
             }
         }
@@ -363,9 +382,13 @@ void TransformSystem::BatchUpdateTransforms() {
     for (const auto& entity : entities) {
         auto& comp = m_world->GetComponent<TransformComponent>(entity);
         if (comp.transform && comp.transform->IsDirty()) {
+            // 获取层级深度用于排序
+            // 注意：GetHierarchyDepth()是线程安全的，但如果父子关系还未完全同步，
+            // 可能会返回不准确的深度值，但这不会导致崩溃，只是排序可能不够优化
+            int depth = comp.transform->GetHierarchyDepth();
             dirtyTransforms.push_back({
                 comp.transform.get(),
-                comp.transform->GetHierarchyDepth()
+                depth
             });
         }
     }
@@ -431,7 +454,6 @@ void TransformSystem::BatchUpdateTransforms() {
         // 对每个唯一的 Transform 使用批量句柄
         for (const auto& transformGroup : transformGroups) {
             Transform* transformPtr = transformGroup.first;
-            const std::vector<size_t>& indices = transformGroup.second;
 
             // 使用批量句柄获取矩阵（只获取一次锁）
             auto batch = transformPtr->BeginBatch();
@@ -1565,11 +1587,9 @@ void MeshRenderSystem::SubmitRenderables() {
             throw RENDER_WARNING(ErrorCode::NullPointer, "MeshRenderSystem: RenderState is null");
         }
 
-        // ==================== 阶段 1.2: 批量矩阵预取优化 ====================
+        // ==================== 阶段 2.2: 简化的批量矩阵预取优化 ====================
         // 第一遍：快速筛选有效实体（可见性、资源加载、视锥体裁剪）
-        // 并按 Transform 分组，准备批量预取矩阵
-        std::unordered_map<Transform*, std::vector<size_t>> transformGroups;
-        std::unordered_map<Transform*, Matrix4> cachedMatrices;
+        // 并为每个有效实体预计算批量数据
         std::vector<std::pair<size_t, Transform*>> validEntities;  // 存储有效实体的索引和 Transform 指针
         
         for (size_t i = 0; i < entities.size(); ++i) {
@@ -1603,26 +1623,40 @@ void MeshRenderSystem::SubmitRenderables() {
                 continue;
             }
             
-            // 实体通过所有检查，加入有效列表并按 Transform 分组
+            // 实体通过所有检查，加入有效列表
             Transform* transformPtr = transform.transform.get();
-            transformGroups[transformPtr].push_back(entities[i].index);
             validEntities.push_back({i, transformPtr});
         }
         
-        // 批量预取矩阵：对每个 Transform 使用批量句柄（只获取一次锁）
-        for (const auto& transformGroup : transformGroups) {
-            Transform* transformPtr = transformGroup.first;
+        // 阶段 2.2 优化：对于大多数 Transform 只有一个实体的情况，简化批量处理
+        struct TransformBatchData {
+            size_t entityIndex;
+            Matrix4 worldMatrix;
+            Vector3 worldPosition;
+            float boundingRadius;
+        };
 
-            // 使用批量句柄获取矩阵（只获取一次锁）
-            auto batch = transformPtr->BeginBatch();
-            Matrix4 worldMatrix = batch.GetMatrix();
-            cachedMatrices[transformPtr] = worldMatrix;
-        }
-        
-        // ==================== 处理有效实体 ====================
+        std::vector<TransformBatchData> batchData;
+        batchData.reserve(validEntities.size());
+
+        // 直接为每个有效实体创建批量数据，避免复杂的分组查找
         for (const auto& validEntity : validEntities) {
             size_t entityIdx = validEntity.first;
             Transform* transformPtr = validEntity.second;
+
+            TransformBatchData data;
+            data.entityIndex = entityIdx;
+            data.worldMatrix = transformPtr->BeginBatch().GetMatrix();
+            data.worldPosition = transformPtr->GetWorldPosition();
+            data.boundingRadius = 1.0f; // 默认值，后面会根据实际网格计算
+            batchData.push_back(data);
+        }
+        
+        // ==================== 处理有效实体：使用预计算的批量数据 ====================
+        for (size_t i = 0; i < validEntities.size(); ++i) {
+            size_t entityIdx = validEntities[i].first;
+            Transform* transformPtr = validEntities[i].second;
+            const auto& entityBatchData = batchData[i]; // 直接访问预计算的数据
             const auto& entity = entities[entityIdx];
             auto& transform = m_world->GetComponent<TransformComponent>(entity);
             auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
@@ -1680,14 +1714,31 @@ void MeshRenderSystem::SubmitRenderables() {
             renderable.SetCastShadows(meshComp.castShadows);
             renderable.SetReceiveShadows(meshComp.receiveShadows);
             
-            // 阶段 1.2: 预更新矩阵缓存（使用批量预取的矩阵）
+            // 阶段 2.2: 优化批量矩阵缓存使用（直接使用预计算的数据）
             if (transform.transform) {
-                Transform* cachedTransformPtr = transform.transform.get();
-                auto it = cachedMatrices.find(cachedTransformPtr);
-                if (it != cachedMatrices.end()) {
-                    // 直接设置批量预取的矩阵，避免重复获取锁
-                    renderable.SetCachedWorldMatrix(it->second);
+                // 获取相机用于深度排序
+                Camera* camera = m_cameraSystem ? m_cameraSystem->GetMainCameraObject() : nullptr;
+
+                // 直接使用预计算的批量数据，避免复杂的查找
+                renderable.SetCachedWorldMatrix(entityBatchData.worldMatrix);
+
+                // 如果是透明对象，使用预计算的位置进行深度排序
+                if (meshComp.material && meshComp.material->GetBlendMode() != Render::BlendMode::None) {
+                    if (camera) {
+                        Vector3 cameraPos = camera->GetPosition();
+                        float depth = (entityBatchData.worldPosition - cameraPos).squaredNorm();
+                        renderable.SetDepthHint(depth);
+                    }
                 }
+
+                // 使用预计算的世界位置进行视锥体裁剪（优化）
+                // 注意：我们已经设置了缓存矩阵，这里直接使用预计算的数据进行裁剪
+                if (ShouldCull(entityBatchData.worldPosition, entityBatchData.boundingRadius)) {
+                    m_stats.culledMeshes++;
+                    continue;
+                }
+
+                // 矩阵缓存已经通过批量数据设置完成
             }
             
             // ==================== ✅ MaterialOverride 处理 ====================

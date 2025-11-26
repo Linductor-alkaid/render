@@ -146,12 +146,18 @@ public:
      * @param visible 是否可见
      */
     void SetVisible(bool visible);
-    
+
     /**
      * @brief 获取可见性
      * @return 是否可见
      */
     [[nodiscard]] bool IsVisible() const;
+
+    /**
+     * @brief 检查是否有缓存的矩阵
+     * @return true 如果有缓存的矩阵
+     */
+    [[nodiscard]] bool HasCachedWorldMatrix() const;
     
     // ==================== 层级 ====================
     

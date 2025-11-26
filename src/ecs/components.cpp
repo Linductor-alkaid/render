@@ -117,14 +117,22 @@ bool TransformComponent::ValidateParentEntity(World* world) {
     
     // 验证 Transform 指针一致性
     auto& parentComp = world->GetComponent<TransformComponent>(parentEntity);
-    if (transform && parentComp.transform) {
-        if (transform->GetParent() != parentComp.transform.get()) {
-            // Transform 指针不一致，需要重新同步
-            Logger::GetInstance().DebugFormat(
-                "[TransformComponent] Transform parent pointer inconsistent, will resync"
-            );
-            return false;  // 返回 false 表示需要重新同步
-        }
+    
+    // 如果当前Transform或父Transform不存在，需要等待它们创建
+    if (!transform || !parentComp.transform) {
+        Logger::GetInstance().DebugFormat(
+            "[TransformComponent] Transform or parent Transform not ready, will resync"
+        );
+        return false;  // 返回 false 表示需要重新同步
+    }
+    
+    // 验证父指针一致性
+    if (transform->GetParent() != parentComp.transform.get()) {
+        // Transform 指针不一致，需要重新同步
+        Logger::GetInstance().DebugFormat(
+            "[TransformComponent] Transform parent pointer inconsistent, will resync"
+        );
+        return false;  // 返回 false 表示需要重新同步
     }
     
     return true;

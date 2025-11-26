@@ -146,7 +146,7 @@ Vector3 Transform::GetWorldPosition() const {
     if (hotVersion == localVer && hotVersion != 0) {
         // 验证父节点版本
         auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-        if (!parentNode) {
+        if (!parentNode || !parentNode->transform) {
             // 无父节点，热缓存命中
             return m_hotCache.worldPosition;
         }
@@ -167,7 +167,7 @@ Vector3 Transform::GetWorldPosition() const {
         if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
             cachedVersion == localVer) {
             auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-            if (!parentNode || 
+            if (!parentNode || !parentNode->transform || 
                 m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
                 // 温缓存命中，更新热缓存
                 UpdateHotCache();
@@ -203,7 +203,7 @@ Vector3 Transform::GetWorldPositionSlow() const {
             }
             // parent指针通过weak_ptr访问，线程安全，无需加锁
             auto parentNode = node->parent.lock();
-            if (parentNode && !parentNode->destroyed.load(std::memory_order_acquire)) {
+            if (parentNode && !parentNode->destroyed.load(std::memory_order_acquire) && parentNode->transform) {
                 current = parentNode->transform;
             } else {
                 current = nullptr;
@@ -264,7 +264,7 @@ Vector3 Transform::GetWorldPositionSlow() const {
                 auto nodePtr = GetNode(node);
                 if (nodePtr) {
                     auto parentNode = nodePtr->parent.lock();
-                    if (parentNode && parentNode->transform == iter) {
+                    if (parentNode && parentNode->transform && parentNode->transform == iter) {
                         iter = node;
                         found = true;
                         break;
@@ -313,7 +313,7 @@ Vector3 Transform::GetWorldPositionSlow() const {
         m_worldCache.version = m_localVersion.load(std::memory_order_relaxed);
         
         auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-        m_worldCache.parentVersion = parentNode ? 
+        m_worldCache.parentVersion = (parentNode && parentNode->transform) ? 
             parentNode->transform->m_localVersion.load(std::memory_order_acquire) : 0;
         
         // 同时更新旧的缓存（向后兼容）
@@ -501,7 +501,7 @@ Quaternion Transform::GetWorldRotation() const {
     
     if (hotVersion == localVer && hotVersion != 0) {
         auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-        if (!parentNode) {
+        if (!parentNode || !parentNode->transform) {
             return m_hotCache.worldRotation;
         }
         
@@ -519,7 +519,7 @@ Quaternion Transform::GetWorldRotation() const {
         if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
             cachedVersion == localVer) {
             auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-            if (!parentNode || 
+            if (!parentNode || !parentNode->transform || 
                 m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
                 UpdateHotCache();
                 return m_worldCache.rotation;
@@ -786,7 +786,7 @@ Vector3 Transform::GetWorldScale() const {
     
     if (hotVersion == localVer && hotVersion != 0) {
         auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-        if (!parentNode) {
+        if (!parentNode || !parentNode->transform) {
             return m_hotCache.worldScale;
         }
         
@@ -804,7 +804,7 @@ Vector3 Transform::GetWorldScale() const {
         if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
             cachedVersion == localVer) {
             auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-            if (!parentNode || 
+            if (!parentNode || !parentNode->transform || 
                 m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
                 UpdateHotCache();
                 return m_worldCache.scale;
@@ -814,6 +814,10 @@ Vector3 Transform::GetWorldScale() const {
     
     // L3 冷路径：需要完整计算
     return GetWorldScaleSlow();
+}
+
+uint64_t Transform::GetGlobalId() const {
+    return m_globalId;
 }
 
 // ============================================================================
@@ -1778,7 +1782,7 @@ bool Transform::Validate() const {
     
     // 7. 检查父指针自引用
     auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-    if (parentNode && parentNode->transform == this) {
+    if (parentNode && parentNode->transform && parentNode->transform == this) {
         return false;  // 自引用
     }
     

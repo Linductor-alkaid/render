@@ -8,6 +8,12 @@
 #include <atomic>
 #include <vector>
 #include <string>
+
+// 禁用 C4324 警告：由于对齐说明符，结构被填充
+// 这是预期的性能优化，使用缓存行对齐
+#ifdef _MSC_VER
+#pragma warning(disable: 4324)
+#endif
 #include <sstream>
 #include <iostream>
 #include <memory>
@@ -389,6 +395,12 @@ public:
      * @return 世界缩放
      */
     Vector3 GetWorldScale() const;
+
+    /**
+     * @brief 获取全局唯一ID
+     * @return 全局唯一ID，用于锁排序和调试
+     */
+    uint64_t GetGlobalId() const;
     
     // ========================================================================
     // 方向向量
@@ -799,11 +811,11 @@ private:
     
     // 辅助方法：从裸指针获取节点（const 和非 const 版本）
     static std::shared_ptr<TransformNode> GetNode(Transform* t) {
-        return t ? t->m_coldData->node : nullptr;
+        return (t && t->m_coldData) ? t->m_coldData->node : nullptr;
     }
     
     static std::shared_ptr<const TransformNode> GetNode(const Transform* t) {
-        return t ? std::const_pointer_cast<const TransformNode>(t->m_coldData->node) : nullptr;
+        return (t && t->m_coldData) ? std::const_pointer_cast<const TransformNode>(t->m_coldData->node) : nullptr;
     }
     
     // ========================================================================
