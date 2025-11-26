@@ -72,6 +72,15 @@ foreach(example ${EXAMPLES})
     if(MSVC)
         target_compile_options(${example} PRIVATE /utf-8)
     endif()
+    
+    # 为数学基准测试程序启用 AVX2 优化
+    if(example STREQUAL "19_math_benchmark")
+        if(MSVC)
+            target_compile_options(${example} PRIVATE /arch:AVX2)
+        else()
+            target_compile_options(${example} PRIVATE -mavx2 -mfma)
+        endif()
+    endif()
 endforeach()
 
 # 复制 SDL3 DLL 和着色器到输出目录（Windows）

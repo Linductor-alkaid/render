@@ -157,7 +157,7 @@ public:
      * @brief 获取本地位置
      * @return 本地位置
      */
-    const Vector3& GetPosition() const { return m_position; }
+    const Vector3& GetPosition() const { return m_hotData.position; }
     
     /**
      * @brief 获取世界位置（使用缓存优化）
@@ -249,7 +249,7 @@ public:
      * @brief 获取本地旋转
      * @return 本地旋转（四元数）
      */
-    const Quaternion& GetRotation() const { return m_rotation; }
+    const Quaternion& GetRotation() const { return m_hotData.rotation; }
     
     /**
      * @brief 获取本地旋转（欧拉角，弧度）
@@ -316,7 +316,7 @@ public:
      * @brief 获取本地缩放
      * @return 本地缩放
      */
-    const Vector3& GetScale() const { return m_scale; }
+    const Vector3& GetScale() const { return m_hotData.scale; }
     
     /**
      * @brief 获取世界缩放
@@ -410,12 +410,12 @@ public:
      * @return 父变换指针（可能为 nullptr）
      */
     Transform* GetParent() const { 
-        if (m_node) {
+        if (m_coldData && m_coldData->node) {
             // P0: 检查当前节点是否已销毁
-            if (m_node->destroyed.load(std::memory_order_acquire)) {
+            if (m_coldData->node->destroyed.load(std::memory_order_acquire)) {
                 return nullptr;
             }
-            if (auto p = m_node->parent.lock()) {
+            if (auto p = m_coldData->node->parent.lock()) {
                 // P0: 检查父节点是否已销毁
                 if (!p->destroyed.load(std::memory_order_acquire)) {
                     return p->transform;
@@ -430,12 +430,12 @@ public:
      * @return 如果有父变换返回 true
      */
     bool HasParent() const { 
-        if (m_node) {
+        if (m_coldData && m_coldData->node) {
             // P0: 检查当前节点是否已销毁
-            if (m_node->destroyed.load(std::memory_order_acquire)) {
+            if (m_coldData->node->destroyed.load(std::memory_order_acquire)) {
                 return false;
             }
-            if (auto p = m_node->parent.lock()) {
+            if (auto p = m_coldData->node->parent.lock()) {
                 // P0: 检查父节点是否已销毁
                 return !p->destroyed.load(std::memory_order_acquire);
             }
@@ -612,7 +612,7 @@ public:
      * @note 用于 TransformSystem 批量更新优化
      */
     [[nodiscard]] bool IsDirty() const {
-        return m_dirtyWorld.load(std::memory_order_acquire);
+        return m_hotData.dirtyWorld.load(std::memory_order_acquire);
     }
     
     /**
@@ -623,13 +623,17 @@ public:
      * @note 此方法线程安全
      */
     void ForceUpdateWorldTransform() {
-        if (m_dirtyWorld.load(std::memory_order_acquire)) {
+        if (m_hotData.dirtyWorld.load(std::memory_order_acquire)) {
             // 直接调用GetWorldPositionSlow来更新缓存（内部已处理锁）
             GetWorldPositionSlow();
         }
     }
     
 private:
+    // ========================================================================
+    // P1-2.3: 内存布局优化 - 热数据与冷数据分离
+    // ========================================================================
+    
     // 内部使用智能指针管理生命周期，但保持外部接口为裸指针
     struct TransformNode {
         Transform* transform;
@@ -641,39 +645,104 @@ private:
         TransformNode(Transform* t) : transform(t) {}
     };
     
-    std::shared_ptr<TransformNode> m_node;  // 内部节点，使用智能指针管理
+    // 热数据结构：频繁访问的数据（缓存行对齐，提升缓存命中率）
+    struct alignas(64) HotData {
+        Vector3 position;        // 本地位置（12 bytes）
+        Quaternion rotation;     // 本地旋转（16 bytes）
+        Vector3 scale;           // 本地缩放（12 bytes）
+        std::atomic<uint64_t> localVersion;  // 本地变换版本号（8 bytes）
+        std::atomic<bool> dirtyLocal;        // 本地矩阵脏标志（1 byte）
+        std::atomic<bool> dirtyWorld;        // 世界矩阵脏标志（1 byte）
+        std::atomic<bool> dirtyWorldTransform; // 世界变换组件脏标志（1 byte）
+        
+        // Total: 12+16+12+8+3 = 51 bytes
+        // Padding: 64-51 = 13 bytes (对齐到缓存行)
+        char padding[13];
+        
+        HotData()
+            : position(Vector3::Zero())
+            , rotation(Quaternion::Identity())
+            , scale(Vector3::Ones())
+            , localVersion(0)
+            , dirtyLocal(true)
+            , dirtyWorld(true)
+            , dirtyWorldTransform(true)
+        {}
+    };
+    mutable HotData m_hotData;  // mutable: 允许在 const 方法中更新缓存
+    
+    // 冷数据结构：不常访问的数据（减少缓存污染）
+    struct ColdData {
+        std::shared_ptr<TransformNode> node;  // 智能指针节点
+        
+        // 矩阵缓存（大对象，不常访问）
+        Matrix4 cachedLocalMatrix;
+        Matrix4 cachedWorldMatrix;
+        
+        // 世界变换组件缓存（用于深层级递归优化）
+        Vector3 cachedWorldPosition;
+        Quaternion cachedWorldRotation;
+        Vector3 cachedWorldScale;
+        
+        // L2 温缓存：版本控制的缓存系统
+        struct WorldTransformCache {
+            Vector3 position;
+            Quaternion rotation;
+            Vector3 scale;
+            uint64_t version{0};
+            uint64_t parentVersion{0};
+        };
+        WorldTransformCache worldCache;
+        
+        // 线程同步（锁对象较大，放在冷数据区）
+        mutable std::shared_mutex dataMutex;    // 读写锁：保护数据访问
+        mutable std::mutex hierarchyMutex;      // 层级锁：保护父子关系操作
+        
+        explicit ColdData(Transform* owner)
+            : node(std::make_shared<TransformNode>(owner))
+        {}
+    };
+    mutable std::unique_ptr<ColdData> m_coldData;  // mutable: 允许在 const 方法中访问锁和缓存
     
     // 辅助方法：从裸指针获取节点（const 和非 const 版本）
     static std::shared_ptr<TransformNode> GetNode(Transform* t) {
-        return t ? t->m_node : nullptr;
+        return t ? t->m_coldData->node : nullptr;
     }
     
     static std::shared_ptr<const TransformNode> GetNode(const Transform* t) {
-        return t ? std::const_pointer_cast<const TransformNode>(t->m_node) : nullptr;
+        return t ? std::const_pointer_cast<const TransformNode>(t->m_coldData->node) : nullptr;
     }
     
-    Vector3 m_position;      // 本地位置
-    Quaternion m_rotation;   // 本地旋转
-    Vector3 m_scale;         // 本地缩放
+    // ========================================================================
+    // 内部访问辅助宏（简化代码，避免重复写 m_hotData. 和 m_coldData->）
+    // ========================================================================
     
-    // 注意：m_parent 和 m_children 已移除，改为通过 m_node 访问
-    // 为了向后兼容，保留 GetParent() 等方法的实现，但内部使用智能指针
+    // 注意：以下是兼容性宏，用于最小化代码修改
+    // 在实现文件（transform.cpp）中使用这些宏来访问成员
     
-    // 缓存系统：使用 dirty flag 避免重复计算
-    mutable std::atomic<bool> m_dirtyLocal;  // 本地矩阵是否需要更新
-    mutable std::atomic<bool> m_dirtyWorld;  // 世界矩阵是否需要更新
-    mutable std::atomic<bool> m_dirtyWorldTransform;  // 世界变换组件是否需要更新
+    #define m_position m_hotData.position
+    #define m_rotation m_hotData.rotation
+    #define m_scale m_hotData.scale
+    #define m_localVersion m_hotData.localVersion
+    #define m_dirtyLocal m_hotData.dirtyLocal
+    #define m_dirtyWorld m_hotData.dirtyWorld
+    #define m_dirtyWorldTransform m_hotData.dirtyWorldTransform
     
-    mutable Matrix4 m_localMatrix;   // 缓存的本地矩阵
-    mutable Matrix4 m_worldMatrix;   // 缓存的世界矩阵
+    #define m_node m_coldData->node
+    #define m_localMatrix m_coldData->cachedLocalMatrix
+    #define m_worldMatrix m_coldData->cachedWorldMatrix
+    #define m_cachedWorldPosition m_coldData->cachedWorldPosition
+    #define m_cachedWorldRotation m_coldData->cachedWorldRotation
+    #define m_cachedWorldScale m_coldData->cachedWorldScale
+    #define m_worldCache m_coldData->worldCache
+    #define m_dataMutex m_coldData->dataMutex
+    #define m_hierarchyMutex m_coldData->hierarchyMutex
     
-    // 世界变换组件缓存（用于优化深层级递归）
-    mutable Vector3 m_cachedWorldPosition;
-    mutable Quaternion m_cachedWorldRotation;
-    mutable Vector3 m_cachedWorldScale;
-    
+    // ========================================================================
     // P1-2.1: 三层缓存策略
-    // L1 热缓存：完全无锁的原子快照（缓存行对齐，避免 false sharing）
+    // ========================================================================
+    
+    // L1 热缓存：完全无锁的原子快照（独立缓存行，避免 false sharing）
     struct alignas(64) HotCache {
         std::atomic<uint64_t> version{0};
         Vector3 worldPosition;
@@ -697,28 +766,9 @@ private:
     };
     mutable HotCache m_hotCache;
     
-    // L2 温缓存：版本控制的缓存系统（需要读锁）
-    struct WorldTransformCache {
-        Vector3 position;
-        Quaternion rotation;
-        Vector3 scale;
-        uint64_t version{0};
-        uint64_t parentVersion{0};
-    };
-    mutable WorldTransformCache m_worldCache;
-    
     // 全局唯一ID（用于锁排序，避免死锁）
     const uint64_t m_globalId;
     static std::atomic<uint64_t> s_nextGlobalId;
-    
-    // 本地变换版本号（每次修改时递增）
-    std::atomic<uint64_t> m_localVersion{0};
-    
-    // 线程安全：使用读写锁和层级锁
-    // m_dataMutex: 读写锁，保护基本成员变量（读多写少场景）
-    // m_hierarchyMutex: 互斥锁，保护层级操作（父子关系修改）
-    mutable std::shared_mutex m_dataMutex;  // 读写锁：保护数据访问
-    mutable std::mutex m_hierarchyMutex;     // 层级锁：保护父子关系操作
     
     void MarkDirty();
     void MarkDirtyNoLock();  // 无锁版本，供内部已加锁的方法调用

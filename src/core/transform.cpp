@@ -21,38 +21,25 @@ std::atomic<uint64_t> Transform::s_nextGlobalId{1};
 // ============================================================================
 
 Transform::Transform()
-    : m_globalId(s_nextGlobalId.fetch_add(1, std::memory_order_relaxed))
-    , m_position(Vector3::Zero())
-    , m_rotation(Quaternion::Identity())
-    , m_scale(Vector3::Ones())
-    , m_node(std::make_shared<TransformNode>(this))
-    , m_dirtyLocal(true)
-    , m_dirtyWorld(true)
-    , m_dirtyWorldTransform(true)
-    , m_cachedWorldPosition(Vector3::Zero())
-    , m_cachedWorldRotation(Quaternion::Identity())
-    , m_cachedWorldScale(Vector3::Ones())
-    , m_worldCache{}
-    , m_localVersion(0)
+    : m_hotData()  // 使用默认构造函数初始化热数据
+    , m_coldData(std::make_unique<ColdData>(this))  // 初始化冷数据
+    , m_hotCache()  // 初始化热缓存
+    , m_globalId(s_nextGlobalId.fetch_add(1, std::memory_order_relaxed))
 {
     m_node->shared_this = m_node;  // 允许从内部获取 shared_ptr
 }
 
 Transform::Transform(const Vector3& position, const Quaternion& rotation, const Vector3& scale)
-    : m_globalId(s_nextGlobalId.fetch_add(1, std::memory_order_relaxed))
-    , m_position(position)
-    , m_rotation(rotation)
-    , m_scale(scale)
-    , m_node(std::make_shared<TransformNode>(this))
-    , m_dirtyLocal(true)
-    , m_dirtyWorld(true)
-    , m_dirtyWorldTransform(true)
-    , m_cachedWorldPosition(Vector3::Zero())
-    , m_cachedWorldRotation(Quaternion::Identity())
-    , m_cachedWorldScale(Vector3::Ones())
-    , m_worldCache{}
-    , m_localVersion(0)
+    : m_hotData()  // 先使用默认构造函数初始化
+    , m_coldData(std::make_unique<ColdData>(this))  // 初始化冷数据
+    , m_hotCache()  // 初始化热缓存
+    , m_globalId(s_nextGlobalId.fetch_add(1, std::memory_order_relaxed))
 {
+    // 设置自定义的初始值
+    m_position = position;
+    m_rotation = rotation;
+    m_scale = scale;
+    
     m_node->shared_this = m_node;  // 允许从内部获取 shared_ptr
 }
 
