@@ -411,8 +411,15 @@ public:
      */
     Transform* GetParent() const { 
         if (m_node) {
+            // P0: 检查当前节点是否已销毁
+            if (m_node->destroyed.load(std::memory_order_acquire)) {
+                return nullptr;
+            }
             if (auto p = m_node->parent.lock()) {
-                return p->transform;
+                // P0: 检查父节点是否已销毁
+                if (!p->destroyed.load(std::memory_order_acquire)) {
+                    return p->transform;
+                }
             }
         }
         return nullptr;
@@ -424,7 +431,14 @@ public:
      */
     bool HasParent() const { 
         if (m_node) {
-            return !m_node->parent.expired();
+            // P0: 检查当前节点是否已销毁
+            if (m_node->destroyed.load(std::memory_order_acquire)) {
+                return false;
+            }
+            if (auto p = m_node->parent.lock()) {
+                // P0: 检查父节点是否已销毁
+                return !p->destroyed.load(std::memory_order_acquire);
+            }
         }
         return false;
     }

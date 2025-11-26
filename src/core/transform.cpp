@@ -120,6 +120,13 @@ Vector3 Transform::GetWorldPosition() const {
 }
 
 Vector3 Transform::GetWorldPositionSlow() const {
+    // P0: 检查当前节点是否已销毁
+    if (m_node && m_node->destroyed.load(std::memory_order_acquire)) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::GetWorldPositionSlow: 对象已被销毁"));
+        return Vector3::Zero();
+    }
+    
     // 收集祖先链（不持有锁，因为parent指针通过weak_ptr访问是线程安全的）
     std::vector<Transform*> chain;
     chain.reserve(32);
@@ -129,9 +136,17 @@ Vector3 Transform::GetWorldPositionSlow() const {
         chain.push_back(current);
         auto node = GetNode(current);
         if (node) {
+            // P0: 检查节点是否已销毁
+            if (node->destroyed.load(std::memory_order_acquire)) {
+                break;
+            }
             // parent指针通过weak_ptr访问，线程安全，无需加锁
             auto parentNode = node->parent.lock();
-            current = parentNode ? parentNode->transform : nullptr;
+            if (parentNode && !parentNode->destroyed.load(std::memory_order_acquire)) {
+                current = parentNode->transform;
+            } else {
+                current = nullptr;
+            }
         } else {
             current = nullptr;
         }
@@ -177,19 +192,19 @@ Vector3 Transform::GetWorldPositionSlow() const {
     
     // 从根开始构建层级链
     if (root) {
-        Transform* current = root;
-        while (current && hierarchyChain.size() < chain.size()) {
-            hierarchyChain.push_back(current);
+        Transform* iter = root;
+        while (iter && hierarchyChain.size() < chain.size()) {
+            hierarchyChain.push_back(iter);
             
             // 找到当前节点的子节点（在chain中）
             bool found = false;
             for (auto* node : chain) {
-                if (node == current) continue;
+                if (node == iter) continue;
                 auto nodePtr = GetNode(node);
                 if (nodePtr) {
                     auto parentNode = nodePtr->parent.lock();
-                    if (parentNode && parentNode->transform == current) {
-                        current = node;
+                    if (parentNode && parentNode->transform == iter) {
+                        iter = node;
                         found = true;
                         break;
                     }
@@ -251,6 +266,13 @@ Vector3 Transform::GetWorldPositionSlow() const {
 }
 
 Quaternion Transform::GetWorldRotationSlow() const {
+    // P0: 检查当前节点是否已销毁
+    if (m_node && m_node->destroyed.load(std::memory_order_acquire)) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::GetWorldRotationSlow: 对象已被销毁"));
+        return Quaternion::Identity();
+    }
+    
     // 复用GetWorldPositionSlow的逻辑,但只返回旋转
     // 为了效率,我们直接调用GetWorldPositionSlow来更新缓存,然后返回缓存的旋转
     GetWorldPositionSlow();  // 这会更新所有缓存
@@ -258,6 +280,13 @@ Quaternion Transform::GetWorldRotationSlow() const {
 }
 
 Vector3 Transform::GetWorldScaleSlow() const {
+    // P0: 检查当前节点是否已销毁
+    if (m_node && m_node->destroyed.load(std::memory_order_acquire)) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::GetWorldScaleSlow: 对象已被销毁"));
+        return Vector3::Ones();
+    }
+    
     // 复用GetWorldPositionSlow的逻辑,但只返回缩放
     // 为了效率,我们直接调用GetWorldPositionSlow来更新缓存,然后返回缓存的缩放
     GetWorldPositionSlow();  // 这会更新所有缓存
@@ -814,6 +843,11 @@ void Transform::InvalidateChildrenCache() {
     // 递归使所有子节点的缓存失效（因为父节点变化会影响所有子节点的世界变换）
     // 使用非递归方式，避免重复获取层级锁
     
+    // P0: 检查当前节点是否已销毁
+    if (m_node && m_node->destroyed.load(std::memory_order_acquire)) {
+        return;
+    }
+    
     // 收集所有子节点（需要层级锁）
     std::vector<Transform*> allChildren;
     {
@@ -822,7 +856,9 @@ void Transform::InvalidateChildrenCache() {
             // 使用队列进行广度优先遍历，收集所有子节点
             std::vector<Transform*> queue;
             for (auto& childNode : m_node->children) {
-                if (childNode && childNode->transform) {
+                // P0: 跳过已销毁的子节点
+                if (childNode && childNode->transform && 
+                    !childNode->destroyed.load(std::memory_order_acquire)) {
                     queue.push_back(childNode->transform);
                 }
             }
@@ -832,15 +868,19 @@ void Transform::InvalidateChildrenCache() {
                 queue.pop_back();
                 allChildren.push_back(current);
                 
-                // 收集当前节点的子节点
-                std::lock_guard<std::mutex> childLock(current->m_hierarchyMutex);
-                if (current->m_node) {
+                // 收集当前节点的子节点（使用 try_lock 避免死锁）
+                std::unique_lock<std::mutex> childLock(current->m_hierarchyMutex, std::try_to_lock);
+                if (childLock.owns_lock() && current->m_node) {
                     for (auto& childNode : current->m_node->children) {
-                        if (childNode && childNode->transform) {
+                        // P0: 跳过已销毁的子节点
+                        if (childNode && childNode->transform && 
+                            !childNode->destroyed.load(std::memory_order_acquire)) {
                             queue.push_back(childNode->transform);
                         }
                     }
                 }
+                // P0: 如果获取锁失败，该子节点正在被其他线程操作，跳过它
+                // 它会在下次访问时检测到父节点变化并更新缓存
             }
         }
     }
@@ -893,8 +933,22 @@ void Transform::AddChild(Transform* child) {
     
     if (!m_node) return;
     
+    // P0: 检查当前节点是否已销毁
+    if (m_node->destroyed.load(std::memory_order_acquire)) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::AddChild: 当前对象已被销毁"));
+        return;
+    }
+    
     auto childNode = GetNode(child);
     if (!childNode) return;
+    
+    // P0: 检查子节点是否已销毁
+    if (childNode->destroyed.load(std::memory_order_acquire)) {
+        HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
+            "Transform::AddChild: 子对象已被销毁"));
+        return;
+    }
     
     // 检查是否已存在（避免重复添加）
     auto it = std::find_if(m_node->children.begin(), m_node->children.end(),
@@ -913,8 +967,16 @@ void Transform::RemoveChild(Transform* child) {
     
     if (!m_node) return;
     
+    // P0: 检查当前节点是否已销毁（如果已销毁，静默返回，因为析构函数会清理）
+    if (m_node->destroyed.load(std::memory_order_acquire)) {
+        return;
+    }
+    
     auto childNode = GetNode(child);
     if (!childNode) return;
+    
+    // 注意：不检查子节点是否已销毁，因为移除操作应该总是成功
+    // 即使子节点正在销毁，我们也应该能够从父节点列表中移除它
     
     // 移除子对象
     auto it = std::find_if(m_node->children.begin(), m_node->children.end(),
