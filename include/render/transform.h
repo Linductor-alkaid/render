@@ -611,7 +611,32 @@ private:
     mutable Quaternion m_cachedWorldRotation;
     mutable Vector3 m_cachedWorldScale;
     
-    // 层级锁协议：版本控制的缓存系统
+    // P1-2.1: 三层缓存策略
+    // L1 热缓存：完全无锁的原子快照（缓存行对齐，避免 false sharing）
+    struct alignas(64) HotCache {
+        std::atomic<uint64_t> version{0};
+        Vector3 worldPosition;
+        Quaternion worldRotation;
+        Vector3 worldScale;
+        
+        HotCache() 
+            : version(0)
+            , worldPosition(Vector3::Zero())
+            , worldRotation(Quaternion::Identity())
+            , worldScale(Vector3::Ones())
+        {}
+        
+        // Padding to cache line (64 bytes total)
+        // sizeof(atomic<uint64_t>) = 8
+        // sizeof(Vector3) = 12 (3 * float)
+        // sizeof(Quaternion) = 16 (4 * float)
+        // Total: 8 + 12 + 16 + 12 = 48 bytes
+        // Padding: 64 - 48 = 16 bytes
+        char padding[16];
+    };
+    mutable HotCache m_hotCache;
+    
+    // L2 温缓存：版本控制的缓存系统（需要读锁）
     struct WorldTransformCache {
         Vector3 position;
         Quaternion rotation;
@@ -642,6 +667,9 @@ private:
     void InvalidateWorldTransformCache();
     void InvalidateWorldTransformCacheNoLock();  // 无锁版本，避免死锁
     void InvalidateChildrenCache();  // 递归失效所有子节点的缓存
+    
+    // P1-2.1: 热缓存更新（假设已持有锁）
+    void UpdateHotCache() const;
     
     // 子对象管理（私有方法，用于生命周期管理）
     void AddChild(Transform* child);

@@ -96,26 +96,46 @@ void Transform::SetPosition(const Vector3& position) {
 }
 
 Vector3 Transform::GetWorldPosition() const {
-    // 第一步：乐观无锁读取（快速路径）
-    // 先检查本地版本号（原子操作，无需加锁）
+    // P1-2.1: 三层缓存读取策略
+    
+    // L1 热缓存：完全无锁读取（最快，~5ns）
+    uint64_t hotVersion = m_hotCache.version.load(std::memory_order_acquire);
     uint64_t localVer = m_localVersion.load(std::memory_order_acquire);
     
-    // 使用读锁保护缓存读取，确保内存可见性
-    std::shared_lock<std::shared_mutex> lock(m_dataMutex);
-    uint64_t cachedVersion = m_worldCache.version;
-    
-    // 检查本地是否变化
-    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
-        cachedVersion == localVer) {
+    if (hotVersion == localVer && hotVersion != 0) {
+        // 验证父节点版本
         auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-        if (!parentNode || 
-            m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
-            return m_worldCache.position;
+        if (!parentNode) {
+            // 无父节点，热缓存命中
+            return m_hotCache.worldPosition;
+        }
+        
+        // 检查父节点版本
+        uint64_t parentVer = parentNode->transform->m_localVersion.load(std::memory_order_acquire);
+        if (m_worldCache.parentVersion == parentVer) {
+            // 完全无锁返回（热路径）
+            return m_hotCache.worldPosition;
         }
     }
-    lock.unlock();  // 释放读锁，进入慢速路径
     
-    // 第二步：慢速路径 - 需要重新计算
+    // L2 温缓存：需要读锁，但不遍历层级（~150ns）
+    {
+        std::shared_lock<std::shared_mutex> lock(m_dataMutex);
+        uint64_t cachedVersion = m_worldCache.version;
+        
+        if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
+            cachedVersion == localVer) {
+            auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+            if (!parentNode || 
+                m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
+                // 温缓存命中，更新热缓存
+                UpdateHotCache();
+                return m_worldCache.position;
+            }
+        }
+    }
+    
+    // L3 冷路径：需要完整计算（~2.5μs for depth 10）
     return GetWorldPositionSlow();
 }
 
@@ -260,6 +280,9 @@ Vector3 Transform::GetWorldPositionSlow() const {
         m_cachedWorldRotation = worldRot;
         m_cachedWorldScale = worldScale;
         m_dirtyWorldTransform.store(false, std::memory_order_release);
+        
+        // P1-2.1: 更新热缓存
+        UpdateHotCache();
     }
     
     return worldPos;
@@ -389,21 +412,41 @@ Vector3 Transform::GetRotationEulerDegrees() const {
 }
 
 Quaternion Transform::GetWorldRotation() const {
-    // 第一步：乐观无锁读取（快速路径）
-    uint64_t cachedVersion = m_worldCache.version;
+    // P1-2.1: 三层缓存读取策略
+    
+    // L1 热缓存：完全无锁读取
+    uint64_t hotVersion = m_hotCache.version.load(std::memory_order_acquire);
     uint64_t localVer = m_localVersion.load(std::memory_order_acquire);
     
-    // 检查本地是否变化
-    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
-        cachedVersion == localVer) {
+    if (hotVersion == localVer && hotVersion != 0) {
         auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-        if (!parentNode || 
-            m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
-            return m_worldCache.rotation;
+        if (!parentNode) {
+            return m_hotCache.worldRotation;
+        }
+        
+        uint64_t parentVer = parentNode->transform->m_localVersion.load(std::memory_order_acquire);
+        if (m_worldCache.parentVersion == parentVer) {
+            return m_hotCache.worldRotation;
         }
     }
     
-    // 第二步：慢速路径 - 需要重新计算
+    // L2 温缓存：需要读锁
+    {
+        std::shared_lock<std::shared_mutex> lock(m_dataMutex);
+        uint64_t cachedVersion = m_worldCache.version;
+        
+        if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
+            cachedVersion == localVer) {
+            auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+            if (!parentNode || 
+                m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
+                UpdateHotCache();
+                return m_worldCache.rotation;
+            }
+        }
+    }
+    
+    // L3 冷路径：需要完整计算
     return GetWorldRotationSlow();
 }
 
@@ -612,21 +655,41 @@ void Transform::SetScale(float scale) {
 }
 
 Vector3 Transform::GetWorldScale() const {
-    // 第一步：乐观无锁读取（快速路径）
-    uint64_t cachedVersion = m_worldCache.version;
+    // P1-2.1: 三层缓存读取策略
+    
+    // L1 热缓存：完全无锁读取
+    uint64_t hotVersion = m_hotCache.version.load(std::memory_order_acquire);
     uint64_t localVer = m_localVersion.load(std::memory_order_acquire);
     
-    // 检查本地是否变化
-    if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
-        cachedVersion == localVer) {
+    if (hotVersion == localVer && hotVersion != 0) {
         auto parentNode = m_node ? m_node->parent.lock() : nullptr;
-        if (!parentNode || 
-            m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
-            return m_worldCache.scale;
+        if (!parentNode) {
+            return m_hotCache.worldScale;
+        }
+        
+        uint64_t parentVer = parentNode->transform->m_localVersion.load(std::memory_order_acquire);
+        if (m_worldCache.parentVersion == parentVer) {
+            return m_hotCache.worldScale;
         }
     }
     
-    // 第二步：慢速路径 - 需要重新计算
+    // L2 温缓存：需要读锁
+    {
+        std::shared_lock<std::shared_mutex> lock(m_dataMutex);
+        uint64_t cachedVersion = m_worldCache.version;
+        
+        if (!m_dirtyWorldTransform.load(std::memory_order_acquire) && 
+            cachedVersion == localVer) {
+            auto parentNode = m_node ? m_node->parent.lock() : nullptr;
+            if (!parentNode || 
+                m_worldCache.parentVersion == parentNode->transform->m_localVersion.load(std::memory_order_acquire)) {
+                UpdateHotCache();
+                return m_worldCache.scale;
+            }
+        }
+    }
+    
+    // L3 冷路径：需要完整计算
     return GetWorldScaleSlow();
 }
 
@@ -803,6 +866,9 @@ void Transform::MarkDirty() {
     m_dirtyWorld.store(true, std::memory_order_release);
     m_dirtyWorldTransform.store(true, std::memory_order_release);
     m_localVersion.fetch_add(1, std::memory_order_release);
+    
+    // P1-2.1: 失效热缓存（通过将版本号设为 0）
+    m_hotCache.version.store(0, std::memory_order_release);
 }
 
 void Transform::MarkDirtyNoLock() {
@@ -812,6 +878,9 @@ void Transform::MarkDirtyNoLock() {
     m_dirtyWorldTransform.store(true, std::memory_order_release);
     m_localVersion.fetch_add(1, std::memory_order_release);
     
+    // P1-2.1: 失效热缓存（通过将版本号设为 0）
+    m_hotCache.version.store(0, std::memory_order_release);
+    
     // 注意：不在这里通知子对象，避免死锁
     // 子对象会在访问时自动检测父对象变化（通过检查父对象的版本号）
 }
@@ -819,6 +888,8 @@ void Transform::MarkDirtyNoLock() {
 void Transform::InvalidateWorldTransformCache() {
     // 外部调用版本：标记世界变换缓存为无效，并递归标记所有子对象
     m_dirtyWorldTransform.store(true, std::memory_order_release);
+    // P1-2.1: 失效热缓存
+    m_hotCache.version.store(0, std::memory_order_release);
     
     // 通知所有子对象更新缓存（使用层级锁）
     std::lock_guard<std::mutex> hierarchyLock(m_hierarchyMutex);
@@ -834,6 +905,8 @@ void Transform::InvalidateWorldTransformCache() {
 void Transform::InvalidateWorldTransformCacheNoLock() {
     // 内部版本：仅标记原子标志，不加锁，避免死锁
     m_dirtyWorldTransform.store(true, std::memory_order_release);
+    // P1-2.1: 失效热缓存
+    m_hotCache.version.store(0, std::memory_order_release);
     
     // 注意：不递归调用子对象，避免复杂的锁依赖
     // 子对象在下次访问时会自动检测父对象变化并更新缓存
@@ -888,6 +961,8 @@ void Transform::InvalidateChildrenCache() {
     // 现在释放所有锁，原子地失效所有子节点的缓存
     for (Transform* child : allChildren) {
         child->m_dirtyWorldTransform.store(true, std::memory_order_release);
+        // P1-2.1: 同时失效子节点的热缓存
+        child->m_hotCache.version.store(0, std::memory_order_release);
     }
 }
 
@@ -992,6 +1067,22 @@ void Transform::RemoveChild(Transform* child) {
 // 但为了向后兼容，保留空实现
 void Transform::NotifyChildrenParentDestroyed() {
     // 已在析构函数中实现，此方法不再需要
+}
+
+// ============================================================================
+// P1-2.1: 热缓存更新
+// ============================================================================
+
+void Transform::UpdateHotCache() const {
+    // 假设已持有 m_dataMutex 写锁或读锁
+    // 从温缓存 (m_worldCache) 更新到热缓存 (m_hotCache)
+    
+    m_hotCache.worldPosition = m_worldCache.position;
+    m_hotCache.worldRotation = m_worldCache.rotation;
+    m_hotCache.worldScale = m_worldCache.scale;
+    
+    // 原子地发布新版本（使用 release 语义确保上面的写入对其他线程可见）
+    m_hotCache.version.store(m_worldCache.version, std::memory_order_release);
 }
 
 // ============================================================================
