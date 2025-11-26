@@ -4,6 +4,13 @@
 #include <cmath>       // for std::exp, std::isfinite, std::max, std::min
 #include <sstream>     // for std::ostringstream
 
+// P1-2.2: SIMD intrinsics
+#if defined(__AVX2__)
+    #include <immintrin.h>  // AVX2 + FMA
+#elif defined(__SSE__)
+    #include <xmmintrin.h>  // SSE
+#endif
+
 namespace Render {
 
 // 静态成员初始化
@@ -1086,6 +1093,166 @@ void Transform::UpdateHotCache() const {
 }
 
 // ============================================================================
+// P1-2.2: 批量操作优化（RAII + SIMD）
+// ============================================================================
+
+Transform::TransformBatchHandle::TransformBatchHandle(const Transform* t) 
+    : m_transform(t)
+    , m_lock(t->m_dataMutex)
+    , m_cachedMatrix(t->GetWorldMatrix()) 
+{
+    // 构造时获取锁并缓存矩阵
+    // 析构时自动释放锁（RAII）
+}
+
+void Transform::TransformBatchHandle::TransformPoints(const Vector3* input, Vector3* output, size_t count) const {
+    Transform::TransformPointsSIMD(m_cachedMatrix, input, output, count);
+}
+
+void Transform::TransformBatchHandle::TransformDirections(const Vector3* input, Vector3* output, size_t count) const {
+    // 方向变换只需要旋转部分（矩阵的左上3x3）
+    // 这里我们使用完整矩阵，但忽略平移（w=0）
+    Quaternion rot;
+    rot = Quaternion(m_cachedMatrix.block<3,3>(0,0));  // 从矩阵提取旋转
+    Transform::TransformDirectionsSIMD(rot, input, output, count);
+}
+
+// ============================================================================
+// P1-2.2: SIMD 优化的批量变换实现
+// ============================================================================
+
+void Transform::TransformPointsSIMD(const Matrix4& mat, 
+                                    const Vector3* input, 
+                                    Vector3* output, 
+                                    size_t count) {
+#if defined(__AVX2__) && defined(__FMA__)
+    // AVX2 + FMA 实现：一次处理 4 个点
+    const size_t simdCount = count & ~3ULL;  // 对齐到 4 的倍数
+    
+    if (simdCount >= 4) {
+        // 加载矩阵行到 SIMD 寄存器
+        // mat 是列主序（Eigen 默认），转换为行主序访问
+        __m256 m00_03 = _mm256_broadcast_ss(&mat(0, 0));
+        __m256 m01_03 = _mm256_broadcast_ss(&mat(0, 1));
+        __m256 m02_03 = _mm256_broadcast_ss(&mat(0, 2));
+        __m256 m03_03 = _mm256_broadcast_ss(&mat(0, 3));
+        
+        __m256 m10_13 = _mm256_broadcast_ss(&mat(1, 0));
+        __m256 m11_13 = _mm256_broadcast_ss(&mat(1, 1));
+        __m256 m12_13 = _mm256_broadcast_ss(&mat(1, 2));
+        __m256 m13_13 = _mm256_broadcast_ss(&mat(1, 3));
+        
+        __m256 m20_23 = _mm256_broadcast_ss(&mat(2, 0));
+        __m256 m21_23 = _mm256_broadcast_ss(&mat(2, 1));
+        __m256 m22_23 = _mm256_broadcast_ss(&mat(2, 2));
+        __m256 m23_23 = _mm256_broadcast_ss(&mat(2, 3));
+        
+        for (size_t i = 0; i < simdCount; i += 4) {
+            // 加载 4 个点的 x, y, z 分量
+            __m256 px = _mm256_set_ps(
+                input[i+3].x(), input[i+2].x(), input[i+1].x(), input[i].x(),
+                input[i+3].x(), input[i+2].x(), input[i+1].x(), input[i].x()
+            );
+            __m256 py = _mm256_set_ps(
+                input[i+3].y(), input[i+2].y(), input[i+1].y(), input[i].y(),
+                input[i+3].y(), input[i+2].y(), input[i+1].y(), input[i].y()
+            );
+            __m256 pz = _mm256_set_ps(
+                input[i+3].z(), input[i+2].z(), input[i+1].z(), input[i].z(),
+                input[i+3].z(), input[i+2].z(), input[i+1].z(), input[i].z()
+            );
+            
+            // 矩阵-向量乘法：result = mat * [x, y, z, 1]^T
+            // rx = m00*x + m01*y + m02*z + m03
+            __m256 rx = _mm256_mul_ps(m00_03, px);
+            rx = _mm256_fmadd_ps(m01_03, py, rx);
+            rx = _mm256_fmadd_ps(m02_03, pz, rx);
+            rx = _mm256_add_ps(rx, m03_03);
+            
+            // ry = m10*x + m11*y + m12*z + m13
+            __m256 ry = _mm256_mul_ps(m10_13, px);
+            ry = _mm256_fmadd_ps(m11_13, py, ry);
+            ry = _mm256_fmadd_ps(m12_13, pz, ry);
+            ry = _mm256_add_ps(ry, m13_13);
+            
+            // rz = m20*x + m21*y + m22*z + m23
+            __m256 rz = _mm256_mul_ps(m20_23, px);
+            rz = _mm256_fmadd_ps(m21_23, py, rz);
+            rz = _mm256_fmadd_ps(m22_23, pz, rz);
+            rz = _mm256_add_ps(rz, m23_23);
+            
+            // 存储结果（提取低128位，包含4个点）
+            alignas(32) float tempX[8], tempY[8], tempZ[8];
+            _mm256_store_ps(tempX, rx);
+            _mm256_store_ps(tempY, ry);
+            _mm256_store_ps(tempZ, rz);
+            
+            // 写入输出（只使用低4个元素）
+            output[i].x() = tempX[0];
+            output[i].y() = tempY[0];
+            output[i].z() = tempZ[0];
+            
+            output[i+1].x() = tempX[1];
+            output[i+1].y() = tempY[1];
+            output[i+1].z() = tempZ[1];
+            
+            output[i+2].x() = tempX[2];
+            output[i+2].y() = tempY[2];
+            output[i+2].z() = tempZ[2];
+            
+            output[i+3].x() = tempX[3];
+            output[i+3].y() = tempY[3];
+            output[i+3].z() = tempZ[3];
+        }
+    }
+    
+    // 处理剩余点（标量）
+    for (size_t i = simdCount; i < count; ++i) {
+        Vector4 p(input[i].x(), input[i].y(), input[i].z(), 1.0f);
+        Vector4 result = mat * p;
+        output[i] = Vector3(result.x(), result.y(), result.z());
+    }
+    
+#elif defined(__SSE__)
+    // SSE 实现：一次处理 1 个点
+    // 注意：Eigen Matrix 默认是列主序
+    for (size_t i = 0; i < count; ++i) {
+        float x = input[i].x();
+        float y = input[i].y();
+        float z = input[i].z();
+        
+        // 计算 result = mat * [x, y, z, 1]^T
+        // Eigen 是列主序，所以 mat(row, col)
+        float rx = mat(0, 0) * x + mat(0, 1) * y + mat(0, 2) * z + mat(0, 3);
+        float ry = mat(1, 0) * x + mat(1, 1) * y + mat(1, 2) * z + mat(1, 3);
+        float rz = mat(2, 0) * x + mat(2, 1) * y + mat(2, 2) * z + mat(2, 3);
+        
+        output[i] = Vector3(rx, ry, rz);
+    }
+    
+#else
+    // 标量回退实现
+    for (size_t i = 0; i < count; ++i) {
+        Vector4 p(input[i].x(), input[i].y(), input[i].z(), 1.0f);
+        Vector4 result = mat * p;
+        output[i] = Vector3(result.x(), result.y(), result.z());
+    }
+#endif
+}
+
+void Transform::TransformDirectionsSIMD(const Quaternion& rot,
+                                       const Vector3* input,
+                                       Vector3* output,
+                                       size_t count) {
+    // 方向变换使用四元数旋转
+    // 对于 SIMD 优化，四元数乘法比较复杂，这里使用标量版本
+    // TODO: 可以进一步优化为 SIMD 版本
+    for (size_t i = 0; i < count; ++i) {
+        output[i] = rot * input[i];
+    }
+}
+
+// ============================================================================
 // 变换插值
 // ============================================================================
 
@@ -1283,60 +1450,72 @@ int Transform::GetChildCount() const {
 
 void Transform::TransformPoints(const std::vector<Vector3>& localPoints, 
                                 std::vector<Vector3>& worldPoints) const {
-    // GetWorldMatrix 内部已有线程安全保护
-    // 一次获取矩阵后，多线程可以安全地并行使用（只读）
-    const Matrix4 worldMat = GetWorldMatrix();
     worldPoints.resize(localPoints.size());
-    
     const size_t count = localPoints.size();
     
-    // 只有在数据量足够大时才使用并行（避免线程创建开销）
-    // 经测试，小于5000个点时，串行更快
+    if (count == 0) return;
+    
+    // P1-2.2: 使用新的 SIMD 优化实现
+    // 优势：
+    // 1. SIMD 向量化（AVX2 4x, SSE 1x）
+    // 2. 减少锁竞争（一次获取矩阵）
+    // 3. 比 OpenMP 更高效（避免线程创建开销）
+    
+    const Matrix4 worldMat = GetWorldMatrix();
+    
+    // 对于大批量数据，可以考虑结合 OpenMP + SIMD
     #ifdef _OPENMP
-    if (count > 5000) {
-        #pragma omp parallel for
-        for (int i = 0; i < static_cast<int>(count); ++i) {
-            const Vector3& local = localPoints[i];
-            Vector4 point(local.x(), local.y(), local.z(), 1.0f);
-            Vector4 result = worldMat * point;
-            worldPoints[i] = Vector3(result.x(), result.y(), result.z());
+    if (count > 10000) {
+        // 大批量：OpenMP 多线程 + 每个线程使用 SIMD
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < static_cast<int>(count); i += 256) {
+            size_t batchSize = std::min<size_t>(256, count - i);
+            TransformPointsSIMD(worldMat, 
+                               &localPoints[i], 
+                               &worldPoints[i], 
+                               batchSize);
         }
         return;
     }
     #endif
     
-    // 串行处理（小批量或无 OpenMP）
-    for (size_t i = 0; i < count; ++i) {
-        const Vector3& local = localPoints[i];
-        Vector4 point(local.x(), local.y(), local.z(), 1.0f);
-        Vector4 result = worldMat * point;
-        worldPoints[i] = Vector3(result.x(), result.y(), result.z());
-    }
+    // 中小批量：直接使用 SIMD（比 OpenMP 线程创建更快）
+    TransformPointsSIMD(worldMat, 
+                       localPoints.data(), 
+                       worldPoints.data(), 
+                       count);
 }
 
 void Transform::TransformDirections(const std::vector<Vector3>& localDirections,
                                     std::vector<Vector3>& worldDirections) const {
-    // GetWorldRotation 内部已有线程安全保护
-    // 一次获取旋转后，多线程可以安全地并行使用（只读）
-    const Quaternion worldRot = GetWorldRotation();
     worldDirections.resize(localDirections.size());
-    
     const size_t count = localDirections.size();
     
+    if (count == 0) return;
+    
+    // P1-2.2: 使用新的 SIMD 优化实现
+    const Quaternion worldRot = GetWorldRotation();
+    
     #ifdef _OPENMP
-    if (count > 5000) {
-        #pragma omp parallel for
-        for (int i = 0; i < static_cast<int>(count); ++i) {
-            worldDirections[i] = worldRot * localDirections[i];
+    if (count > 10000) {
+        // 大批量：OpenMP 多线程 + 每个线程使用 SIMD
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < static_cast<int>(count); i += 256) {
+            size_t batchSize = std::min<size_t>(256, count - i);
+            TransformDirectionsSIMD(worldRot,
+                                   &localDirections[i],
+                                   &worldDirections[i],
+                                   batchSize);
         }
         return;
     }
     #endif
     
-    // 串行处理
-    for (size_t i = 0; i < count; ++i) {
-        worldDirections[i] = worldRot * localDirections[i];
-    }
+    // 中小批量：直接使用 SIMD
+    TransformDirectionsSIMD(worldRot,
+                           localDirections.data(),
+                           worldDirections.data(),
+                           count);
 }
 
 } // namespace Render

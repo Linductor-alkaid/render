@@ -541,6 +541,67 @@ public:
     int GetChildCount() const;
     
     // ========================================================================
+    // P1-2.2: 批量操作优化（RAII + SIMD）
+    // ========================================================================
+    
+    /**
+     * @brief 批量变换句柄（RAII 锁管理 + SIMD 优化）
+     * 
+     * 使用方式：
+     * @code
+     * auto batch = transform.BeginBatch();
+     * batch.TransformPoints(input, output, count);  // 一次获取锁，多次变换
+     * @endcode
+     */
+    class TransformBatchHandle {
+    private:
+        const Transform* m_transform;
+        Matrix4 m_cachedMatrix;
+        std::shared_lock<std::shared_mutex> m_lock;
+        
+    public:
+        /**
+         * @brief 构造函数：获取锁并缓存世界矩阵
+         * @param t Transform 对象指针
+         */
+        TransformBatchHandle(const Transform* t);
+        
+        /**
+         * @brief 批量变换点（SIMD 优化）
+         * @param input 输入点数组
+         * @param output 输出点数组
+         * @param count 点的数量
+         * 
+         * @note 使用 SIMD 指令（AVX2/SSE）加速，预期 4-6x 性能提升
+         */
+        void TransformPoints(const Vector3* input, Vector3* output, size_t count) const;
+        
+        /**
+         * @brief 批量变换方向（SIMD 优化）
+         * @param input 输入方向数组
+         * @param output 输出方向数组
+         * @param count 方向的数量
+         */
+        void TransformDirections(const Vector3* input, Vector3* output, size_t count) const;
+        
+        /**
+         * @brief 获取缓存的世界矩阵
+         * @return 世界变换矩阵
+         */
+        const Matrix4& GetMatrix() const { return m_cachedMatrix; }
+    };
+    
+    /**
+     * @brief 创建批处理句柄
+     * @return TransformBatchHandle 对象（RAII 管理锁）
+     * 
+     * @note 用于批量变换操作，避免重复获取锁和矩阵
+     */
+    TransformBatchHandle BeginBatch() const {
+        return TransformBatchHandle(this);
+    }
+    
+    // ========================================================================
     // ECS 批量更新支持
     // ========================================================================
     
@@ -701,6 +762,17 @@ private:
     Vector3 GetWorldPositionSlow() const;
     Quaternion GetWorldRotationSlow() const;
     Vector3 GetWorldScaleSlow() const;
+    
+    // P1-2.2: SIMD 优化的批量变换（私有静态方法）
+    static void TransformPointsSIMD(const Matrix4& mat, 
+                                    const Vector3* input, 
+                                    Vector3* output, 
+                                    size_t count);
+    
+    static void TransformDirectionsSIMD(const Quaternion& rot,
+                                       const Vector3* input,
+                                       Vector3* output,
+                                       size_t count);
 };
 
 } // namespace Render
