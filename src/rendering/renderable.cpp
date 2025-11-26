@@ -240,8 +240,14 @@ Renderable::Renderable(Renderable&& other) noexcept
       m_materialSortKey(other.m_materialSortKey),
       m_materialSortDirty(other.m_materialSortDirty),
       m_hasMaterialSortKey(other.m_hasMaterialSortKey),
-      m_transparentHint(other.m_transparentHint) {
+      m_transparentHint(other.m_transparentHint),
+      m_cachedWorldMatrix(std::move(other.m_cachedWorldMatrix)),
+      m_cachedTransformPtr(other.m_cachedTransformPtr),
+      m_matrixCacheValid(other.m_matrixCacheValid) {
     // m_mutex 不可移动，使用默认构造
+    // 清除 other 的缓存状态
+    other.m_matrixCacheValid = false;
+    other.m_cachedTransformPtr = nullptr;
 }
 
 Renderable& Renderable::operator=(Renderable&& other) noexcept {
@@ -255,7 +261,13 @@ Renderable& Renderable::operator=(Renderable&& other) noexcept {
         m_materialSortDirty = other.m_materialSortDirty;
         m_hasMaterialSortKey = other.m_hasMaterialSortKey;
         m_transparentHint = other.m_transparentHint;
+        m_cachedWorldMatrix = std::move(other.m_cachedWorldMatrix);
+        m_cachedTransformPtr = other.m_cachedTransformPtr;
+        m_matrixCacheValid = other.m_matrixCacheValid;
         // m_mutex 不可移动，保持原有状态
+        // 清除 other 的缓存状态
+        other.m_matrixCacheValid = false;
+        other.m_cachedTransformPtr = nullptr;
     }
     return *this;
 }
@@ -263,6 +275,9 @@ Renderable& Renderable::operator=(Renderable&& other) noexcept {
 void Renderable::SetTransform(const Ref<Transform>& transform) {
     std::unique_lock lock(m_mutex);
     m_transform = transform;
+    // 阶段 1.1: 设置新 Transform 时使缓存失效
+    m_matrixCacheValid = false;
+    m_cachedTransformPtr = nullptr;
 }
 
 Ref<Transform> Renderable::GetTransform() const {
@@ -272,10 +287,48 @@ Ref<Transform> Renderable::GetTransform() const {
 
 Matrix4 Renderable::GetWorldMatrix() const {
     std::shared_lock lock(m_mutex);
-    if (m_transform) {
-        return m_transform->GetWorldMatrix();
+    
+    if (!m_transform) {
+        return Matrix4::Identity();
     }
-    return Matrix4::Identity();
+    
+    // 阶段 1.1: 矩阵缓存优化
+    // 检查缓存有效性：Transform 指针是否改变，或 Transform 是否 dirty
+    const Transform* currentTransformPtr = m_transform.get();
+    bool transformChanged = (m_cachedTransformPtr != currentTransformPtr);
+    bool transformDirty = m_transform->IsDirty();
+    
+    if (m_matrixCacheValid && !transformChanged && !transformDirty) {
+        // 缓存有效，直接返回
+        return m_cachedWorldMatrix;
+    }
+    
+    // 缓存失效，重新计算
+    m_cachedWorldMatrix = m_transform->GetWorldMatrix();
+    m_cachedTransformPtr = currentTransformPtr;
+    m_matrixCacheValid = true;
+    
+    return m_cachedWorldMatrix;
+}
+
+void Renderable::InvalidateMatrixCache() {
+    std::unique_lock lock(m_mutex);
+    m_matrixCacheValid = false;
+    m_cachedTransformPtr = nullptr;
+}
+
+void Renderable::UpdateMatrixCache() const {
+    std::shared_lock lock(m_mutex);
+    
+    if (m_transform) {
+        m_cachedWorldMatrix = m_transform->GetWorldMatrix();
+        m_cachedTransformPtr = m_transform.get();
+        m_matrixCacheValid = true;
+    } else {
+        m_cachedWorldMatrix = Matrix4::Identity();
+        m_cachedTransformPtr = nullptr;
+        m_matrixCacheValid = false;
+    }
 }
 
 void Renderable::SetVisible(bool visible) {

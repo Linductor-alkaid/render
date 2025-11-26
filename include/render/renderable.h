@@ -107,10 +107,28 @@ public:
     [[nodiscard]] Ref<Transform> GetTransform() const;
     
     /**
-     * @brief 获取世界变换矩阵
+     * @brief 获取世界变换矩阵（带缓存优化）
      * @return 世界变换矩阵
+     * 
+     * @note 阶段 1.1 优化：使用矩阵缓存减少重复计算
+     * - 同一帧内多次调用时直接返回缓存
+     * - 自动检测 Transform 变化并更新缓存
      */
     [[nodiscard]] Matrix4 GetWorldMatrix() const;
+    
+    /**
+     * @brief 使矩阵缓存失效
+     * 
+     * @note 在设置新的 Transform 时自动调用
+     */
+    void InvalidateMatrixCache();
+    
+    /**
+     * @brief 强制更新矩阵缓存
+     * 
+     * @note 用于批量预取矩阵的场景
+     */
+    void UpdateMatrixCache() const;
     
     // ==================== 可见性 ====================
     
@@ -242,6 +260,14 @@ protected:
     bool m_transparentHint = false;
     float m_depthHint = 0.0f;
     bool m_hasDepthHint = false;
+    
+    // ==================== 阶段 1.1: 矩阵缓存 ====================
+    ///< 缓存的世界变换矩阵
+    mutable Matrix4 m_cachedWorldMatrix = Matrix4::Identity();
+    ///< 缓存的 Transform 指针（用于检测 Transform 是否改变）
+    mutable const Transform* m_cachedTransformPtr = nullptr;
+    ///< 缓存是否有效
+    mutable bool m_matrixCacheValid = false;
     
     mutable std::shared_mutex m_mutex;    ///< 线程安全锁
 };
