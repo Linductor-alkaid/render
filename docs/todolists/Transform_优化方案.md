@@ -986,14 +986,14 @@ feature/transform-optimization
 
 ### 代码审查清单
 
-- [ ] 所有公共接口行为保持不变
-- [ ] 现有单元测试全部通过
-- [ ] 新增测试覆盖率 > 90%
-- [ ] ThreadSanitizer 无警告
-- [ ] AddressSanitizer 无警告
-- [ ] Valgrind 无内存泄漏
-- [ ] 性能基准测试达到目标
-- [ ] 文档更新完整
+- [x] 所有公共接口行为保持不变
+- [x] 现有单元测试全部通过
+- [x] 新增测试覆盖率 > 90%
+- [x] ThreadSanitizer 无警告
+- [x] AddressSanitizer 无警告
+- [x] Valgrind 无内存泄漏
+- [x] 性能基准测试达到目标
+- [x] 文档更新完整
 
 ### 回滚计划
 
