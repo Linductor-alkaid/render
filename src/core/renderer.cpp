@@ -1,3 +1,4 @@
+#define _ENABLE_EXTENDED_ALIGNED_STORAGE
 #include "render/renderer.h"
 #include "render/renderable.h"
 #include "render/logger.h"
@@ -382,6 +383,9 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
             item.meshData.hasMaterialOverride = item.meshData.materialOverride.HasAnyOverride();
             item.meshData.castShadows = meshRenderable->GetCastShadows();
             item.meshData.receiveShadows = meshRenderable->GetReceiveShadows();
+            // 阶段 1.3: 优先使用 Renderable 的缓存矩阵（如果已设置）
+            // 注意：这里仍然调用 GetWorldMatrix()，但 Renderable 内部会使用缓存
+            // 如果 Renderable 已经通过 SetCachedWorldMatrix 设置了缓存，这里会直接返回缓存
             item.meshData.modelMatrix = renderable->GetWorldMatrix();
 
             item.key.materialHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(material.get()));
@@ -818,7 +822,20 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
     bucket.priority = descriptor.priority;
     bucket.sortPolicy = descriptor.sortPolicy;
     bucket.maskIndex = descriptor.maskIndex;
-    bucket.items.push_back(LayerItem{renderable, m_submissionCounter++});
+    
+    // 阶段 1.3: 在提交时预计算矩阵
+    LayerItem item;
+    item.renderable = renderable;
+    item.submissionIndex = m_submissionCounter++;
+    if (renderable) {
+        // 预计算矩阵（利用 Renderable 的缓存机制）
+        item.cachedWorldMatrix = renderable->GetWorldMatrix();
+        item.hasCachedMatrix = true;
+    } else {
+        item.cachedWorldMatrix = Matrix4::Identity();
+        item.hasCachedMatrix = false;
+    }
+    bucket.items.push_back(item);
 }
 
 void Renderer::FlushRenderQueue() {
@@ -905,7 +922,6 @@ void Renderer::FlushRenderQueue() {
     std::vector<bool> processedBuckets(bucketsSnapshot.size(), false);
 
     std::optional<uint32_t> previousViewport;
-    bool previousScissorEnabled = false;
     std::optional<RenderLayerViewport> previousScissorRect;
 
     struct LayerLogState {
@@ -1024,6 +1040,11 @@ void Renderer::FlushRenderQueue() {
 
         for (const auto& item : bucket.items) {
             if (item.renderable && item.renderable->IsVisible()) {
+                // 阶段 1.3: 如果已预计算矩阵，设置到 Renderable 的缓存中
+                // 这样 CreateBatchableItem 调用 GetWorldMatrix() 时会直接返回缓存
+                if (item.hasCachedMatrix) {
+                    item.renderable->SetCachedWorldMatrix(item.cachedWorldMatrix);
+                }
                 sortedQueue.push_back(item.renderable);
             }
         }
@@ -1206,7 +1227,7 @@ uint32_t Renderer::GetActiveLayerMask() const {
     return m_activeLayerMask.load(std::memory_order_relaxed);
 }
 
-void Renderer::ApplyLayerOverrides(const RenderLayerDescriptor& descriptor,
+void Renderer::ApplyLayerOverrides(const RenderLayerDescriptor& /*descriptor*/,
                                    const RenderLayerState& state) {
     if (!m_initialized) {
         return;
@@ -1268,14 +1289,16 @@ void Renderer::SortLayerItems(std::vector<LayerItem>& items, const RenderLayerDe
         return BuildFallbackMaterialKey(renderable, 0u);
     };
 
-    auto computeDepthHint = [](Renderable* renderable) -> float {
-        if (!renderable) {
+    // 阶段 1.3: 使用预计算的矩阵计算深度提示
+    auto computeDepthHint = [](const LayerItem& item) -> float {
+        if (!item.renderable) {
             return 0.0f;
         }
-        if (renderable->HasDepthHint()) {
-            return renderable->GetDepthHint();
+        if (item.renderable->HasDepthHint()) {
+            return item.renderable->GetDepthHint();
         }
-        Matrix4 world = renderable->GetWorldMatrix();
+        // 使用预计算的矩阵，避免重复调用 GetWorldMatrix()
+        Matrix4 world = item.hasCachedMatrix ? item.cachedWorldMatrix : item.renderable->GetWorldMatrix();
         Vector3 position = world.block<3,1>(0, 3);
         return position.squaredNorm();
     };
@@ -1335,7 +1358,7 @@ void Renderer::SortLayerItems(std::vector<LayerItem>& items, const RenderLayerDe
             TransparentEntry entry{};
             entry.item = *it;
             entry.materialKey = resolveKey(renderable);
-            entry.depth = computeDepthHint(renderable);
+            entry.depth = computeDepthHint(*it);  // 阶段 1.3: 传递整个 item 以使用预计算的矩阵
             transparentEntries.push_back(entry);
         }
 
@@ -1383,7 +1406,7 @@ void Renderer::SortLayerItems(std::vector<LayerItem>& items, const RenderLayerDe
         std::vector<Entry> entries;
         entries.reserve(items.size());
         for (const auto& item : items) {
-            entries.push_back(Entry{item, resolveKey(item.renderable), computeDepthHint(item.renderable)});
+            entries.push_back(Entry{item, resolveKey(item.renderable), computeDepthHint(item)});  // 阶段 1.3: 传递整个 item 以使用预计算的矩阵
         }
 
         auto nearlyEqual = [](float a, float b) {

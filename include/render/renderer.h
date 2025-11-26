@@ -311,9 +311,13 @@ private:
     float m_fpsUpdateTimer;
     uint32_t m_frameCount;
     
-    struct LayerItem {
+    // 阶段 1.3: 添加对齐说明符以支持 Matrix4（需要 32 字节对齐以匹配 Eigen::Matrix4f）
+    struct alignas(32) LayerItem {
         Renderable* renderable = nullptr;
         size_t submissionIndex = 0;
+        // 阶段 1.3: 预计算的世界变换矩阵（用于排序和渲染）
+        Matrix4 cachedWorldMatrix = Matrix4::Identity();
+        bool hasCachedMatrix = false;  // 标记是否已预计算矩阵
     };
 
     struct LayerBucket {

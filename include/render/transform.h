@@ -739,7 +739,7 @@ private:
     };
     
     // 热数据结构：频繁访问的数据（缓存行对齐，提升缓存命中率）
-    struct alignas(64) HotData {
+    struct alignas(32) HotData {
         Vector3 position;        // 本地位置（12 bytes）
         Quaternion rotation;     // 本地旋转（16 bytes）
         Vector3 scale;           // 本地缩放（12 bytes）
@@ -818,7 +818,7 @@ private:
     // ========================================================================
     
     // L1 热缓存：完全无锁的原子快照（独立缓存行，避免 false sharing）
-    struct alignas(64) HotCache {
+    struct alignas(32) HotCache {
         std::atomic<uint64_t> version{0};
         Vector3 worldPosition;
         Quaternion worldRotation;
@@ -837,10 +837,9 @@ private:
         // sizeof(Quaternion) = 16 (4 * float)
         // Total: 8 + 12 + 16 + 12 = 48 bytes
         // Padding: 64 - 48 = 16 bytes
-        char padding[16];
-    };
+        };
     mutable HotCache m_hotCache;
-    
+
     // 全局唯一ID（用于锁排序，避免死锁）
     const uint64_t m_globalId;
     static std::atomic<uint64_t> s_nextGlobalId;
