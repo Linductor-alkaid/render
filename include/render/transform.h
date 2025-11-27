@@ -502,7 +502,10 @@ public:
      * @brief 获取父变换
      * @return 父变换指针（可能为 nullptr）
      */
-    Transform* GetParent() const { 
+    Transform* GetParent() const {
+        // 使用读锁保护访问，避免竞态条件
+        std::shared_lock<std::shared_mutex> lock(m_coldData->dataMutex);
+
         if (m_coldData && m_coldData->node) {
             // P0: 检查当前节点是否已销毁
             if (m_coldData->node->destroyed.load(std::memory_order_acquire)) {
@@ -522,7 +525,10 @@ public:
      * @brief 是否有父变换
      * @return 如果有父变换返回 true
      */
-    bool HasParent() const { 
+    bool HasParent() const {
+        // 使用读锁保护访问，避免竞态条件
+        std::shared_lock<std::shared_mutex> lock(m_coldData->dataMutex);
+
         if (m_coldData && m_coldData->node) {
             // P0: 检查当前节点是否已销毁
             if (m_coldData->node->destroyed.load(std::memory_order_acquire)) {
