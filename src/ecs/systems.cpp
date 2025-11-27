@@ -347,50 +347,92 @@ void TransformSystem::SyncParentChildRelations() {
 
 void TransformSystem::BatchUpdateTransforms() {
     if (!m_world) return;
-    
+
     auto entities = m_world->Query<TransformComponent>();
     if (entities.empty()) return;
-    
-    // 收集需要更新的 Transform
+
+    // 阶段2.1优化：按层级批量更新，减少重复计算
     struct TransformInfo {
         Transform* transform;
         int depth;
     };
     std::vector<TransformInfo> dirtyTransforms;
     dirtyTransforms.reserve(entities.size() / 4);  // 预估25%的Transform是dirty的
-    
+
+    // 第一遍：收集所有dirty transforms并计算深度
+    std::unordered_map<Transform*, int> transformDepths;
     for (const auto& entity : entities) {
         auto& comp = m_world->GetComponent<TransformComponent>(entity);
         if (comp.transform && comp.transform->IsDirty()) {
+            int depth = comp.transform->GetHierarchyDepth();
             dirtyTransforms.push_back({
                 comp.transform.get(),
-                comp.transform->GetHierarchyDepth()
+                depth
             });
+            transformDepths[comp.transform.get()] = depth;
         }
     }
-    
+
     m_stats.dirtyTransforms = dirtyTransforms.size();
-    
+
     if (dirtyTransforms.empty()) {
         return;  // 没有需要更新的
     }
-    
-    // 按层级深度排序（父对象先更新）
+
+    // 按深度排序（父对象先更新）
     std::sort(dirtyTransforms.begin(), dirtyTransforms.end(),
         [](const TransformInfo& a, const TransformInfo& b) {
             return a.depth < b.depth;
         });
-    
-    // 批量更新
-    for (const auto& info : dirtyTransforms) {
-        info.transform->ForceUpdateWorldTransform();
+
+    // 阶段2.1优化：按层级分组，同一层级的可以并行更新
+    struct TransformGroup {
+        std::vector<Transform*> transforms;
+        int minDepth;
+        int maxDepth;
+    };
+
+    std::vector<TransformGroup> groups;
+    int currentDepth = -1;
+    TransformGroup currentGroup;
+
+    for (const auto& [transform, depth] : dirtyTransforms) {
+        if (depth != currentDepth) {
+            // 新层级，保存当前组并开始新组
+            if (!currentGroup.transforms.empty()) {
+                groups.push_back(currentGroup);
+            }
+            currentGroup = TransformGroup();
+            currentGroup.minDepth = depth;
+            currentGroup.maxDepth = depth;
+            currentDepth = depth;
+        }
+
+        currentGroup.transforms.push_back(transform);
+        currentGroup.maxDepth = depth;
     }
-    
+
+    if (!currentGroup.transforms.empty()) {
+        groups.push_back(currentGroup);
+    }
+
+    // 按层级顺序批量更新（同一层级可以并行更新）
+    for (const auto& group : groups) {
+        // 同一层级的可以并行更新（如果支持多线程）
+        // 未来可以考虑使用OpenMP并行化同一层级的更新
+        for (Transform* transform : group.transforms) {
+            transform->ForceUpdateWorldTransform();
+        }
+    }
+
+    m_stats.batchGroups = groups.size();
+
     // 输出统计信息（可选）
     static int logCounter = 0;
     if (logCounter++ % 60 == 0 && m_stats.dirtyTransforms > 0) {
         Logger::GetInstance().DebugFormat(
-            "[TransformSystem] Batch updated %zu Transform(s)", m_stats.dirtyTransforms
+            "[TransformSystem] Batch updated %zu Transform(s) in %zu group(s)",
+            m_stats.dirtyTransforms, m_stats.batchGroups
         );
     }
 }
@@ -1763,7 +1805,7 @@ void MeshRenderSystem::SubmitRenderables() {
     }
 }
 
-bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) {
+bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) const {
     // ✅ 视锥体剔除优化（带近距离保护）
     if (!m_cameraSystem) {
         return false;
