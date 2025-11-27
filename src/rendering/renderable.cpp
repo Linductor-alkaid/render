@@ -263,6 +263,10 @@ Renderable& Renderable::operator=(Renderable&& other) noexcept {
 void Renderable::SetTransform(const Ref<Transform>& transform) {
     std::unique_lock lock(m_mutex);
     m_transform = transform;
+
+    // 使矩阵缓存失效（阶段1.1优化）
+    m_matrixCacheValid = false;
+    m_cachedTransformVersion = 0;
 }
 
 Ref<Transform> Renderable::GetTransform() const {
@@ -272,10 +276,49 @@ Ref<Transform> Renderable::GetTransform() const {
 
 Matrix4 Renderable::GetWorldMatrix() const {
     std::shared_lock lock(m_mutex);
-    if (m_transform) {
-        return m_transform->GetWorldMatrix();
+
+    if (!m_transform) {
+        return Matrix4::Identity();
     }
-    return Matrix4::Identity();
+
+    // 简化的缓存检查（阶段1.1优化）
+    // 由于Transform没有公开GetLocalVersion方法，我们使用IsDirty()检查
+    if (m_matrixCacheValid && !m_transform->IsDirty()) {
+        // 缓存有效，直接返回缓存的矩阵
+        return m_cachedWorldMatrix;
+    }
+
+    // 需要重新计算矩阵（短暂升级到写锁）
+    lock.unlock();
+    std::unique_lock writeLock(m_mutex);
+
+    // 双重检查，可能在等待写锁时其他线程已经更新了缓存
+    if (m_matrixCacheValid && !m_transform->IsDirty()) {
+        return m_cachedWorldMatrix;
+    }
+
+    // 重新计算并缓存矩阵
+    m_cachedWorldMatrix = m_transform->GetWorldMatrix();
+    m_cachedTransformVersion = 0; // 简化版本管理
+    m_matrixCacheValid = true;
+
+    return m_cachedWorldMatrix;
+}
+
+void Renderable::UpdateMatrixCache() const {
+    std::unique_lock lock(m_mutex);
+
+    if (!m_transform) {
+        m_cachedWorldMatrix = Matrix4::Identity();
+        m_cachedTransformVersion = 0;
+        m_matrixCacheValid = true;
+        return;
+    }
+
+    // 强制重新计算并缓存矩阵
+    m_cachedWorldMatrix = m_transform->GetWorldMatrix();
+    m_cachedTransformVersion = 0; // 简化版本管理
+    m_matrixCacheValid = true;
 }
 
 void Renderable::SetVisible(bool visible) {

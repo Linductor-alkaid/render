@@ -54,6 +54,9 @@ logs/
 *.pdb
 *.ilk
 
+# claude
+.claude/
+
 # 用户配置
 config_user.json
 

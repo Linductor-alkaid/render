@@ -111,6 +111,14 @@ public:
      * @return 世界变换矩阵
      */
     [[nodiscard]] Matrix4 GetWorldMatrix() const;
+
+    /**
+     * @brief 更新矩阵缓存（强制重新计算）
+     *
+     * 通常不需要手动调用，系统会在适当时机自动更新缓存。
+     * 在Transform被外部修改后，可以调用此方法强制更新缓存。
+     */
+    void UpdateMatrixCache() const;
     
     // ==================== 可见性 ====================
     
@@ -242,7 +250,12 @@ protected:
     bool m_transparentHint = false;
     float m_depthHint = 0.0f;
     bool m_hasDepthHint = false;
-    
+
+    // 矩阵缓存（阶段1.1优化）
+    mutable Matrix4 m_cachedWorldMatrix;           ///< 缓存的世界变换矩阵
+    mutable uint64_t m_cachedTransformVersion{0}; ///< Transform版本号缓存
+    mutable bool m_matrixCacheValid{false};       ///< 矩阵缓存是否有效
+
     mutable std::shared_mutex m_mutex;    ///< 线程安全锁
 };
 
