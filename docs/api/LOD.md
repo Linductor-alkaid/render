@@ -418,11 +418,244 @@ LODLevel GetEntityLODLevel(ECS::World* world, ECS::EntityID entity);
 
 ---
 
+## LOD 资源获取方式
+
+### 概述
+
+LOD 不同级别的网格/模型资源可以通过以下方式获得：
+
+1. **手动准备**（当前支持）：在建模工具中创建不同细节级别的模型文件
+2. **自动生成**（计划中）：通过网格简化算法自动生成 LOD 级别
+3. **运行时简化**（计划中）：使用第三方库（如 meshoptimizer）进行网格简化
+
+### 当前实现方式（手动配置）
+
+**阶段 1 实现**：LOD 系统目前支持手动配置 LOD 资源。你需要：
+
+1. **在建模工具中准备不同 LOD 级别的模型**
+   - LOD0：原始高精度模型（100% 顶点数）
+   - LOD1：简化 30-50% 的模型
+   - LOD2：简化 60-70% 的模型
+   - LOD3：简化 80-90% 的模型
+
+2. **手动加载并配置到 LODConfig**
+
+```cpp
+// 加载不同 LOD 级别的网格
+Ref<Mesh> lod0Mesh = LoadMesh("tree_lod0.obj");  // 原始模型（10000 顶点）
+Ref<Mesh> lod1Mesh = LoadMesh("tree_lod1.obj");  // 简化模型（7000 顶点，减少 30%）
+Ref<Mesh> lod2Mesh = LoadMesh("tree_lod2.obj");  // 简化模型（4000 顶点，减少 60%）
+Ref<Mesh> lod3Mesh = LoadMesh("tree_lod3.obj");  // 简化模型（2000 顶点，减少 80%）
+
+// 配置 LOD
+LODComponent lodComp;
+lodComp.config.enabled = true;
+lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+
+// 设置 LOD 网格（索引对应 LOD 级别）
+lodComp.config.lodMeshes.push_back(lod0Mesh);  // 索引 0 = LOD0
+lodComp.config.lodMeshes.push_back(lod1Mesh);  // 索引 1 = LOD1
+lodComp.config.lodMeshes.push_back(lod2Mesh);  // 索引 2 = LOD2
+lodComp.config.lodMeshes.push_back(lod3Mesh);  // 索引 3 = LOD3
+
+world->AddComponent<LODComponent>(entity, lodComp);
+```
+
+### LOD 级别简化说明
+
+不同 LOD 级别通常通过以下方式简化：
+
+#### LOD0（最高细节）
+- **顶点数**：100%（原始模型）
+- **三角形数**：100%
+- **纹理**：最高分辨率（4K 或 2K）
+- **材质**：完整材质（包含所有贴图：漫反射、法线、高光等）
+- **用途**：近距离对象，玩家可以看到细节
+
+#### LOD1（中等细节）
+- **顶点数**：约 50-70%（简化 30-50%）
+- **三角形数**：约 50-70%
+- **纹理**：中等分辨率（2K 或 1K）
+- **材质**：简化材质（可能省略某些贴图）
+- **简化方法**：
+  - 减少顶点密度
+  - 合并相邻顶点
+  - 移除不必要的细节（如小装饰）
+- **用途**：中等距离对象
+
+#### LOD2（低细节）
+- **顶点数**：约 20-40%（简化 60-80%）
+- **三角形数**：约 20-40%
+- **纹理**：低分辨率（1K 或 512）
+- **材质**：简化材质（通常只保留漫反射贴图）
+- **简化方法**：
+  - 大幅减少顶点
+  - 简化几何形状
+  - 移除法线贴图和高光贴图
+- **用途**：远距离对象
+
+#### LOD3（最低细节）
+- **顶点数**：约 10-20%（简化 80-90%）
+- **三角形数**：约 10-20%
+- **纹理**：最低分辨率（512 或 256）
+- **材质**：极简材质（可能只使用颜色）
+- **简化方法**：
+  - 极简几何形状
+  - 可能使用 Billboard（广告牌）技术
+  - 禁用大部分贴图
+- **用途**：极远距离对象
+
+### 网格简化方法
+
+#### 1. 建模工具简化（推荐）
+
+在 Blender、Maya、3ds Max 等建模工具中：
+
+1. **Decimate Modifier（Blender）**
+   ```
+   - 选择模型
+   - 添加 Decimate Modifier
+   - 设置 Ratio（比例）：
+     * LOD1: 0.5-0.7（保留 50-70%）
+     * LOD2: 0.2-0.4（保留 20-40%）
+     * LOD3: 0.1-0.2（保留 10-20%）
+   - 导出为不同文件
+   ```
+
+2. **Progressive Mesh（Maya）**
+   - 使用 Maya 的网格简化工具
+   - 逐步减少顶点数
+   - 导出不同 LOD 级别
+
+#### 2. 自动简化算法（计划中）
+
+未来版本将支持自动网格简化：
+
+```cpp
+// 计划中的 API（阶段 3.1）
+LODLoadOptions options;
+options.autoGenerateLOD = true;
+options.lod1Simplification = 0.3f;  // 简化 30%
+options.lod2Simplification = 0.6f;  // 简化 60%
+options.lod3Simplification = 0.8f;  // 简化 80%
+
+LODConfig config = LODLoader::LoadLODConfig(baseMesh, options);
+```
+
+**简化算法**：
+- 使用 **meshoptimizer** 库（推荐）
+- 或使用 **Quadric Error Metrics (QEM)** 算法
+- 或使用 **Edge Collapse** 算法
+
+#### 3. 运行时简化（高级）
+
+对于动态生成的几何体，可以在运行时简化：
+
+```cpp
+// 示例：运行时简化（需要实现简化算法）
+Ref<Mesh> baseMesh = GenerateComplexMesh();
+Ref<Mesh> lod1Mesh = SimplifyMesh(baseMesh, 0.3f);  // 简化 30%
+Ref<Mesh> lod2Mesh = SimplifyMesh(baseMesh, 0.6f);  // 简化 60%
+
+lodComp.config.lodMeshes.push_back(lod1Mesh);
+lodComp.config.lodMeshes.push_back(lod2Mesh);
+```
+
+### 纹理 LOD 配置
+
+纹理也可以为不同 LOD 级别使用不同分辨率：
+
+```cpp
+// 加载不同分辨率的纹理
+Ref<Texture> lod0Diffuse = LoadTexture("tree_diffuse_4k.png");  // 4K 纹理
+Ref<Texture> lod1Diffuse = LoadTexture("tree_diffuse_2k.png");  // 2K 纹理
+Ref<Texture> lod2Diffuse = LoadTexture("tree_diffuse_1k.png");  // 1K 纹理
+Ref<Texture> lod3Diffuse = LoadTexture("tree_diffuse_512.png"); // 512 纹理
+
+// 配置 LOD 纹理
+LODTextureSet lod0Textures;
+lod0Textures.diffuseMap = lod0Diffuse;
+lod0Textures.normalMap = LoadTexture("tree_normal_4k.png");
+lod0Textures.specularMap = LoadTexture("tree_specular_4k.png");
+lodComp.config.lodTextures.push_back(lod0Textures);
+
+LODTextureSet lod1Textures;
+lod1Textures.diffuseMap = lod1Diffuse;
+lod1Textures.normalMap = LoadTexture("tree_normal_2k.png");
+lodComp.config.lodTextures.push_back(lod1Textures);
+
+LODTextureSet lod2Textures;
+lod2Textures.diffuseMap = lod2Diffuse;
+// LOD2 不使用方法线贴图
+lodComp.config.lodTextures.push_back(lod2Textures);
+
+LODTextureSet lod3Textures;
+lod3Textures.diffuseMap = lod3Diffuse;
+// LOD3 只使用漫反射贴图
+lodComp.config.lodTextures.push_back(lod3Textures);
+
+lodComp.config.textureStrategy = TextureLODStrategy::UseLODTextures;
+```
+
+### 使用 Mipmap（推荐）
+
+如果不想手动准备不同分辨率的纹理，可以使用 mipmap（自动生成）：
+
+```cpp
+// 使用原始纹理的 mipmap（自动）
+lodComp.config.textureStrategy = TextureLODStrategy::UseMipmap;
+
+// 系统会自动使用纹理的 mipmap 级别：
+// - LOD0: 使用最高 mipmap 级别
+// - LOD1: 使用中等 mipmap 级别
+// - LOD2: 使用较低 mipmap 级别
+// - LOD3: 使用最低 mipmap 级别
+```
+
+### 实际示例：检查 LOD 网格的顶点数
+
+```cpp
+// 检查不同 LOD 级别的顶点数
+if (!lodComp.config.lodMeshes.empty()) {
+    for (size_t i = 0; i < lodComp.config.lodMeshes.size(); ++i) {
+        if (lodComp.config.lodMeshes[i]) {
+            size_t vertexCount = lodComp.config.lodMeshes[i]->GetVertexCount();
+            size_t triangleCount = lodComp.config.lodMeshes[i]->GetTriangleCount();
+            
+            std::cout << "LOD" << i << ": " 
+                      << vertexCount << " 顶点, " 
+                      << triangleCount << " 三角形" << std::endl;
+        }
+    }
+}
+
+// 输出示例：
+// LOD0: 10000 顶点, 5000 三角形
+// LOD1: 7000 顶点, 3500 三角形  (减少 30%)
+// LOD2: 4000 顶点, 2000 三角形  (减少 60%)
+// LOD3: 2000 顶点, 1000 三角形  (减少 80%)
+```
+
+### 性能影响
+
+不同 LOD 级别对性能的影响：
+
+| LOD 级别 | 顶点数 | 三角形数 | 纹理采样 | 性能提升 |
+|---------|--------|---------|---------|---------|
+| LOD0    | 100%   | 100%    | 4K      | 基准    |
+| LOD1    | 50-70% | 50-70%  | 2K      | 1.5-2x  |
+| LOD2    | 20-40% | 20-40%  | 1K      | 3-5x    |
+| LOD3    | 10-20% | 10-20%  | 512     | 5-10x   |
+
+**注意**：实际性能提升取决于 GPU、场景复杂度等因素。
+
+---
+
 ## 使用示例
 
 ### 基础使用
 
-#### 1. 创建实体并配置 LOD
+#### 1. 创建实体并配置 LOD（手动加载资源）
 
 ```cpp
 #include "render/lod_system.h"
@@ -756,6 +989,36 @@ world->RemoveComponent<LODComponent>(entity);
 ### Q: LOD 网格/模型/材质是必需的吗？
 
 A: 不是。如果没有配置 LOD 资源，系统会使用原始资源。只有配置了 LOD 资源时才会使用。
+
+### Q: LOD 不同级别的网格是如何得到的？中等级别是否降低了网格数量？
+
+A: 是的，LOD 不同级别通过降低网格复杂度来实现：
+
+**当前实现（阶段 1）**：
+- 需要手动在建模工具中创建不同 LOD 级别的模型文件
+- LOD1 通常减少 30-50% 的顶点和三角形
+- LOD2 通常减少 60-80% 的顶点和三角形
+- LOD3 通常减少 80-90% 的顶点和三角形
+
+**简化方法**：
+1. **建模工具简化**（推荐）：
+   - Blender: 使用 Decimate Modifier
+   - Maya: 使用 Progressive Mesh
+   - 3ds Max: 使用 ProOptimizer
+
+2. **自动生成**（计划中，阶段 3.1）：
+   - 使用网格简化算法（如 meshoptimizer）
+   - 自动从基础网格生成不同 LOD 级别
+
+**示例**：
+```cpp
+// LOD0: 10000 顶点（原始模型）
+// LOD1: 7000 顶点（减少 30%）
+// LOD2: 4000 顶点（减少 60%）
+// LOD3: 2000 顶点（减少 80%）
+```
+
+详见文档中的 "LOD 资源获取方式" 章节。
 
 ---
 
