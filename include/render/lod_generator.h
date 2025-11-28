@@ -402,6 +402,113 @@ public:
         Ref<Model> sourceModel,
         const std::string& baseFilepath
     );
+    
+    // ========================================================================
+    // 纹理 LOD 功能（使用 Mipmap）
+    // ========================================================================
+    
+    /**
+     * @brief 确保纹理有 Mipmap
+     * 
+     * 如果纹理还没有 mipmap，则生成 mipmap 并设置正确的过滤模式
+     * 
+     * @param texture 纹理指针
+     * @return bool 是否成功（如果纹理无效返回 false）
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Texture> texture = LoadTexture("diffuse.png");
+     * LODGenerator::EnsureTextureMipmap(texture);
+     * // 现在纹理有 mipmap，可以用于 LOD
+     * @endcode
+     */
+    static bool EnsureTextureMipmap(Ref<Texture> texture);
+    
+    /**
+     * @brief 为材质的所有纹理配置 Mipmap LOD
+     * 
+     * 遍历材质的所有纹理，确保它们都有 mipmap 并设置正确的过滤模式
+     * 这是使用 mipmap 实现纹理 LOD 的推荐方式
+     * 
+     * @param material 材质指针
+     * @return bool 是否全部成功
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Material> material = LoadMaterial("wood.mat");
+     * LODGenerator::ConfigureMaterialTextureLOD(material);
+     * // 材质的所有纹理现在都支持 mipmap LOD
+     * @endcode
+     */
+    static bool ConfigureMaterialTextureLOD(Ref<Material> material);
+    
+    /**
+     * @brief 自动配置材质的纹理 LOD（使用 Mipmap）
+     * 
+     * 为材质的所有纹理生成 mipmap 并配置过滤模式，使其支持基于距离的自动 LOD
+     * 
+     * @param material 材质指针
+     * @return bool 是否成功
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Material> material = LoadMaterial("tree.mat");
+     * if (LODGenerator::AutoConfigureTextureLOD(material)) {
+     *     // 材质现在支持自动纹理 LOD
+     *     // 在 LODConfig 中设置 textureStrategy = TextureLODStrategy::UseMipmap
+     * }
+     * @endcode
+     * 
+     * @note 此方法会：
+     * - 为所有纹理生成 mipmap（如果还没有）
+     * - 设置纹理过滤为 GL_LINEAR_MIPMAP_LINEAR（三线性过滤）
+     * - 确保纹理支持自动 mipmap 选择
+     */
+    static bool AutoConfigureTextureLOD(Ref<Material> material);
+    
+    /**
+     * @brief 为模型的所有材质配置纹理 LOD
+     * 
+     * 遍历模型的所有部分，为每个部分的材质配置纹理 LOD
+     * 
+     * @param model 模型指针
+     * @return bool 是否全部成功
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Model> model = ModelLoader::LoadFromFile("miku.pmx", "miku").model;
+     * LODGenerator::ConfigureModelTextureLOD(model);
+     * // 模型的所有材质现在都支持 mipmap LOD
+     * @endcode
+     */
+    static bool ConfigureModelTextureLOD(Ref<Model> model);
+    
+    /**
+     * @brief 自动配置 LODConfig 的纹理策略（使用 Mipmap）
+     * 
+     * 为 LODConfig 配置纹理 LOD 策略，并确保相关材质支持 mipmap
+     * 
+     * @param config LODConfig 引用（会被修改）
+     * @param material 材质指针（可选，如果提供则配置该材质的纹理）
+     * @return bool 是否成功
+     * 
+     * **使用示例**：
+     * @code
+     * LODConfig config;
+     * config.enabled = true;
+     * config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+     * 
+     * Ref<Material> material = LoadMaterial("tree.mat");
+     * if (LODGenerator::AutoConfigureTextureLODStrategy(config, material)) {
+     *     // config.textureStrategy 已设置为 UseMipmap
+     *     // material 的所有纹理都已配置 mipmap
+     * }
+     * @endcode
+     */
+    static bool AutoConfigureTextureLODStrategy(
+        LODConfig& config,
+        Ref<Material> material = nullptr
+    );
 
 private:
     /**

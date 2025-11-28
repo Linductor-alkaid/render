@@ -4,6 +4,8 @@
 #include "render/mesh_loader.h"
 #include "render/lod_system.h"
 #include "render/logger.h"
+#include "render/texture.h"
+#include "render/material.h"
 #include "../../third_party/meshoptimizer/src/meshoptimizer.h"
 #include <algorithm>
 #include <cmath>
@@ -1203,6 +1205,143 @@ std::vector<std::vector<Ref<Mesh>>> LODGenerator::LoadModelLODMeshes(
     LOG_INFO_F("LODGenerator::LoadModelLODMeshes: Loaded %zu/%zu LOD meshes", successCount, totalCount);
     
     return result;
+}
+
+// ============================================================================
+// 纹理 LOD 功能实现（使用 Mipmap）
+// ============================================================================
+
+bool LODGenerator::EnsureTextureMipmap(Ref<Texture> texture) {
+    if (!texture) {
+        LOG_WARNING_F("LODGenerator::EnsureTextureMipmap: 纹理指针为空");
+        return false;
+    }
+    
+    if (!texture->IsValid()) {
+        LOG_WARNING_F("LODGenerator::EnsureTextureMipmap: 纹理无效");
+        return false;
+    }
+    
+    // 检查纹理是否已经有 mipmap
+    // 由于 Texture 类没有公开查询 mipmap 状态的方法，我们直接生成
+    // GenerateMipmap() 内部会处理重复生成的情况
+    
+    // 生成 mipmap
+    texture->GenerateMipmap();
+    
+    // 设置正确的过滤模式（三线性过滤，支持 mipmap）
+    texture->SetFilter(TextureFilter::Mipmap, TextureFilter::Linear);
+    
+    LOG_DEBUG_F("LODGenerator::EnsureTextureMipmap: 为纹理配置 mipmap 成功");
+    return true;
+}
+
+bool LODGenerator::ConfigureMaterialTextureLOD(Ref<Material> material) {
+    if (!material) {
+        LOG_WARNING_F("LODGenerator::ConfigureMaterialTextureLOD: 材质指针为空");
+        return false;
+    }
+    
+    bool allSuccess = true;
+    size_t textureCount = 0;
+    size_t successCount = 0;
+    
+    // 遍历材质的所有纹理
+    material->ForEachTexture([&](const std::string& name, const Ref<Texture>& texture) {
+        textureCount++;
+        if (EnsureTextureMipmap(texture)) {
+            successCount++;
+        } else {
+            allSuccess = false;
+            LOG_WARNING_F("LODGenerator::ConfigureMaterialTextureLOD: 纹理 '%s' 配置失败", name.c_str());
+        }
+    });
+    
+    if (textureCount == 0) {
+        LOG_WARNING_F("LODGenerator::ConfigureMaterialTextureLOD: 材质没有纹理");
+        return false;
+    }
+    
+    LOG_INFO_F("LODGenerator::ConfigureMaterialTextureLOD: 配置了 %zu/%zu 个纹理的 mipmap", 
+               successCount, textureCount);
+    
+    return allSuccess;
+}
+
+bool LODGenerator::AutoConfigureTextureLOD(Ref<Material> material) {
+    if (!material) {
+        LOG_WARNING_F("LODGenerator::AutoConfigureTextureLOD: 材质指针为空");
+        return false;
+    }
+    
+    // 配置材质的所有纹理使用 mipmap
+    bool success = ConfigureMaterialTextureLOD(material);
+    
+    if (success) {
+        LOG_INFO_F("LODGenerator::AutoConfigureTextureLOD: 材质纹理 LOD 配置成功");
+    } else {
+        LOG_WARNING_F("LODGenerator::AutoConfigureTextureLOD: 部分纹理配置失败");
+    }
+    
+    return success;
+}
+
+bool LODGenerator::ConfigureModelTextureLOD(Ref<Model> model) {
+    if (!model) {
+        LOG_WARNING_F("LODGenerator::ConfigureModelTextureLOD: 模型指针为空");
+        return false;
+    }
+    
+    bool allSuccess = true;
+    size_t partCount = 0;
+    size_t successCount = 0;
+    
+    // 遍历模型的所有部分
+    model->AccessParts([&](const std::vector<ModelPart>& parts) {
+        partCount = parts.size();
+        
+        for (size_t i = 0; i < parts.size(); ++i) {
+            const auto& part = parts[i];
+            if (part.material) {
+                if (ConfigureMaterialTextureLOD(part.material)) {
+                    successCount++;
+                } else {
+                    allSuccess = false;
+                    LOG_WARNING_F("LODGenerator::ConfigureModelTextureLOD: 部分 %zu 的材质配置失败", i);
+                }
+            }
+        }
+    });
+    
+    if (partCount == 0) {
+        LOG_WARNING_F("LODGenerator::ConfigureModelTextureLOD: 模型没有部分");
+        return false;
+    }
+    
+    LOG_INFO_F("LODGenerator::ConfigureModelTextureLOD: 配置了 %zu/%zu 个部分的材质纹理 LOD", 
+               successCount, partCount);
+    
+    return allSuccess;
+}
+
+bool LODGenerator::AutoConfigureTextureLODStrategy(
+    LODConfig& config,
+    Ref<Material> material) {
+    
+    // 设置纹理策略为使用 mipmap
+    config.textureStrategy = TextureLODStrategy::UseMipmap;
+    
+    // 如果提供了材质，配置该材质的纹理
+    if (material) {
+        bool success = AutoConfigureTextureLOD(material);
+        if (!success) {
+            LOG_WARNING_F("LODGenerator::AutoConfigureTextureLODStrategy: 材质纹理配置失败");
+            return false;
+        }
+    }
+    
+    LOG_INFO_F("LODGenerator::AutoConfigureTextureLODStrategy: 纹理 LOD 策略配置成功（使用 Mipmap）");
+    return true;
 }
 
 } // namespace Render

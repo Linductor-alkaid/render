@@ -658,6 +658,8 @@ lodComp.config.textureStrategy = TextureLODStrategy::UseLODTextures;
 
 如果不想手动准备不同分辨率的纹理，可以使用 mipmap（自动生成）：
 
+#### 方法 1: 手动配置（基础）
+
 ```cpp
 // 使用原始纹理的 mipmap（自动）
 lodComp.config.textureStrategy = TextureLODStrategy::UseMipmap;
@@ -668,6 +670,48 @@ lodComp.config.textureStrategy = TextureLODStrategy::UseMipmap;
 // - LOD2: 使用较低 mipmap 级别
 // - LOD3: 使用最低 mipmap 级别
 ```
+
+#### 方法 2: 使用 LODGenerator 自动配置（推荐）
+
+使用 `LODGenerator` 可以自动为材质和模型配置纹理 mipmap：
+
+```cpp
+#include <render/lod_generator.h>
+
+// 方式 A: 为单个材质配置纹理 LOD
+Ref<Material> material = LoadMaterial("tree.mat");
+if (LODGenerator::AutoConfigureTextureLOD(material)) {
+    // 材质的所有纹理现在都支持 mipmap LOD
+    lodComp.config.textureStrategy = TextureLODStrategy::UseMipmap;
+}
+
+// 方式 B: 为整个模型配置纹理 LOD
+Ref<Model> model = ModelLoader::LoadFromFile("tree.pmx", "tree").model;
+if (LODGenerator::ConfigureModelTextureLOD(model)) {
+    // 模型的所有材质纹理都支持 mipmap LOD
+    lodComp.config.textureStrategy = TextureLODStrategy::UseMipmap;
+}
+
+// 方式 C: 自动配置 LODConfig 的纹理策略（最简单）
+LODConfig config;
+config.enabled = true;
+config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+
+Ref<Material> material = LoadMaterial("tree.mat");
+if (LODGenerator::AutoConfigureTextureLODStrategy(config, material)) {
+    // config.textureStrategy 已设置为 UseMipmap
+    // material 的所有纹理都已配置 mipmap
+    lodComp.config = config;
+}
+```
+
+**优势**：
+- ✅ 自动为所有纹理生成 mipmap
+- ✅ 自动设置正确的过滤模式（三线性过滤）
+- ✅ 支持材质和模型的批量配置
+- ✅ 无需手动准备多个纹理文件
+
+**详细文档**：参见 [LODGenerator API 文档](LODGenerator.md) 中的"纹理 LOD（使用 Mipmap）"章节。
 
 ### 实际示例：检查 LOD 网格的顶点数
 
@@ -818,6 +862,26 @@ if (IsLODEnabled(world, entity)) {
 
 #### 4. 配置 LOD 纹理
 
+##### 方式 A: 使用 Mipmap（推荐，最简单）
+
+```cpp
+#include <render/lod_generator.h>
+
+LODComponent lodComp;
+lodComp.config.enabled = true;
+lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+
+// 使用 LODGenerator 自动配置纹理 LOD
+Ref<Material> material = LoadMaterial("tree.mat");
+if (LODGenerator::AutoConfigureTextureLODStrategy(lodComp.config, material)) {
+    // config.textureStrategy 已设置为 UseMipmap
+    // material 的所有纹理都已配置 mipmap
+    world->AddComponent<LODComponent>(entity, lodComp);
+}
+```
+
+##### 方式 B: 手动配置不同分辨率的纹理
+
 ```cpp
 LODComponent lodComp;
 lodComp.config.enabled = true;
@@ -842,6 +906,12 @@ lodComp.config.lodTextures.push_back(lod2Textures);
 
 world->AddComponent<LODComponent>(entity, lodComp);
 ```
+
+**推荐使用方式 A**，因为：
+- 无需手动准备多个纹理文件
+- 自动生成 mipmap，OpenGL 根据距离自动选择级别
+- 性能优化，减少内存带宽
+- 视觉质量好，平滑的纹理细节过渡
 
 #### 5. 批量配置相同类型的实体
 
@@ -930,8 +1000,16 @@ lodComp.config.boundingBoxScale = 2.0f;
 ### 5. 纹理策略选择
 
 - **UseMipmap**（推荐）：自动使用纹理的 mipmap，无需额外配置
+  - 使用 `LODGenerator::AutoConfigureTextureLOD` 或 `AutoConfigureTextureLODStrategy` 自动配置
+  - OpenGL 根据距离自动选择合适的 mipmap 级别
+  - 性能优化，减少内存带宽
+  - 详细文档：参见 [LODGenerator API 文档](LODGenerator.md) 中的"纹理 LOD（使用 Mipmap）"章节
 - **UseLODTextures**：需要手动配置每个 LOD 级别的纹理，但可以更精确控制
+  - 需要手动准备不同分辨率的纹理文件
+  - 可以精确控制每个 LOD 级别使用的纹理
 - **DisableTextures**：在 LOD2+ 禁用纹理，节省内存和带宽
+  - 适合极简渲染场景
+  - 可以显著减少纹理采样开销
 
 ---
 
@@ -1108,11 +1186,17 @@ world->AddComponent<LODComponent>(entity, lodComp);
 
 ## 相关 API 和文档
 
-- **[LODGenerator API](LODGenerator.md)** - LOD 网格生成器，自动生成不同 LOD 级别的网格
+- **[LODGenerator API](LODGenerator.md)** - LOD 网格和纹理生成器
   - 使用 `meshoptimizer` 库进行网格简化
   - 支持单个网格、整个模型以及批量处理
   - 提供文件保存和加载功能
   - 支持自动配置 LODConfig
+  - **纹理 LOD 支持**：使用 mipmap 自动配置纹理 LOD
+    - `EnsureTextureMipmap` - 确保纹理有 mipmap
+    - `ConfigureMaterialTextureLOD` - 配置材质纹理 LOD
+    - `AutoConfigureTextureLOD` - 自动配置材质纹理 LOD
+    - `ConfigureModelTextureLOD` - 配置模型纹理 LOD
+    - `AutoConfigureTextureLODStrategy` - 自动配置纹理 LOD 策略
 - [Mesh API](Mesh.md) - 网格系统
 - [Model API](Model.md) - 模型系统
 - [Material API](Material.md) - 材质系统
@@ -1121,7 +1205,15 @@ world->AddComponent<LODComponent>(entity, lodComp);
 
 ---
 
-**文档版本**: v1.0  
+**文档版本**: v1.1  
 **最后更新**: 2025-11-28  
 **对应代码版本**: RenderEngine v1.0.0
+
+**更新历史**:
+- **v1.1** (2025-11-28): 添加纹理 LOD 使用 LODGenerator 的说明
+  - 更新"使用 Mipmap"章节，添加使用 `LODGenerator` 自动配置的示例
+  - 更新"配置 LOD 纹理"示例，推荐使用 `LODGenerator` 自动配置
+  - 更新"纹理策略选择"说明，添加 `LODGenerator` 相关文档链接
+  - 更新"相关 API 和文档"部分，添加纹理 LOD 功能说明
+- **v1.0** (2025-11-28): 初始版本
 

@@ -807,18 +807,183 @@ if (LODGenerator::AutoConfigureLOD(sourceMesh, config)) {
 
 ---
 
+## 纹理 LOD（使用 Mipmap）
+
+`LODGenerator` 提供了使用 mipmap 实现纹理 LOD 的功能。Mipmap 是 OpenGL 自动生成的纹理多级细节，可以根据距离自动选择合适的 mipmap 级别，实现纹理的自动 LOD。
+
+### 核心概念
+
+**Mipmap** 是纹理的预生成多级细节版本：
+- **LOD0**: 使用最高分辨率 mipmap（原始纹理）
+- **LOD1**: 使用中等分辨率 mipmap（1/2 分辨率）
+- **LOD2**: 使用较低分辨率 mipmap（1/4 分辨率）
+- **LOD3**: 使用最低分辨率 mipmap（1/8 或更低）
+
+**优势**：
+- ✅ 自动管理：OpenGL 根据距离自动选择 mipmap 级别
+- ✅ 性能优化：远距离使用低分辨率，减少内存带宽
+- ✅ 视觉质量：平滑的纹理细节过渡
+- ✅ 无需手动准备：自动生成，无需手动创建多个纹理文件
+
+### 基本使用
+
+#### 1. 确保单个纹理有 Mipmap
+
+```cpp
+#include <render/lod_generator.h>
+
+Ref<Texture> texture = LoadTexture("diffuse.png");
+
+// 确保纹理有 mipmap
+if (LODGenerator::EnsureTextureMipmap(texture)) {
+    // 纹理现在支持 mipmap LOD
+    // OpenGL 会根据距离自动选择合适的 mipmap 级别
+}
+```
+
+#### 2. 配置材质的纹理 LOD
+
+```cpp
+Ref<Material> material = LoadMaterial("tree.mat");
+
+// 为材质的所有纹理配置 mipmap
+if (LODGenerator::ConfigureMaterialTextureLOD(material)) {
+    // 材质的所有纹理现在都支持 mipmap LOD
+}
+```
+
+#### 3. 自动配置材质纹理 LOD
+
+```cpp
+Ref<Material> material = LoadMaterial("wood.mat");
+
+// 自动配置（推荐）
+if (LODGenerator::AutoConfigureTextureLOD(material)) {
+    // 材质纹理 LOD 配置完成
+}
+```
+
+#### 4. 配置模型的纹理 LOD
+
+```cpp
+Ref<Model> model = ModelLoader::LoadFromFile("miku.pmx", "miku").model;
+
+// 为模型的所有材质配置纹理 LOD
+if (LODGenerator::ConfigureModelTextureLOD(model)) {
+    // 模型的所有材质纹理都支持 mipmap LOD
+}
+```
+
+#### 5. 配置 LODConfig 的纹理策略
+
+```cpp
+LODConfig config;
+config.enabled = true;
+config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+
+Ref<Material> material = LoadMaterial("tree.mat");
+
+// 自动配置纹理 LOD 策略（使用 mipmap）
+if (LODGenerator::AutoConfigureTextureLODStrategy(config, material)) {
+    // config.textureStrategy 已设置为 UseMipmap
+    // material 的所有纹理都已配置 mipmap
+    
+    LODComponent lodComp;
+    lodComp.config = config;
+    world->AddComponent<LODComponent>(entity, lodComp);
+}
+```
+
+### 完整示例：网格和纹理 LOD 一起使用
+
+```cpp
+#include <render/lod_generator.h>
+#include <render/lod_system.h>
+
+// 1. 加载模型
+Ref<Model> model = ModelLoader::LoadFromFile("tree.pmx", "tree").model;
+
+// 2. 生成网格 LOD
+auto lodModels = LODGenerator::GenerateModelLODLevels(model);
+
+// 3. 配置纹理 LOD（使用 mipmap）
+LODGenerator::ConfigureModelTextureLOD(model);
+
+// 4. 配置 LODConfig
+LODConfig config;
+config.enabled = true;
+config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+config.textureStrategy = TextureLODStrategy::UseMipmap;  // 使用 mipmap
+
+// 5. 设置 LOD 模型
+config.lodModels.push_back(model);        // LOD0
+config.lodModels.push_back(lodModels[1]); // LOD1
+config.lodModels.push_back(lodModels[2]); // LOD2
+config.lodModels.push_back(lodModels[3]); // LOD3
+
+// 6. 应用到实体
+LODComponent lodComp;
+lodComp.config = config;
+world->AddComponent<LODComponent>(entity, lodComp);
+```
+
+### 工作原理
+
+1. **Mipmap 生成**：
+   - `EnsureTextureMipmap` 调用 `Texture::GenerateMipmap()`
+   - OpenGL 自动生成多级 mipmap（1/2, 1/4, 1/8, ...）
+
+2. **过滤模式**：
+   - 设置为 `GL_LINEAR_MIPMAP_LINEAR`（三线性过滤）
+   - OpenGL 根据距离和屏幕空间自动选择 mipmap 级别
+
+3. **自动选择**：
+   - 近距离：使用高分辨率 mipmap（LOD0）
+   - 中距离：使用中等分辨率 mipmap（LOD1）
+   - 远距离：使用低分辨率 mipmap（LOD2/LOD3）
+
+### 注意事项
+
+1. **性能**：
+   - Mipmap 生成是 CPU 密集型操作，建议在加载时生成
+   - 生成后存储在 GPU 内存中，不会重复生成
+
+2. **内存**：
+   - Mipmap 会增加约 33% 的纹理内存使用
+   - 但可以通过减少远距离纹理采样提升性能
+
+3. **兼容性**：
+   - 所有现代 OpenGL 实现都支持 mipmap
+   - 纹理尺寸必须是 2 的幂次方（或使用非 2 的幂次方扩展）
+
+4. **与其他策略的对比**：
+   - **UseMipmap**（推荐）：自动、简单、性能好
+   - **UseLODTextures**：需要手动准备多个纹理文件，但可以更精确控制
+   - **DisableTextures**：在 LOD2+ 禁用纹理，节省内存
+
+---
+
 ## 相关 API
 
 - [LOD 系统 API](LOD.md) - LOD 系统的使用和配置
 - [Mesh API](Mesh.md) - 网格数据结构和方法
 - [Model API](Model.md) - 模型数据结构和方法
+- [Material API](Material.md) - 材质系统
+- [Texture API](Texture.md) - 纹理系统
 - [MeshLoader API](MeshLoader.md) - 网格加载器
 
 ---
 
 ## 版本历史
 
-- **v1.0** (2024-11-28): 初始版本
+- **v1.1** (2025-11-28): 添加纹理 LOD 支持
+  - 新增 `EnsureTextureMipmap` - 确保纹理有 mipmap
+  - 新增 `ConfigureMaterialTextureLOD` - 配置材质纹理 LOD
+  - 新增 `AutoConfigureTextureLOD` - 自动配置材质纹理 LOD
+  - 新增 `ConfigureModelTextureLOD` - 配置模型纹理 LOD
+  - 新增 `AutoConfigureTextureLODStrategy` - 自动配置纹理 LOD 策略
+
+- **v1.0** (2025-11-28): 初始版本
   - 支持单个网格和整个模型的 LOD 生成
   - 支持文件保存和加载
   - 支持批量处理
