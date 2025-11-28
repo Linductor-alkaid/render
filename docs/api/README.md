@@ -47,6 +47,11 @@
   - 与 ECS 系统无缝集成
   - 批量 LOD 计算和平滑过渡
   - 提供统计信息和调试工具
+- **[LODGenerator](LODGenerator.md)** - LOD 网格生成器，自动生成不同 LOD 级别的网格
+  - 使用 meshoptimizer 库进行网格简化
+  - 支持单个网格、整个模型以及批量处理
+  - 提供文件保存和加载功能
+  - 支持自动配置 LODConfig
 
 ### 模型系统
 - **[Model](Model.md)** - 组合模型、部件管理及统计功能 🔒 **线程安全**

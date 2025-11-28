@@ -425,8 +425,8 @@ LODLevel GetEntityLODLevel(ECS::World* world, ECS::EntityID entity);
 LOD 不同级别的网格/模型资源可以通过以下方式获得：
 
 1. **手动准备**（当前支持）：在建模工具中创建不同细节级别的模型文件
-2. **自动生成**（计划中）：通过网格简化算法自动生成 LOD 级别
-3. **运行时简化**（计划中）：使用第三方库（如 meshoptimizer）进行网格简化
+2. **自动生成**（✅ 已实现）：使用 `LODGenerator` 通过网格简化算法自动生成 LOD 级别
+3. **运行时简化**（✅ 已实现）：使用 `meshoptimizer` 库进行网格简化
 
 ### 当前实现方式（手动配置）
 
@@ -527,39 +527,96 @@ world->AddComponent<LODComponent>(entity, lodComp);
    - 逐步减少顶点数
    - 导出不同 LOD 级别
 
-#### 2. 自动简化算法（计划中）
+#### 2. 自动简化算法（✅ 已实现）
 
-未来版本将支持自动网格简化：
+使用 `LODGenerator` 类自动生成 LOD 级别：
 
 ```cpp
-// 计划中的 API（阶段 3.1）
-LODLoadOptions options;
-options.autoGenerateLOD = true;
-options.lod1Simplification = 0.3f;  // 简化 30%
-options.lod2Simplification = 0.6f;  // 简化 60%
-options.lod3Simplification = 0.8f;  // 简化 80%
+#include <render/lod_generator.h>
 
-LODConfig config = LODLoader::LoadLODConfig(baseMesh, options);
+// 方法 1: 生成所有 LOD 级别
+Ref<Mesh> sourceMesh = LoadMesh("tree.obj");
+auto lodMeshes = LODGenerator::GenerateLODLevels(sourceMesh);
+
+// lodMeshes[0] = LOD1, lodMeshes[1] = LOD2, lodMeshes[2] = LOD3
+if (lodMeshes[0] && lodMeshes[1] && lodMeshes[2]) {
+    // 配置 LOD
+    LODComponent lodComp;
+    lodComp.config.enabled = true;
+    lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+    
+    // 设置 LOD 网格
+    lodComp.config.lodMeshes.push_back(sourceMesh);  // LOD0
+    lodComp.config.lodMeshes.push_back(lodMeshes[0]); // LOD1
+    lodComp.config.lodMeshes.push_back(lodMeshes[1]); // LOD2
+    lodComp.config.lodMeshes.push_back(lodMeshes[2]); // LOD3
+    
+    world->AddComponent<LODComponent>(entity, lodComp);
+}
+
+// 方法 2: 自动配置 LODConfig（推荐）
+Ref<Mesh> sourceMesh = LoadMesh("tree.obj");
+LODConfig config;
+config.enabled = true;
+config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+
+if (LODGenerator::AutoConfigureLOD(sourceMesh, config)) {
+    // config.lodMeshes 已经包含了 LOD1-LOD3 的网格
+    LODComponent lodComp;
+    lodComp.config = config;
+    world->AddComponent<LODComponent>(entity, lodComp);
+}
+
+// 方法 3: 自定义简化选项
+LODGenerator::SimplifyOptions options;
+options.mode = LODGenerator::SimplifyOptions::Mode::TargetTriangleCount;
+options.triangleCounts.lod1 = 1000;  // LOD1 保留 1000 个三角形
+options.triangleCounts.lod2 = 500;   // LOD2 保留 500 个三角形
+options.triangleCounts.lod3 = 200;   // LOD3 保留 200 个三角形
+options.flags = LODGenerator::SimplifyOptions::LockBorder;  // 锁定边界
+
+auto lodMeshes = LODGenerator::GenerateLODLevels(sourceMesh, options);
 ```
 
 **简化算法**：
-- 使用 **meshoptimizer** 库（推荐）
-- 或使用 **Quadric Error Metrics (QEM)** 算法
-- 或使用 **Edge Collapse** 算法
+- 使用 **meshoptimizer** 库（已集成）
+- 支持目标三角形数量模式（推荐）
+- 支持目标误差模式
+- 支持属性保留（法线、纹理坐标、颜色等）
 
-#### 3. 运行时简化（高级）
+**详细文档**：参见 [LODGenerator API 文档](LODGenerator.md)
 
-对于动态生成的几何体，可以在运行时简化：
+#### 3. 运行时简化（✅ 已实现）
+
+对于动态生成的几何体，可以在运行时使用 `LODGenerator` 简化：
 
 ```cpp
-// 示例：运行时简化（需要实现简化算法）
-Ref<Mesh> baseMesh = GenerateComplexMesh();
-Ref<Mesh> lod1Mesh = SimplifyMesh(baseMesh, 0.3f);  // 简化 30%
-Ref<Mesh> lod2Mesh = SimplifyMesh(baseMesh, 0.6f);  // 简化 60%
+#include <render/lod_generator.h>
 
-lodComp.config.lodMeshes.push_back(lod1Mesh);
-lodComp.config.lodMeshes.push_back(lod2Mesh);
+// 运行时简化动态生成的网格
+Ref<Mesh> baseMesh = GenerateComplexMesh();
+
+// 生成 LOD 级别
+auto lodMeshes = LODGenerator::GenerateLODLevels(baseMesh);
+
+// 配置 LOD
+LODComponent lodComp;
+lodComp.config.enabled = true;
+lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+lodComp.config.lodMeshes.push_back(baseMesh);  // LOD0
+lodComp.config.lodMeshes.push_back(lodMeshes[0]); // LOD1
+lodComp.config.lodMeshes.push_back(lodMeshes[1]); // LOD2
+lodComp.config.lodMeshes.push_back(lodMeshes[2]); // LOD3
+
+world->AddComponent<LODComponent>(entity, lodComp);
 ```
+
+**注意**：
+- 网格简化是 CPU 密集型操作，对于大型网格可能需要较长时间
+- 建议在加载时或后台线程中生成 LOD
+- 可以预先生成并保存到文件，运行时直接加载（参见 `LODGenerator::SaveLODMeshesToFiles`）
+
+**详细文档**：参见 [LODGenerator API 文档](LODGenerator.md)
 
 ### 纹理 LOD 配置
 
@@ -994,36 +1051,68 @@ A: 不是。如果没有配置 LOD 资源，系统会使用原始资源。只有
 
 A: 是的，LOD 不同级别通过降低网格复杂度来实现：
 
-**当前实现（阶段 1）**：
-- 需要手动在建模工具中创建不同 LOD 级别的模型文件
-- LOD1 通常减少 30-50% 的顶点和三角形
-- LOD2 通常减少 60-80% 的顶点和三角形
-- LOD3 通常减少 80-90% 的顶点和三角形
-
 **简化方法**：
-1. **建模工具简化**（推荐）：
+1. **建模工具简化**：
    - Blender: 使用 Decimate Modifier
    - Maya: 使用 Progressive Mesh
    - 3ds Max: 使用 ProOptimizer
 
-2. **自动生成**（计划中，阶段 3.1）：
-   - 使用网格简化算法（如 meshoptimizer）
+2. **自动生成**（✅ 已实现，推荐）：
+   - 使用 `LODGenerator` 和 `meshoptimizer` 库自动生成 LOD 级别
    - 自动从基础网格生成不同 LOD 级别
+   - 支持自定义简化选项和属性保留
 
-**示例**：
+**使用 LODGenerator 自动生成**：
+
 ```cpp
-// LOD0: 10000 顶点（原始模型）
-// LOD1: 7000 顶点（减少 30%）
-// LOD2: 4000 顶点（减少 60%）
-// LOD3: 2000 顶点（减少 80%）
+#include <render/lod_generator.h>
+
+// 方法 1: 自动生成并配置（最简单）
+Ref<Mesh> sourceMesh = LoadMesh("tree.obj");
+LODConfig config;
+config.enabled = true;
+config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+
+if (LODGenerator::AutoConfigureLOD(sourceMesh, config)) {
+    // config.lodMeshes 已经包含了 LOD1-LOD3 的网格
+    LODComponent lodComp;
+    lodComp.config = config;
+    world->AddComponent<LODComponent>(entity, lodComp);
+}
+
+// 方法 2: 手动生成并配置
+auto lodMeshes = LODGenerator::GenerateLODLevels(sourceMesh);
+// lodMeshes[0] = LOD1, lodMeshes[1] = LOD2, lodMeshes[2] = LOD3
+
+LODComponent lodComp;
+lodComp.config.enabled = true;
+lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+lodComp.config.lodMeshes.push_back(sourceMesh);  // LOD0
+lodComp.config.lodMeshes.push_back(lodMeshes[0]); // LOD1
+lodComp.config.lodMeshes.push_back(lodMeshes[1]); // LOD2
+lodComp.config.lodMeshes.push_back(lodMeshes[2]); // LOD3
+world->AddComponent<LODComponent>(entity, lodComp);
 ```
 
-详见文档中的 "LOD 资源获取方式" 章节。
+**示例输出**：
+```cpp
+// LOD0: 10000 顶点（原始模型）
+// LOD1: 5000 顶点（减少 50%，自动计算）
+// LOD2: 2500 顶点（减少 75%，自动计算）
+// LOD3: 1000 顶点（减少 90%，自动计算）
+```
+
+**详细文档**：参见 [LODGenerator API 文档](LODGenerator.md) 和文档中的 "LOD 资源获取方式" 章节。
 
 ---
 
-## 相关文档
+## 相关 API 和文档
 
+- **[LODGenerator API](LODGenerator.md)** - LOD 网格生成器，自动生成不同 LOD 级别的网格
+  - 使用 `meshoptimizer` 库进行网格简化
+  - 支持单个网格、整个模型以及批量处理
+  - 提供文件保存和加载功能
+  - 支持自动配置 LODConfig
 - [Mesh API](Mesh.md) - 网格系统
 - [Model API](Model.md) - 模型系统
 - [Material API](Material.md) - 材质系统
