@@ -2,6 +2,7 @@
 #include <render/logger.h>
 #include <render/shader_cache.h>
 #include <render/model_loader.h>
+#include <render/mesh_loader.h>
 #include <render/resource_manager.h>
 #include <render/ecs/world.h>
 #include <render/ecs/components.h>
@@ -11,6 +12,7 @@
 #include <render/math_utils.h>
 
 #include <SDL3/SDL.h>
+#include <glad/glad.h>
 
 #include <algorithm>
 #include <memory>
@@ -109,37 +111,114 @@ int main(int argc, char* argv[]) {
         sourceMesh->GetTriangleCount()
     );
 
-    // 生成 LOD 级别
-    Logger::GetInstance().Info("[LODGeneratorTest] Generating LOD levels...");
+    // 生成 Model 的 LOD 级别
+    Logger::GetInstance().Info("[LODGeneratorTest] Generating LOD levels for entire model...");
     auto lodOptions = LODGenerator::GetRecommendedOptions(sourceMesh);
-    auto lodMeshes = LODGenerator::GenerateLODLevels(sourceMesh, lodOptions);
-
-    if (lodMeshes.empty() || !lodMeshes[0] || !lodMeshes[1] || !lodMeshes[2]) {
-        Logger::GetInstance().Error("[LODGeneratorTest] Failed to generate LOD levels");
+    
+    // 为整个 Model 生成 LOD 级别
+    auto lodModels = LODGenerator::GenerateModelLODLevels(model, lodOptions);
+    
+    if (lodModels.empty() || !lodModels[0] || !lodModels[1] || !lodModels[2] || !lodModels[3]) {
+        Logger::GetInstance().Error("[LODGeneratorTest] Failed to generate model LOD levels");
         Renderer::Destroy(renderer);
         return -1;
     }
-
-    Logger::GetInstance().InfoFormat(
-        "[LODGeneratorTest] LOD levels generated:\n"
-        "  LOD0 (Original): %zu triangles\n"
-        "  LOD1: %zu triangles\n"
-        "  LOD2: %zu triangles\n"
-        "  LOD3: %zu triangles",
-        sourceMesh->GetTriangleCount(),
-        lodMeshes[0]->GetTriangleCount(),
-        lodMeshes[1]->GetTriangleCount(),
-        lodMeshes[2]->GetTriangleCount()
-    );
-
-    // 验证生成的 LOD 网格
-    for (size_t i = 0; i < lodMeshes.size(); ++i) {
-        if (lodMeshes[i]) {
-            bool valid = LODGenerator::ValidateSimplifiedMesh(lodMeshes[i], sourceMesh);
+    
+    // 打印统计信息
+    for (int lod = 0; lod <= 3; ++lod) {
+        if (lodModels[lod]) {
+            auto stats = lodModels[lod]->GetStatistics();
             Logger::GetInstance().InfoFormat(
-                "[LODGeneratorTest] LOD%d validation: %s",
-                i + 1,
-                valid ? "PASSED" : "FAILED"
+                "[LODGeneratorTest] LOD%d: %zu parts, %zu vertices, %zu triangles",
+                lod, stats.meshCount, stats.vertexCount, stats.indexCount / 3
+            );
+        }
+    }
+    
+    // 保存 Model 的所有 LOD 级别到文件
+    Logger::GetInstance().Info("[LODGeneratorTest] Saving model LOD meshes to files...");
+    std::string outputDir = "output/lod_meshes";
+    std::string basePath = outputDir + "/miku";
+    if (LODGenerator::SaveModelLODToFiles(model, basePath, lodOptions)) {
+        Logger::GetInstance().InfoFormat("[LODGeneratorTest] Successfully saved all LOD meshes to %s", basePath.c_str());
+    } else {
+        Logger::GetInstance().Warning("[LODGeneratorTest] Some LOD meshes failed to save");
+    }
+    
+    // 加载保存的 LOD 网格（测试加载功能）
+    Logger::GetInstance().Info("[LODGeneratorTest] Loading saved LOD meshes...");
+    std::vector<Ref<Mesh>> loadedLODMeshes(4);
+    
+    // 检查模型有多少部分
+    size_t partCount = model->GetPartCount();
+    Logger::GetInstance().InfoFormat("[LODGeneratorTest] Model has %zu parts", partCount);
+    
+    // 加载第一个部分的 LOD 网格（用于测试）
+    if (partCount > 0) {
+        std::string partName = "part0";  // 默认名称
+        model->AccessParts([&](const std::vector<ModelPart>& parts) {
+            if (!parts[0].name.empty()) {
+                partName = parts[0].name;
+                // 清理文件名中的非法字符
+                std::replace(partName.begin(), partName.end(), '/', '_');
+                std::replace(partName.begin(), partName.end(), '\\', '_');
+                std::replace(partName.begin(), partName.end(), ':', '_');
+            }
+        });
+        
+        for (int lod = 0; lod <= 3; ++lod) {
+            std::string filepath;
+            if (partCount == 1) {
+                filepath = basePath + "_lod" + std::to_string(lod) + ".obj";
+            } else {
+                filepath = basePath + "_" + partName + "_lod" + std::to_string(lod) + ".obj";
+            }
+            
+            // 使用 MeshLoader 加载 OBJ 文件
+            auto& resMgr = ResourceManager::GetInstance();
+            if (resMgr.HasMesh(filepath)) {
+                loadedLODMeshes[lod] = resMgr.GetMesh(filepath);
+                Logger::GetInstance().InfoFormat(
+                    "[LODGeneratorTest] Loaded LOD%d from cache: %s (%zu triangles)",
+                    lod, filepath.c_str(), loadedLODMeshes[lod] ? loadedLODMeshes[lod]->GetTriangleCount() : 0
+                );
+            } else {
+                // 尝试从文件加载
+                auto meshes = MeshLoader::LoadFromFile(filepath);
+                if (!meshes.empty() && meshes[0]) {
+                    loadedLODMeshes[lod] = meshes[0];
+                    resMgr.RegisterMesh(filepath, meshes[0]);
+                    Logger::GetInstance().InfoFormat(
+                        "[LODGeneratorTest] Loaded LOD%d from file: %s (%zu triangles)",
+                        lod, filepath.c_str(), loadedLODMeshes[lod]->GetTriangleCount()
+                    );
+                } else {
+                    Logger::GetInstance().WarningFormat(
+                        "[LODGeneratorTest] Failed to load LOD%d from: %s",
+                        lod, filepath.c_str()
+                    );
+                }
+            }
+        }
+    }
+    
+    // 使用生成的 LOD 模型（而不是单个网格）
+    // 提取第一个部分的网格用于渲染测试
+    std::vector<Ref<Mesh>> allLODMeshes(4);
+    for (int lod = 0; lod <= 3; ++lod) {
+        if (lodModels[lod]) {
+            lodModels[lod]->AccessParts([&](const std::vector<ModelPart>& parts) {
+                if (!parts.empty() && parts[0].mesh) {
+                    allLODMeshes[lod] = parts[0].mesh;
+                }
+            });
+        }
+        // 如果加载的文件存在，优先使用加载的网格（验证加载功能）
+        if (loadedLODMeshes[lod]) {
+            allLODMeshes[lod] = loadedLODMeshes[lod];
+            Logger::GetInstance().InfoFormat(
+                "[LODGeneratorTest] Using loaded LOD%d mesh (%zu triangles) for rendering",
+                lod, allLODMeshes[lod]->GetTriangleCount()
             );
         }
     }
@@ -174,6 +253,10 @@ int main(int argc, char* argv[]) {
     cameraComp.active = true;
     world->AddComponent(cameraEntity, cameraComp);
 
+    // 注意：为了测试不同LOD级别的视觉效果，我们不注册LOD更新系统
+    // 而是直接在每个实体上设置固定的LOD级别
+    // 如果需要测试自动LOD切换，可以取消注释下面的代码
+    /*
     // 创建 LOD 更新系统
     struct LODUpdateSystemImpl : public System {
         void Update(float deltaTime) override {
@@ -207,12 +290,11 @@ int main(int argc, char* argv[]) {
     };
     
     world->RegisterSystem<LODUpdateSystemImpl>();
+    */
 
     // 创建 4 个实体，分别渲染 LOD0, LOD1, LOD2, LOD3
     std::vector<EntityID> lodEntities;
-    std::vector<Ref<Mesh>> allLODMeshes;
-    allLODMeshes.push_back(sourceMesh);  // LOD0
-    allLODMeshes.insert(allLODMeshes.end(), lodMeshes.begin(), lodMeshes.end());  // LOD1, LOD2, LOD3
+    // allLODMeshes 已在上面定义和填充
 
     // 获取材质（使用模型中的第一个材质）
     Ref<Material> material = nullptr;
@@ -242,9 +324,9 @@ int main(int argc, char* argv[]) {
         transform.SetScale(1.0f);
         world->AddComponent(entity, transform);
 
-        // 设置网格渲染组件
+        // 设置网格渲染组件（使用LOD0作为基础网格）
         MeshRenderComponent meshComp;
-        meshComp.mesh = allLODMeshes[i];
+        meshComp.mesh = allLODMeshes[0];  // 所有实体都使用LOD0作为基础
         meshComp.material = material;
         meshComp.layerID = 0;
         meshComp.castShadows = true;
@@ -252,21 +334,25 @@ int main(int argc, char* argv[]) {
         meshComp.resourcesLoaded = true;  // 标记资源已加载（因为我们直接设置了 mesh 和 material）
         world->AddComponent(entity, meshComp);
 
-        // 设置 LOD 组件（只有 LOD1-LOD3 需要，LOD0 作为参考）
-        if (i > 0) {
-            LODComponent lodComp;
-            lodComp.config.enabled = true;
-            lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
-            lodComp.config.transitionDistance = 10.0f;
-            
-            // 为每个实体设置对应的 LOD 级别网格
-            // 注意：LODConfig 的 lodMeshes 索引对应 LOD 级别（0=LOD0, 1=LOD1, 2=LOD2, 3=LOD3）
-            // 但这里我们只设置当前级别的网格，其他级别使用原始网格
-            lodComp.config.lodMeshes.resize(4);
-            lodComp.config.lodMeshes[i] = allLODMeshes[i];  // 设置当前 LOD 级别
-            
-            world->AddComponent(entity, lodComp);
-        }
+        // 为所有实体设置 LOD 组件，配置完整的 LOD 网格列表
+        // 然后直接设置 currentLOD 来测试不同级别的效果
+        LODComponent lodComp;
+        lodComp.config.enabled = true;
+        lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+        lodComp.config.transitionDistance = 10.0f;
+        
+        // 配置完整的 LOD 网格列表（所有级别）
+        lodComp.config.lodMeshes.resize(4);
+        lodComp.config.lodMeshes[0] = allLODMeshes[0];  // LOD0
+        lodComp.config.lodMeshes[1] = allLODMeshes[1];  // LOD1
+        lodComp.config.lodMeshes[2] = allLODMeshes[2];  // LOD2
+        lodComp.config.lodMeshes[3] = allLODMeshes[3];  // LOD3
+        
+        // 直接设置当前 LOD 级别，用于测试不同级别的视觉效果
+        // 这样可以直接看到 LOD0, LOD1, LOD2, LOD3 的区别
+        lodComp.currentLOD = static_cast<LODLevel>(i);
+        
+        world->AddComponent(entity, lodComp);
 
         lodEntities.push_back(entity);
     }
@@ -350,6 +436,10 @@ int main(int argc, char* argv[]) {
         renderer->BeginFrame();
         renderer->Clear();
 
+        // 启用网格模式（线框模式）
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glLineWidth(1.0f);  // 设置线宽
+
         if (auto uniformMgr = phongShader->GetUniformManager()) {
             uniformMgr->SetVector3("uLightPos", sceneConfig.lightPosition);
             uniformMgr->SetColor("uAmbientColor", sceneConfig.ambientColor);
@@ -363,6 +453,9 @@ int main(int argc, char* argv[]) {
 
         world->Update(deltaTime);
         renderer->FlushRenderQueue();
+        
+        // 恢复填充模式（可选，如果需要在同一帧中渲染其他填充物体）
+        // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         renderer->EndFrame();
         renderer->Present();

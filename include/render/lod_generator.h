@@ -239,6 +239,169 @@ public:
      * @return bool 是否有效
      */
     static bool ValidateSimplifiedMesh(Ref<Mesh> simplifiedMesh, Ref<Mesh> sourceMesh);
+    
+    /**
+     * @brief 保存网格到 OBJ 文件
+     * 
+     * 将网格数据导出为 OBJ 格式文件
+     * 
+     * @param mesh 要保存的网格
+     * @param filepath 输出文件路径
+     * @return bool 是否成功
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Mesh> lodMesh = LODGenerator::GenerateLODLevel(sourceMesh, 1);
+     * if (lodMesh) {
+     *     LODGenerator::SaveMeshToOBJ(lodMesh, "model_lod1.obj");
+     * }
+     * @endcode
+     */
+    static bool SaveMeshToOBJ(Ref<Mesh> mesh, const std::string& filepath);
+    
+    /**
+     * @brief 批量保存 LOD 网格到文件
+     * 
+     * 将生成的 LOD 级别网格保存为文件，文件名会自动添加 LOD 后缀
+     * 
+     * @param sourceMesh 源网格（可选，用于保存 LOD0）
+     * @param lodMeshes LOD 网格数组 [LOD1, LOD2, LOD3]
+     * @param baseFilepath 基础文件路径（不含扩展名），例如 "models/miku"
+     * @return bool 是否全部成功
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Mesh> sourceMesh = LoadMesh("miku.obj");
+     * auto lodMeshes = LODGenerator::GenerateLODLevels(sourceMesh);
+     * 
+     * // 保存所有 LOD 级别
+     * LODGenerator::SaveLODMeshesToFiles(sourceMesh, lodMeshes, "output/miku");
+     * // 会生成: miku_lod0.obj, miku_lod1.obj, miku_lod2.obj, miku_lod3.obj
+     * @endcode
+     */
+    static bool SaveLODMeshesToFiles(
+        Ref<Mesh> sourceMesh,
+        const std::vector<Ref<Mesh>>& lodMeshes,
+        const std::string& baseFilepath
+    );
+    
+    /**
+     * @brief 为 Model 生成 LOD 级别
+     * 
+     * 为 Model 中的每个部分（ModelPart）生成对应的 LOD 级别网格
+     * 返回一个包含所有 LOD 级别的 Model 数组
+     * 
+     * @param sourceModel 源模型
+     * @param options 简化选项
+     * @return std::vector<Ref<Model>> LOD 模型数组 [LOD0, LOD1, LOD2, LOD3]
+     * 
+     * @note LOD0 是原始模型（不进行简化）
+     * @note 如果某个部分的简化失败，该部分在对应 LOD 级别中会使用原始网格
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Model> sourceModel = ModelLoader::LoadFromFile("miku.pmx", "miku").model;
+     * auto lodModels = LODGenerator::GenerateModelLODLevels(sourceModel);
+     * 
+     * // lodModels[0] 是原始模型
+     * // lodModels[1] 是所有部分都简化为 LOD1 的模型
+     * // lodModels[2] 是所有部分都简化为 LOD2 的模型
+     * // lodModels[3] 是所有部分都简化为 LOD3 的模型
+     * @endcode
+     */
+    static std::vector<Ref<Model>> GenerateModelLODLevels(
+        Ref<Model> sourceModel,
+        const SimplifyOptions& options = SimplifyOptions{}
+    );
+    
+    /**
+     * @brief 为 Model 的单个部分生成 LOD 级别
+     * 
+     * @param sourceModel 源模型
+     * @param partIndex 部分索引
+     * @param options 简化选项
+     * @return std::vector<Ref<Mesh>> LOD 网格数组 [LOD0, LOD1, LOD2, LOD3]
+     * 
+     * @note 如果简化失败，对应位置为 nullptr
+     */
+    static std::vector<Ref<Mesh>> GenerateModelPartLODLevels(
+        Ref<Model> sourceModel,
+        size_t partIndex,
+        const SimplifyOptions& options = SimplifyOptions{}
+    );
+    
+    /**
+     * @brief 保存 Model 的所有 LOD 级别到文件
+     * 
+     * 为 Model 的每个部分生成 LOD 级别并保存为独立的 OBJ 文件
+     * 
+     * @param sourceModel 源模型
+     * @param baseFilepath 基础文件路径（不含扩展名），例如 "output/miku"
+     * @param options 简化选项
+     * @return bool 是否全部成功
+     * 
+     * **文件命名规则**：
+     * - 单部分模型: miku_lod0.obj, miku_lod1.obj, ...
+     * - 多部分模型: miku_part0_lod0.obj, miku_part0_lod1.obj, miku_part1_lod0.obj, ...
+     * 
+     * **使用示例**：
+     * @code
+     * Ref<Model> model = ModelLoader::LoadFromFile("miku.pmx", "miku").model;
+     * 
+     * // 保存所有部分的所有 LOD 级别
+     * LODGenerator::SaveModelLODToFiles(model, "output/miku");
+     * @endcode
+     */
+    static bool SaveModelLODToFiles(
+        Ref<Model> sourceModel,
+        const std::string& baseFilepath,
+        const SimplifyOptions& options = SimplifyOptions{}
+    );
+    
+    /**
+     * @brief 加载指定部分的 LOD 网格
+     * 
+     * 根据部分索引和 LOD 级别加载对应的网格文件，确保与原模型部分一一对应
+     * 
+     * @param baseFilepath 基础文件路径（与 SaveModelLODToFiles 使用的路径相同）
+     * @param partIndex 部分索引（从0开始）
+     * @param lodLevel LOD 级别（0-3）
+     * @param totalParts 模型总部分数（用于判断是单部分还是多部分模型）
+     * @return Ref<Mesh> 加载的网格，失败返回 nullptr
+     * 
+     * **使用示例**：
+     * @code
+     * // 加载第0个部分的LOD1网格
+     * Ref<Mesh> lod1Mesh = LODGenerator::LoadPartLODMesh("output/miku", 0, 1, model->GetPartCount());
+     * @endcode
+     */
+    static Ref<Mesh> LoadPartLODMesh(
+        const std::string& baseFilepath,
+        size_t partIndex,
+        int lodLevel,
+        size_t totalParts
+    );
+    
+    /**
+     * @brief 加载模型的所有 LOD 级别
+     * 
+     * 为模型的每个部分加载所有 LOD 级别的网格，返回一个映射表
+     * 
+     * @param sourceModel 原始模型（用于获取部分信息）
+     * @param baseFilepath 基础文件路径（与 SaveModelLODToFiles 使用的路径相同）
+     * @return std::vector<std::vector<Ref<Mesh>>> 二维数组 [partIndex][lodLevel]，失败的部分为 nullptr
+     * 
+     * **使用示例**：
+     * @code
+     * auto lodMeshes = LODGenerator::LoadModelLODMeshes(model, "output/miku");
+     * // lodMeshes[0][1] 是第0个部分的LOD1网格
+     * // lodMeshes[1][2] 是第1个部分的LOD2网格
+     * @endcode
+     */
+    static std::vector<std::vector<Ref<Mesh>>> LoadModelLODMeshes(
+        Ref<Model> sourceModel,
+        const std::string& baseFilepath
+    );
 
 private:
     /**

@@ -3,6 +3,7 @@
 # 构建目录
 build/
 cmake-build-*/
+output/
 
 # 编译输出
 *.o
