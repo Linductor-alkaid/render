@@ -385,6 +385,7 @@ set(RENDER_HEADERS
     include/render/model.h
     include/render/model_loader.h
     include/render/geometry_preset.h
+    include/render/lod_system.h
     include/render/debug/sprite_animation_debugger.h
     include/render/debug/sprite_animation_debug_panel.h
 

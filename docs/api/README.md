@@ -41,6 +41,13 @@
 - **[MeshLoader](MeshLoader.md)** - 几何形状生成器 🔒 **线程安全**
 - **[GeometryPreset](GeometryPreset.md)** - 预设几何体注册与复用
 
+### LOD 系统
+- **[LOD](LOD.md)** - LOD（Level of Detail）系统，基于距离的细节级别管理
+  - 支持网格、模型、材质和纹理的 LOD 配置
+  - 与 ECS 系统无缝集成
+  - 批量 LOD 计算和平滑过渡
+  - 提供统计信息和调试工具
+
 ### 模型系统
 - **[Model](Model.md)** - 组合模型、部件管理及统计功能 🔒 **线程安全**
 - **[ModelRenderer](ModelRenderer.md)** - 模型渲染对象与排序/裁剪流程

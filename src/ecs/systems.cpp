@@ -16,6 +16,7 @@
 #include "render/sprite/sprite_nineslice.h"
 #include "render/ecs/sprite_animation_script_registry.h"
 #include "render/debug/sprite_animation_debugger.h"
+#include "render/lod_system.h"  // LOD 系统支持
 
 #include <utility>
 #include <algorithm>
@@ -1561,13 +1562,64 @@ void MeshRenderSystem::SubmitRenderables() {
                 continue;
             }
             
+            // ==================== LOD 支持 ====================
+            // 检查实体是否有 LODComponent，如果有则使用 LOD 网格和材质
+            Ref<Mesh> renderMesh = meshComp.mesh;
+            Ref<Material> renderMaterial = meshComp.material;
+            LODLevel lodLevel = LODLevel::LOD0;
+            bool usingLOD = false;
+            
+            if (m_world->HasComponent<LODComponent>(entity)) {
+                auto& lodComp = m_world->GetComponent<LODComponent>(entity);
+                lodLevel = lodComp.currentLOD;
+                usingLOD = lodComp.config.enabled;
+                
+                // 统计 LOD 使用情况
+                if (usingLOD) {
+                    m_stats.lodEnabledEntities++;
+                    
+                    // 如果 LOD 级别是 Culled，跳过渲染
+                    if (lodLevel == LODLevel::Culled) {
+                        m_stats.culledMeshes++;
+                        m_stats.lodCulledCount++;
+                        continue;
+                    }
+                    
+                    // 统计各 LOD 级别的使用数量
+                    switch (lodLevel) {
+                        case LODLevel::LOD0: m_stats.lod0Count++; break;
+                        case LODLevel::LOD1: m_stats.lod1Count++; break;
+                        case LODLevel::LOD2: m_stats.lod2Count++; break;
+                        case LODLevel::LOD3: m_stats.lod3Count++; break;
+                        default: break;
+                    }
+                }
+                
+                // 使用 LOD 网格（如果配置了）
+                renderMesh = lodComp.config.GetLODMesh(lodLevel, meshComp.mesh);
+                
+                // 使用 LOD 材质（如果配置了）
+                renderMaterial = lodComp.config.GetLODMaterial(lodLevel, meshComp.material);
+                
+                // 应用 LOD 纹理（如果配置了）
+                if (lodComp.config.textureStrategy == TextureLODStrategy::UseLODTextures) {
+                    lodComp.config.ApplyLODTextures(lodLevel, renderMaterial);
+                }
+            }
+            
+            // 确保 LOD 网格和材质有效
+            if (!renderMesh || !renderMaterial) {
+                Logger::GetInstance().DebugFormat("[MeshRenderSystem] Entity %u LOD mesh or material is null, skipping", entity.index);
+                continue;
+            }
+            
             // 视锥体裁剪优化
             Vector3 position = transform.GetPosition();
             
-            // 从网格包围盒计算半径
+            // 从网格包围盒计算半径（使用 LOD 网格）
             float radius = 1.0f;  // 默认半径
-            if (meshComp.mesh) {
-                AABB bounds = meshComp.mesh->CalculateBounds();
+            if (renderMesh) {
+                AABB bounds = renderMesh->CalculateBounds();
                 Vector3 size = bounds.max - bounds.min;
                 radius = size.norm() * 0.5f;  // 包围盒对角线的一半作为半径
                 
@@ -1588,7 +1640,7 @@ void MeshRenderSystem::SubmitRenderables() {
             // 这样不会影响其他使用同一 Material 的实体
             
             // ✅ 检查材质是否有效（不仅检查指针，还要检查材质状态）
-            if (meshComp.material && !meshComp.material->IsValid()) {
+            if (renderMaterial && !renderMaterial->IsValid()) {
                 Logger::GetInstance().WarningFormat("[MeshRenderSystem] Entity %u has invalid material, skipping", 
                                                    entity.index);
                 continue;
@@ -1620,14 +1672,14 @@ void MeshRenderSystem::SubmitRenderables() {
             
             // 创建 MeshRenderable 并添加到对象池
             // ✅ 添加断言检查
-            RENDER_ASSERT(meshComp.mesh != nullptr, "Mesh is null");
-            RENDER_ASSERT(meshComp.material != nullptr, "Material is null");
+            RENDER_ASSERT(renderMesh != nullptr, "Mesh is null");
+            RENDER_ASSERT(renderMaterial != nullptr, "Material is null");
             RENDER_ASSERT(transform.transform != nullptr, "Transform is null");
             
             MeshRenderable renderable;
             renderable.ClearDepthHint();
-            renderable.SetMesh(meshComp.mesh);
-            renderable.SetMaterial(meshComp.material);
+            renderable.SetMesh(renderMesh);  // 使用 LOD 网格
+            renderable.SetMaterial(renderMaterial);  // 使用 LOD 材质
             renderable.SetTransform(transform.transform);
             renderable.SetVisible(meshComp.visible);
             renderable.SetLayerID(meshComp.layerID);
@@ -1683,12 +1735,12 @@ void MeshRenderSystem::SubmitRenderables() {
             }
 
             renderable.SetMaterialSortKey(
-                BuildMaterialSortKey(meshComp.material.get(), overrideHash, pipelineFlags)
+                BuildMaterialSortKey(renderMaterial.get(), overrideHash, pipelineFlags)  // 使用 LOD 材质
             );
 
             bool transparentHint = false;
-            if (meshComp.material && meshComp.material->IsValid()) {
-                const auto blendMode = meshComp.material->GetBlendMode();
+            if (renderMaterial && renderMaterial->IsValid()) {  // 使用 LOD 材质
+                const auto blendMode = renderMaterial->GetBlendMode();
                 transparentHint = (blendMode == BlendMode::Alpha || blendMode == BlendMode::Additive);
             }
             if (!transparentHint && meshComp.materialOverride.opacity.has_value()) {
@@ -1793,11 +1845,21 @@ void MeshRenderSystem::SubmitRenderables() {
             m_stats.drawCalls++;
         }
     
-        // ✅ 调试信息：显示提交的数量
+        // ✅ 调试信息：显示提交的数量和 LOD 统计
         static int logCounter = 0;
         if (logCounter++ < 10 || logCounter % 60 == 0) {
-            Logger::GetInstance().InfoFormat("[MeshRenderSystem] Submitted %zu renderables (total entities: %zu, culled: %zu)", 
-                                             m_stats.visibleMeshes, entities.size(), m_stats.culledMeshes);
+            if (m_stats.lodEnabledEntities > 0) {
+                Logger::GetInstance().InfoFormat(
+                    "[MeshRenderSystem] Submitted %zu renderables (total: %zu, culled: %zu) | "
+                    "LOD: enabled=%zu, LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, culled=%zu",
+                    m_stats.visibleMeshes, entities.size(), m_stats.culledMeshes,
+                    m_stats.lodEnabledEntities, m_stats.lod0Count, m_stats.lod1Count,
+                    m_stats.lod2Count, m_stats.lod3Count, m_stats.lodCulledCount
+                );
+            } else {
+                Logger::GetInstance().InfoFormat("[MeshRenderSystem] Submitted %zu renderables (total entities: %zu, culled: %zu)", 
+                                                 m_stats.visibleMeshes, entities.size(), m_stats.culledMeshes);
+            }
         }
     }
     RENDER_CATCH {
@@ -1919,9 +1981,51 @@ void ModelRenderSystem::SubmitRenderables() {
             if (!modelComp.resourcesLoaded || !modelComp.model) {
                 continue;
             }
+            
+            // ==================== LOD 支持 ====================
+            // 检查实体是否有 LODComponent，如果有则使用 LOD 模型
+            Ref<Model> renderModel = modelComp.model;
+            LODLevel lodLevel = LODLevel::LOD0;
+            bool usingLOD = false;
+            
+            if (m_world->HasComponent<LODComponent>(entity)) {
+                auto& lodComp = m_world->GetComponent<LODComponent>(entity);
+                lodLevel = lodComp.currentLOD;
+                usingLOD = lodComp.config.enabled;
+                
+                // 统计 LOD 使用情况
+                if (usingLOD) {
+                    m_stats.lodEnabledEntities++;
+                    
+                    // 如果 LOD 级别是 Culled，跳过渲染
+                    if (lodLevel == LODLevel::Culled) {
+                        m_stats.culledModels++;
+                        m_stats.lodCulledCount++;
+                        continue;
+                    }
+                    
+                    // 统计各 LOD 级别的使用数量
+                    switch (lodLevel) {
+                        case LODLevel::LOD0: m_stats.lod0Count++; break;
+                        case LODLevel::LOD1: m_stats.lod1Count++; break;
+                        case LODLevel::LOD2: m_stats.lod2Count++; break;
+                        case LODLevel::LOD3: m_stats.lod3Count++; break;
+                        default: break;
+                    }
+                }
+                
+                // 使用 LOD 模型（如果配置了）
+                renderModel = lodComp.config.GetLODModel(lodLevel, modelComp.model);
+            }
+            
+            // 确保 LOD 模型有效
+            if (!renderModel) {
+                Logger::GetInstance().DebugFormat("[ModelRenderSystem] Entity %u LOD model is null, skipping", entity.index);
+                continue;
+            }
 
             Matrix4 worldMatrix = transformComp.GetWorldMatrix();
-            AABB localBounds = modelComp.model->GetBounds();
+            AABB localBounds = renderModel->GetBounds();  // 使用 LOD 模型的包围盒
             Vector3 localCenter = localBounds.GetCenter();
             Vector3 localSize = localBounds.GetSize();
             float radius = localSize.norm() * 0.5f;
@@ -1944,7 +2048,7 @@ void ModelRenderSystem::SubmitRenderables() {
 
             ModelRenderable renderable;
             renderable.SetTransform(transformComp.transform);
-            renderable.SetModel(modelComp.model);
+            renderable.SetModel(renderModel);  // 使用 LOD 模型
             renderable.SetVisible(modelComp.visible);
             renderable.SetLayerID(modelComp.layerID);
             renderable.SetRenderPriority(modelComp.renderPriority);
@@ -2004,11 +2108,21 @@ void ModelRenderSystem::SubmitRenderables() {
 
         static int logCounter = 0;
         if (logCounter++ < 10 || logCounter % 120 == 0) {
-            Logger::GetInstance().InfoFormat(
-                "[ModelRenderSystem] Submitted %zu models (culled: %zu, parts: %zu)",
-                m_stats.visibleModels,
-                m_stats.culledModels,
-                m_stats.submittedParts);
+            if (m_stats.lodEnabledEntities > 0) {
+                Logger::GetInstance().InfoFormat(
+                    "[ModelRenderSystem] Submitted %zu models (culled: %zu, parts: %zu) | "
+                    "LOD: enabled=%zu, LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, culled=%zu",
+                    m_stats.visibleModels, m_stats.culledModels, m_stats.submittedParts,
+                    m_stats.lodEnabledEntities, m_stats.lod0Count, m_stats.lod1Count,
+                    m_stats.lod2Count, m_stats.lod3Count, m_stats.lodCulledCount
+                );
+            } else {
+                Logger::GetInstance().InfoFormat(
+                    "[ModelRenderSystem] Submitted %zu models (culled: %zu, parts: %zu)",
+                    m_stats.visibleModels,
+                    m_stats.culledModels,
+                    m_stats.submittedParts);
+            }
         }
     }
     RENDER_CATCH {

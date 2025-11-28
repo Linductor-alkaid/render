@@ -214,6 +214,14 @@ public:
         size_t visibleMeshes = 0;    ///< 可见网格数量
         size_t culledMeshes = 0;     ///< 被裁剪的网格数量
         size_t drawCalls = 0;        ///< 绘制调用数量
+        
+        // LOD 统计信息
+        size_t lodEnabledEntities = 0;      ///< 启用 LOD 的实体数量
+        size_t lod0Count = 0;               ///< 使用 LOD0 的实体数量
+        size_t lod1Count = 0;               ///< 使用 LOD1 的实体数量
+        size_t lod2Count = 0;               ///< 使用 LOD2 的实体数量
+        size_t lod3Count = 0;               ///< 使用 LOD3 的实体数量
+        size_t lodCulledCount = 0;          ///< 被 LOD 剔除的实体数量
     };
     
     /**
@@ -251,6 +259,14 @@ public:
         size_t culledModels = 0;
         size_t submittedParts = 0;
         size_t submittedRenderables = 0;
+        
+        // LOD 统计信息
+        size_t lodEnabledEntities = 0;      ///< 启用 LOD 的实体数量
+        size_t lod0Count = 0;               ///< 使用 LOD0 的实体数量
+        size_t lod1Count = 0;               ///< 使用 LOD1 的实体数量
+        size_t lod2Count = 0;               ///< 使用 LOD2 的实体数量
+        size_t lod3Count = 0;               ///< 使用 LOD3 的实体数量
+        size_t lodCulledCount = 0;          ///< 被 LOD 剔除的实体数量
     };
 
     [[nodiscard]] const RenderStats& GetStats() const { return m_stats; }

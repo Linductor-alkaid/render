@@ -41,9 +41,44 @@
 #include "render/ecs/systems.h"
 #include "render/ecs/components.h"
 #include "render/math_utils.h"
+#include "render/lod_system.h"  // LOD 系统支持
 
 using namespace Render;
 using namespace Render::ECS;
+
+// ============================================================
+// LOD 更新系统（在渲染前更新 LOD 级别）
+// ============================================================
+class LODUpdateSystem : public System {
+public:
+    void Update(float deltaTime) override {
+        (void)deltaTime;
+        if (!m_world) return;
+        
+        // 获取主相机位置
+        Vector3 cameraPosition = Vector3::Zero();
+        auto camEntities = m_world->Query<CameraComponent, TransformComponent>();
+        if (!camEntities.empty()) {
+            auto& camTransform = m_world->GetComponent<TransformComponent>(camEntities[0]);
+            if (camTransform.transform) {
+                cameraPosition = camTransform.transform->GetWorldPosition();
+            }
+        }
+        
+        // 获取所有有 LODComponent 的实体
+        auto entities = m_world->Query<LODComponent, TransformComponent>();
+        if (entities.empty()) return;
+        
+        // 获取当前帧 ID（使用简单的计数器）
+        static uint64_t frameId = 0;
+        frameId++;
+        
+        // 批量计算 LOD
+        LODSelector::BatchCalculateLOD(entities, m_world, cameraPosition, frameId);
+    }
+    
+    [[nodiscard]] int GetPriority() const override { return 95; }  // 在 MeshRenderSystem 之前运行
+};
 
 // ============================================================
 // 第一人称相机控制系统（直接更新Transform组件）
@@ -314,6 +349,7 @@ int main(int argc, char* argv[]) {
     world->RegisterComponent<CameraComponent>();
     world->RegisterComponent<LightComponent>();
     world->RegisterComponent<GeometryComponent>();  // 新增：几何形状组件
+    world->RegisterComponent<LODComponent>();  // LOD 组件
     Logger::GetInstance().Info("✓ 组件注册完成");
     
     // ============================================================
@@ -348,6 +384,9 @@ int main(int argc, char* argv[]) {
     
     world->RegisterSystem<UniformSystem>(renderer.get());              // 优先级 90（新增）
     Logger::GetInstance().Info("  ✓ UniformSystem (优先级 90) - 新增");
+    
+    world->RegisterSystem<LODUpdateSystem>();                          // 优先级 95（LOD 更新）
+    Logger::GetInstance().Info("  ✓ LODUpdateSystem (优先级 95) - LOD 支持");
     
     world->RegisterSystem<MeshRenderSystem>(renderer.get());           // 优先级 100
     Logger::GetInstance().Info("  ✓ MeshRenderSystem (优先级 100)");
@@ -622,6 +661,17 @@ int main(int argc, char* argv[]) {
                         meshComp.castShadows = true;
                         meshComp.receiveShadows = true;
                         world->AddComponent(mikuPart, meshComp);
+                        
+                        // ==================== 添加 LOD 支持 ====================
+                        LODComponent lodComp;
+                        lodComp.config.enabled = true;
+                        // 配置 LOD 距离阈值（根据场景大小调整）
+                        // 距离 < 50: LOD0, 50-150: LOD1, 150-500: LOD2, 500-1000: LOD3, >1000: Culled
+                        lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
+                        lodComp.config.transitionDistance = 10.0f;  // 平滑过渡距离
+                        lodComp.config.boundingBoxScale = 1.0f;
+                        lodComp.config.textureStrategy = TextureLODStrategy::UseMipmap;  // 使用 mipmap
+                        world->AddComponent(mikuPart, lodComp);
                     };
                     
                     for (size_t idx = startIdx; idx < endIdx; ++idx) {
