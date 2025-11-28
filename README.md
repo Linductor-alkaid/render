@@ -110,5 +110,5 @@ MIT License
 
 ## 作者
 
-RenderEngine Team
+Linductor
 

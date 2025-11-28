@@ -11,7 +11,7 @@
 
 1. 克隆仓库
 ```bash
-git clone https://github.com/yourusername/render.git
+git clone https://github.com/Linductor-alkaid/render.git
 cd render
 ```
 

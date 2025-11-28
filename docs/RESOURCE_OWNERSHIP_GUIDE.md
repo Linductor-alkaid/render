@@ -434,6 +434,6 @@ private:
 
 ---
 
-**维护者**: RenderEngine开发团队  
+**维护者**: Linductor
 **联系方式**: 如有疑问，请参考 [CONTRIBUTING.md](./CONTRIBUTING.md)
 

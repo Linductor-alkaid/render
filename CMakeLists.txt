@@ -167,6 +167,27 @@ else()
 endif()
 
 # ============================================================================
+# meshoptimizer 配置 - 作为子项目编译
+# ============================================================================
+set(MESHOPTIMIZER_DIR ${THIRD_PARTY_DIR}/meshoptimizer)
+
+# 禁用 meshoptimizer 的一些不需要的选项
+set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "Build demo" FORCE)
+set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "Build gltfpack" FORCE)
+set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+set(MESHOPT_INSTALL OFF CACHE BOOL "Install library" FORCE)
+
+# 添加 meshoptimizer 子项目
+if(EXISTS ${MESHOPTIMIZER_DIR}/CMakeLists.txt)
+    message(STATUS "Adding meshoptimizer as subdirectory: ${MESHOPTIMIZER_DIR}")
+    add_subdirectory(${MESHOPTIMIZER_DIR} ${CMAKE_BINARY_DIR}/meshoptimizer EXCLUDE_FROM_ALL)
+    set(MESHOPTIMIZER_LIBRARY meshoptimizer)
+    message(STATUS "meshoptimizer configured as subproject")
+else()
+    message(FATAL_ERROR "meshoptimizer source not found at ${MESHOPTIMIZER_DIR}")
+endif()
+
+# ============================================================================
 # GLAD 配置（OpenGL 加载库）
 # ============================================================================
 set(GLAD_DIR ${THIRD_PARTY_DIR}/glad)
@@ -237,6 +258,7 @@ set(RENDER_SOURCES
     src/rendering/model_loader.cpp
     src/rendering/skinning.cpp
     src/rendering/geometry_preset.cpp
+    src/rendering/lod_generator.cpp
     src/ecs/sprite_animation_script_registry.cpp
 
     # Application
@@ -386,6 +408,7 @@ set(RENDER_HEADERS
     include/render/model_loader.h
     include/render/geometry_preset.h
     include/render/lod_system.h
+    include/render/lod_generator.h
     include/render/debug/sprite_animation_debugger.h
     include/render/debug/sprite_animation_debug_panel.h
 
@@ -455,6 +478,7 @@ target_link_libraries(RenderEngine
         ${SDL3_IMAGE_LIBRARY}
         ${SDL3_TTF_LIBRARY}
         ${ASSIMP_LIBRARY}
+        ${MESHOPTIMIZER_LIBRARY}
         ${OPENGL_LIBRARIES}
 )
 
@@ -510,6 +534,7 @@ message(STATUS "  SDL3_ttf Library: ${SDL3_TTF_LIBRARY}")
 message(STATUS "  Eigen3 Include: ${EIGEN3_INCLUDE_DIR}")
 message(STATUS "  Assimp Include: ${ASSIMP_INCLUDE_DIRS}")
 message(STATUS "  Assimp Library: ${ASSIMP_LIBRARY}")
+message(STATUS "  meshoptimizer Library: ${MESHOPTIMIZER_LIBRARY}")
 message(STATUS "  OpenGL Include: ${OPENGL_INCLUDE_DIR}")
 message(STATUS "  Build Examples: ${BUILD_EXAMPLES}")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")

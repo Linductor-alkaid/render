@@ -698,6 +698,6 @@ void World::Update(float deltaTime) {
 ---
 
 **最后更新**: 2025-11-05  
-**维护者**: RenderEngine开发团队
+**维护者**: Linductor
 
 

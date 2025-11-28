@@ -717,5 +717,5 @@ void AddNewResource(const std::string& name) {
 **测试**: ✅ 已通过所有测试用例  
 **文档**: ✅ 完整
 
-**维护者**: RenderEngine开发团队
+**维护者**: Linductor
 
