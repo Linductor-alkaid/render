@@ -60,6 +60,7 @@ set(EXAMPLES
     56_scene_manager_stress_test
     57_toolchain_integration_test
     58_lod_generator_test
+    59_lod_instanced_rendering_test
     60_ui_framework_showcase
     61_ui_menu_example
 )

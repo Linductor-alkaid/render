@@ -17,6 +17,7 @@
 #include "render/ecs/sprite_animation_script_registry.h"
 #include "render/debug/sprite_animation_debugger.h"
 #include "render/lod_system.h"  // LOD 系统支持
+#include "render/lod_instanced_renderer.h"  // LOD 实例化渲染器（阶段2.2）
 
 #include <utility>
 #include <algorithm>
@@ -1507,8 +1508,36 @@ void MeshRenderSystem::Update(float deltaTime) {
         }
     }
     
+    // 递增帧 ID
+    m_frameId++;
+    
     // 重置统计信息
     m_stats = RenderStats{};
+    
+    // 阶段2.2: 批量计算 LOD（如果启用实例化渲染）
+    if (m_lodInstancingEnabled && m_world) {
+        // 获取主相机位置
+        Vector3 cameraPosition = GetMainCameraPosition();
+        
+        // 获取当前帧 ID
+        uint64_t frameId = GetCurrentFrameId();
+        
+        // 查询所有有 LODComponent 的实体
+        auto entities = m_world->Query<TransformComponent, MeshRenderComponent>();
+        std::vector<EntityID> lodEntities;
+        lodEntities.reserve(entities.size());
+        
+        for (EntityID entity : entities) {
+            if (m_world->HasComponent<LODComponent>(entity)) {
+                lodEntities.push_back(entity);
+            }
+        }
+        
+        // 批量计算 LOD
+        if (!lodEntities.empty()) {
+            BatchCalculateLOD(lodEntities, cameraPosition, frameId);
+        }
+    }
     
     // 提交渲染对象
     SubmitRenderables();
@@ -1544,6 +1573,160 @@ void MeshRenderSystem::SubmitRenderables() {
             throw RENDER_WARNING(ErrorCode::NullPointer, "MeshRenderSystem: RenderState is null");
         }
         
+        // ==================== 阶段2.2: LOD 实例化渲染 ====================
+        // 如果启用 LOD 实例化渲染，使用 LODInstancedRenderer 进行批量渲染
+        if (m_lodInstancingEnabled) {
+            // 清空上一帧的实例化渲染器
+            m_lodRenderer.Clear();
+            
+            // 收集实例数据
+            for (const auto& entity : entities) {
+                auto& transform = m_world->GetComponent<TransformComponent>(entity);
+                auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
+                
+                // 检查可见性
+                if (!meshComp.visible) {
+                    continue;
+                }
+                
+                // 检查资源是否已加载
+                if (!meshComp.resourcesLoaded || !meshComp.mesh || !meshComp.material) {
+                    continue;
+                }
+                
+                // ==================== LOD 支持 ====================
+                Ref<Mesh> renderMesh = meshComp.mesh;
+                Ref<Material> renderMaterial = meshComp.material;
+                LODLevel lodLevel = LODLevel::LOD0;
+                bool usingLOD = false;
+                
+                if (m_world->HasComponent<LODComponent>(entity)) {
+                    auto& lodComp = m_world->GetComponent<LODComponent>(entity);
+                    lodLevel = lodComp.currentLOD;
+                    usingLOD = lodComp.config.enabled;
+                    
+                    // 统计 LOD 使用情况
+                    if (usingLOD) {
+                        m_stats.lodEnabledEntities++;
+                        
+                        // 如果 LOD 级别是 Culled，跳过渲染
+                        if (lodLevel == LODLevel::Culled) {
+                            m_stats.culledMeshes++;
+                            m_stats.lodCulledCount++;
+                            continue;
+                        }
+                        
+                        // 统计各 LOD 级别的使用数量
+                        switch (lodLevel) {
+                            case LODLevel::LOD0: m_stats.lod0Count++; break;
+                            case LODLevel::LOD1: m_stats.lod1Count++; break;
+                            case LODLevel::LOD2: m_stats.lod2Count++; break;
+                            case LODLevel::LOD3: m_stats.lod3Count++; break;
+                            default: break;
+                        }
+                    }
+                    
+                    // 使用 LOD 网格（如果配置了）
+                    renderMesh = lodComp.config.GetLODMesh(lodLevel, meshComp.mesh);
+                    
+                    // 使用 LOD 材质（如果配置了）
+                    renderMaterial = lodComp.config.GetLODMaterial(lodLevel, meshComp.material);
+                    
+                    // 应用 LOD 纹理（如果配置了）
+                    if (lodComp.config.textureStrategy == TextureLODStrategy::UseLODTextures) {
+                        lodComp.config.ApplyLODTextures(lodLevel, renderMaterial);
+                    }
+                }
+                
+                // 确保 LOD 网格和材质有效
+                if (!renderMesh || !renderMaterial) {
+                    continue;
+                }
+                
+                // 视锥体裁剪优化
+                Vector3 position = transform.GetPosition();
+                
+                // 从网格包围盒计算半径（使用 LOD 网格）
+                float radius = 1.0f;  // 默认半径
+                if (renderMesh) {
+                    AABB bounds = renderMesh->CalculateBounds();
+                    Vector3 size = bounds.max - bounds.min;
+                    radius = size.norm() * 0.5f;  // 包围盒对角线的一半作为半径
+                    
+                    // 考虑Transform的缩放
+                    Vector3 scale = transform.GetScale();
+                    float maxScale = std::max(std::max(scale.x(), scale.y()), scale.z());
+                    radius *= maxScale;
+                }
+                
+                if (ShouldCull(position, radius)) {
+                    m_stats.culledMeshes++;
+                    continue;
+                }
+                
+                // ✅ 检查材质是否有效
+                if (renderMaterial && !renderMaterial->IsValid()) {
+                    continue;
+                }
+                
+                // 获取世界变换矩阵
+                Matrix4 worldMatrix = transform.GetWorldMatrix();
+                
+                // 构建实例数据
+                InstanceData instanceData;
+                instanceData.worldMatrix = worldMatrix;
+                instanceData.worldPosition = transform.GetPosition();
+                instanceData.instanceID = entity.index;
+                
+                // 从组件获取实例颜色（如果支持）
+                // 注意：当前 MeshRenderComponent 可能没有 instanceColor 字段
+                // 这里使用默认白色，未来可以扩展
+                instanceData.instanceColor = Color::White();
+                instanceData.customParams = Vector4::Zero();
+                
+                // 添加到实例化渲染器
+                m_lodRenderer.AddInstance(
+                    entity,
+                    renderMesh,
+                    renderMaterial,
+                    instanceData,
+                    lodLevel
+                );
+                
+                m_stats.visibleMeshes++;
+            }
+            
+            // 渲染所有实例组
+            m_lodRenderer.RenderAll(m_renderer, renderState.get());
+            
+            // 更新统计信息（从 LODInstancedRenderer 获取）
+            auto lodStats = m_lodRenderer.GetStats();
+            m_stats.drawCalls = lodStats.drawCalls;
+            
+            // ✅ 调试信息：显示提交的数量和 LOD 统计
+            static int logCounter = 0;
+            if (logCounter++ < 10 || logCounter % 60 == 0) {
+                if (m_stats.lodEnabledEntities > 0) {
+                    Logger::GetInstance().InfoFormat(
+                        "[MeshRenderSystem] LOD Instanced: %zu groups, %zu instances, %zu draw calls | "
+                        "LOD: enabled=%zu, LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, culled=%zu",
+                        lodStats.groupCount, lodStats.totalInstances, lodStats.drawCalls,
+                        m_stats.lodEnabledEntities, m_stats.lod0Count, m_stats.lod1Count,
+                        m_stats.lod2Count, m_stats.lod3Count, m_stats.lodCulledCount
+                    );
+                } else {
+                    Logger::GetInstance().InfoFormat(
+                        "[MeshRenderSystem] LOD Instanced: %zu groups, %zu instances, %zu draw calls",
+                        lodStats.groupCount, lodStats.totalInstances, lodStats.drawCalls
+                    );
+                }
+            }
+            
+            // 提前返回，不使用传统渲染方式
+            return;
+        }
+        
+        // ==================== 传统渲染方式（向后兼容） ====================
         for (const auto& entity : entities) {
             auto& transform = m_world->GetComponent<TransformComponent>(entity);
             auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
@@ -1909,6 +2092,35 @@ bool MeshRenderSystem::ShouldCull(const Vector3& position, float radius) const {
     }
     
     return culled;
+}
+
+void MeshRenderSystem::BatchCalculateLOD(const std::vector<EntityID>& entities, 
+                                          const Vector3& cameraPosition, 
+                                          uint64_t frameId) {
+    if (!m_world || entities.empty()) {
+        return;
+    }
+    
+    // 使用 LODSelector 批量计算 LOD
+    LODSelector::BatchCalculateLOD(entities, m_world, cameraPosition, frameId);
+}
+
+Vector3 MeshRenderSystem::GetMainCameraPosition() const {
+    if (!m_cameraSystem) {
+        return Vector3::Zero();
+    }
+    
+    Camera* camera = m_cameraSystem->GetMainCameraObject();
+    if (!camera) {
+        return Vector3::Zero();
+    }
+    
+    return camera->GetPosition();
+}
+
+uint64_t MeshRenderSystem::GetCurrentFrameId() const {
+    // 返回当前帧 ID（递增）
+    return m_frameId;
 }
 
 // ============================================================

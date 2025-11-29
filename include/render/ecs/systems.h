@@ -9,6 +9,7 @@
 #include "render/model_loader.h"
 #include "render/camera.h"
 #include "render/types.h"
+#include "render/lod_instanced_renderer.h"  // LOD 实例化渲染器
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -230,6 +231,21 @@ public:
      */
     [[nodiscard]] const RenderStats& GetStats() const { return m_stats; }
     
+    /**
+     * @brief 设置是否启用 LOD 实例化渲染
+     * @param enabled 是否启用
+     * 
+     * @note 启用后，相同网格、相同材质、相同 LOD 级别的实例会批量渲染
+     * @note 可以显著减少 Draw Call，提升性能
+     */
+    void SetLODInstancingEnabled(bool enabled) { m_lodInstancingEnabled = enabled; }
+    
+    /**
+     * @brief 获取是否启用 LOD 实例化渲染
+     * @return 如果启用返回 true
+     */
+    [[nodiscard]] bool IsLODInstancingEnabled() const { return m_lodInstancingEnabled; }
+    
     void OnCreate(World* world) override;
     void OnDestroy() override;
     
@@ -237,10 +253,37 @@ private:
     void SubmitRenderables();
     bool ShouldCull(const Vector3& position, float radius) const;
     
+    /**
+     * @brief 批量计算 LOD 级别（阶段2.2）
+     * @param entities 实体列表
+     * @param cameraPosition 相机位置
+     * @param frameId 当前帧 ID
+     */
+    void BatchCalculateLOD(const std::vector<EntityID>& entities, 
+                           const Vector3& cameraPosition, 
+                           uint64_t frameId);
+    
+    /**
+     * @brief 获取主相机位置
+     * @return 相机位置，如果无法获取返回零向量
+     */
+    Vector3 GetMainCameraPosition() const;
+    
+    /**
+     * @brief 获取当前帧 ID
+     * @return 帧 ID
+     */
+    uint64_t GetCurrentFrameId() const;
+    
     Renderer* m_renderer;                       ///< 渲染器指针
     CameraSystem* m_cameraSystem = nullptr;     ///< 缓存的相机系统（避免递归锁）
     RenderStats m_stats;                        ///< 渲染统计信息
     std::vector<MeshRenderable> m_renderables;  ///< Renderable 对象池（避免每帧创建销毁）
+    
+    // LOD 实例化渲染（阶段2.2）
+    LODInstancedRenderer m_lodRenderer;         ///< LOD 实例化渲染器
+    bool m_lodInstancingEnabled = true;         ///< 是否启用 LOD 实例化渲染
+    uint64_t m_frameId = 0;                     ///< 当前帧 ID（用于 LOD 计算）
 };
 
 // ============================================================

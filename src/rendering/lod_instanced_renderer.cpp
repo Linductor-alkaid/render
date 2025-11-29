@@ -199,6 +199,15 @@ void LODInstancedRenderer::RenderGroup(
         stateCache.OnBind(group->material.get(), renderState);
     }
     
+    // ✅ 设置实例化标志（告诉着色器使用实例数据）
+    if (auto shader = group->material->GetShader()) {
+        if (auto uniformMgr = shader->GetUniformManager()) {
+            uniformMgr->SetBool("uHasInstanceData", true);
+            // ✅ 设置 uModel 为单位矩阵，因为实例矩阵已经是完整的世界变换矩阵
+            uniformMgr->SetMatrix4("uModel", Matrix4::Identity());
+        }
+    }
+    
     // ✅ 应用材质相关的渲染状态（通过 RenderState）
     if (renderState) {
         // Material::Bind 已经通过 RenderState 应用了混合模式、深度测试等
@@ -291,15 +300,20 @@ void LODInstancedRenderer::UploadInstanceMatrices(
     // 获取或创建实例化 VBO
     auto& instanceVBOs = GetOrCreateInstanceVBOs(mesh, matrices.size());
     
-    // 准备矩阵数据（按列存储，每个矩阵 4 列）
-    // Eigen::Matrix4f 是列主序存储的，可以直接使用其数据指针
+    // 准备矩阵数据（按列上传，每个矩阵 4 列）
+    // GLSL的mat4(vec4, vec4, vec4, vec4)构造函数将4个vec4参数作为列向量
+    // Eigen矩阵是列主序存储的，可以直接按列上传
     std::vector<float> matrixData;
     matrixData.reserve(matrices.size() * 16);  // 每个矩阵 16 个 float
     
     for (const auto& matrix : matrices) {
-        // Eigen 矩阵是列主序存储的，直接复制数据
-        const float* data = matrix.data();
-        matrixData.insert(matrixData.end(), data, data + 16);
+        // Eigen 矩阵是列主序存储的，GLSL mat4构造函数也期望列向量
+        // 直接按列上传：每一列作为一个vec4
+        for (int col = 0; col < 4; ++col) {
+            for (int row = 0; row < 4; ++row) {
+                matrixData.push_back(matrix(row, col));
+            }
+        }
     }
     
     // 创建或更新 VBO
@@ -440,7 +454,8 @@ void LODInstancedRenderer::SetupInstanceAttributes(
         // 注意：VBO 绑定不需要通过 RenderState，因为这是数据上传阶段
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.matrixVBO);
         
-        // 矩阵的每一列作为一个 vec4 属性（列主序）
+        // 矩阵的每一列作为一个 vec4 属性（列主序，GLSL mat4构造函数期望的格式）
+        // 数据按列存储：列0在0-3，列1在4-7，列2在8-11，列3在12-15
         for (int i = 0; i < 4; ++i) {
             GLuint location = 6 + i;  // location 6, 7, 8, 9
             glEnableVertexAttribArray(location);
