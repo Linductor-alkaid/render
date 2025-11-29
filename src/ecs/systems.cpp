@@ -1492,6 +1492,21 @@ void MeshRenderSystem::OnCreate(World* world) {
     // 需要在World::PostInitialize后手动设置，或在ShouldCull中按需获取
 }
 
+void MeshRenderSystem::SetLODInstancingEnabled(bool enabled) {
+    // 阶段2.3：同步到 Renderer 的设置
+    if (m_renderer) {
+        m_renderer->SetLODInstancingEnabled(enabled);
+    }
+}
+
+bool MeshRenderSystem::IsLODInstancingEnabled() const {
+    // 阶段2.3：从 Renderer 获取设置，而不是使用本地设置
+    if (m_renderer) {
+        return m_renderer->IsLODInstancingEnabled();
+    }
+    return false;  // 如果没有 Renderer，返回 false（禁用）
+}
+
 void MeshRenderSystem::OnDestroy() {
     m_cameraSystem = nullptr;
     System::OnDestroy();
@@ -1574,9 +1589,14 @@ void MeshRenderSystem::SubmitRenderables() {
             throw RENDER_WARNING(ErrorCode::NullPointer, "MeshRenderSystem: RenderState is null");
         }
         
-        // ==================== 阶段2.2: LOD 实例化渲染 ====================
+        // ==================== 阶段2.2 + 阶段2.3: LOD 实例化渲染 ====================
+        // 阶段2.3：从 Renderer 获取 LOD 实例化设置，而不是使用本地设置
         // 如果启用 LOD 实例化渲染，使用 LODInstancedRenderer 进行批量渲染
-        if (m_lodInstancingEnabled) {
+        // 优先级：LOD 实例化渲染 > 批处理系统
+        bool lodInstancingEnabled = IsLODInstancingEnabled();
+        bool lodInstancingAvailable = m_renderer && m_renderer->IsLODInstancingAvailable();
+        
+        if (lodInstancingEnabled && lodInstancingAvailable) {
             // 清空上一帧的实例化渲染器
             m_lodRenderer.Clear();
             
@@ -1704,6 +1724,20 @@ void MeshRenderSystem::SubmitRenderables() {
             auto lodStats = m_lodRenderer.GetStats();
             m_stats.drawCalls = lodStats.drawCalls;
             
+            // ✅ 阶段2.3：更新 Renderer 的 LOD 实例化统计信息
+            if (m_renderer) {
+                Renderer::LODInstancingStats rendererStats;
+                rendererStats.lodGroupCount = lodStats.groupCount;
+                rendererStats.totalInstances = lodStats.totalInstances;
+                rendererStats.drawCalls = lodStats.drawCalls;
+                rendererStats.lod0Instances = lodStats.lod0Instances;
+                rendererStats.lod1Instances = lodStats.lod1Instances;
+                rendererStats.lod2Instances = lodStats.lod2Instances;
+                rendererStats.lod3Instances = lodStats.lod3Instances;
+                rendererStats.culledCount = lodStats.culledCount;
+                m_renderer->UpdateLODInstancingStats(rendererStats);
+            }
+            
             // ✅ 调试信息：显示提交的数量和 LOD 统计
             static int logCounter = 0;
             if (logCounter++ < 10 || logCounter % 60 == 0) {
@@ -1725,6 +1759,11 @@ void MeshRenderSystem::SubmitRenderables() {
             
             // 提前返回，不使用传统渲染方式
             return;
+        } else if (lodInstancingEnabled && !lodInstancingAvailable) {
+            // ✅ 阶段2.3：回退机制 - LOD 实例化已启用但不可用，回退到批处理
+            Logger::GetInstance().WarningFormat(
+                "[MeshRenderSystem] LOD Instancing enabled but not available, falling back to batching mode"
+            );
         }
         
         // ==================== 传统渲染方式（向后兼容） ====================

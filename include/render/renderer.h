@@ -295,6 +295,82 @@ public:
      */
     [[nodiscard]] uint32_t GetActiveLayerMask() const;
     
+    // ========================================================================
+    // LOD 实例化渲染支持（阶段2.3：与批处理系统集成）
+    // ========================================================================
+    
+    /**
+     * @brief 设置 LOD 实例化渲染模式
+     * 
+     * 如果启用，MeshRenderSystem 将优先使用 LOD 实例化渲染
+     * 如果禁用或不可用，将回退到普通批处理模式
+     * 
+     * @param enabled 是否启用 LOD 实例化渲染
+     * 
+     * @note 阶段2.3：与批处理系统集成
+     * @note LOD 实例化渲染与 BatchingMode::GpuInstancing 兼容
+     * @note 如果 BatchingMode 为 Disabled 或 CpuMerge，LOD 实例化仍可使用
+     */
+    void SetLODInstancingEnabled(bool enabled);
+    
+    /**
+     * @brief 获取 LOD 实例化渲染是否启用
+     * @return 如果启用返回 true
+     */
+    [[nodiscard]] bool IsLODInstancingEnabled() const;
+    
+    /**
+     * @brief LOD 实例化渲染统计信息
+     * 
+     * 用于性能分析和调试
+     */
+    struct LODInstancingStats {
+        size_t lodGroupCount = 0;        ///< LOD 组数量
+        size_t totalInstances = 0;       ///< 总实例数
+        size_t drawCalls = 0;            ///< Draw Call 数量
+        size_t lod0Instances = 0;        ///< LOD0 实例数
+        size_t lod1Instances = 0;        ///< LOD1 实例数
+        size_t lod2Instances = 0;        ///< LOD2 实例数
+        size_t lod3Instances = 0;        ///< LOD3 实例数
+        size_t culledCount = 0;          ///< 剔除数量
+        
+        void Reset() {
+            lodGroupCount = 0;
+            totalInstances = 0;
+            drawCalls = 0;
+            lod0Instances = 0;
+            lod1Instances = 0;
+            lod2Instances = 0;
+            lod3Instances = 0;
+            culledCount = 0;
+        }
+    };
+    
+    /**
+     * @brief 获取 LOD 实例化渲染统计信息
+     * @return 统计信息（返回副本以保证线程安全）
+     */
+    [[nodiscard]] LODInstancingStats GetLODInstancingStats() const;
+    
+    /**
+     * @brief 更新 LOD 实例化渲染统计信息（由 MeshRenderSystem 调用）
+     * @param stats 新的统计信息
+     * 
+     * @note 此方法由 MeshRenderSystem 在每帧结束时调用
+     */
+    void UpdateLODInstancingStats(const LODInstancingStats& stats);
+    
+    /**
+     * @brief 检查 LOD 实例化渲染是否可用
+     * 
+     * 检查条件：
+     * 1. LOD 实例化渲染已启用
+     * 2. 批处理模式兼容（如果 BatchingMode 为 GpuInstancing，则兼容）
+     * 
+     * @return 如果可用返回 true
+     */
+    [[nodiscard]] bool IsLODInstancingAvailable() const;
+    
 private:
     void UpdateStats();
     
@@ -337,6 +413,10 @@ private:
     std::vector<LayerBucket> m_layerBuckets;
     size_t m_submissionCounter = 0;
     std::atomic<uint32_t> m_activeLayerMask;
+    
+    // LOD 实例化渲染（阶段2.3）
+    std::atomic<bool> m_lodInstancingEnabled;  ///< 是否启用 LOD 实例化渲染
+    LODInstancingStats m_lodInstancingStats;    ///< LOD 实例化渲染统计信息
     
     // 线程安全
     mutable std::mutex m_mutex;  // 保护所有可变状态

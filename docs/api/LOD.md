@@ -20,6 +20,8 @@ LOD（Level of Detail）系统提供基于距离的细节级别管理，通过�
 - ✅ **多资源支持**：支持网格、模型、材质和纹理的 LOD 配置
 - ✅ **统计信息**：提供详细的 LOD 使用统计，便于调试和优化
 - ✅ **向后兼容**：LOD 为可选功能，不影响现有代码
+- ✅ **实例化渲染**：支持 LOD 实例化渲染，大幅减少 Draw Call（阶段2.2）
+- ✅ **批处理集成**：与批处理系统无缝集成，支持优先级和回退机制（阶段2.3）
 
 ---
 
@@ -941,6 +943,69 @@ std::vector<EntityID> treeEntityList(treeEntities.begin(), treeEntities.end());
 ConfigureLODForEntities(world.get(), treeEntityList, sharedConfig);
 ```
 
+#### 6. 启用 LOD 实例化渲染（阶段2.2 + 阶段2.3）
+
+##### 方式 A: 使用 Renderer 级别设置（推荐，阶段2.3）
+
+```cpp
+#include "render/renderer.h"
+
+// 在 Renderer 级别启用 LOD 实例化渲染
+Renderer* renderer = Renderer::Create();
+renderer->Initialize("MyApp", 1920, 1080);
+
+// 启用 LOD 实例化渲染
+renderer->SetLODInstancingEnabled(true);
+
+// 检查是否可用
+if (renderer->IsLODInstancingAvailable()) {
+    std::cout << "LOD 实例化渲染可用" << std::endl;
+}
+
+// 获取统计信息
+auto stats = renderer->GetLODInstancingStats();
+std::cout << "LOD 组数: " << stats.lodGroupCount << std::endl;
+std::cout << "总实例数: " << stats.totalInstances << std::endl;
+std::cout << "Draw Calls: " << stats.drawCalls << std::endl;
+```
+
+##### 方式 B: 使用 MeshRenderSystem 设置（向后兼容）
+
+```cpp
+#include "render/ecs/systems.h"
+
+// 获取 MeshRenderSystem
+auto* meshSystem = world->GetSystem<MeshRenderSystem>();
+if (meshSystem) {
+    // 阶段2.3：此方法会同步到 Renderer 的设置
+    meshSystem->SetLODInstancingEnabled(true);
+    
+    // 检查是否启用（从 Renderer 获取）
+    if (meshSystem->IsLODInstancingEnabled()) {
+        std::cout << "LOD 实例化渲染已启用" << std::endl;
+    }
+}
+```
+
+##### 与批处理模式集成（阶段2.3）
+
+```cpp
+// LOD 实例化渲染可以与任何批处理模式共存
+renderer->SetBatchingMode(BatchingMode::GpuInstancing);  // 或 Disabled, CpuMerge
+renderer->SetLODInstancingEnabled(true);
+
+// LOD 实例化渲染优先级高于批处理系统
+// 如果 LOD 实例化可用，将优先使用 LOD 实例化渲染
+// 如果不可用，将回退到批处理模式
+
+// 检查兼容性
+if (renderer->IsLODInstancingAvailable()) {
+    std::cout << "LOD 实例化渲染可用，将优先使用" << std::endl;
+} else {
+    std::cout << "LOD 实例化不可用，将使用批处理模式" << std::endl;
+}
+```
+
 ---
 
 ## 性能优化建议
@@ -1061,6 +1126,65 @@ if (meshSystem) {
 LOD: enabled=1052, LOD0=200, LOD1=300, LOD2=250, LOD3=150, culled=152
 ```
 
+### Renderer 级别的 LOD 实例化统计（阶段2.3）
+
+`Renderer` 提供 LOD 实例化渲染的统计信息，用于性能分析和调试：
+
+```cpp
+struct LODInstancingStats {
+    size_t lodGroupCount = 0;        ///< LOD 组数量（按网格、材质、LOD级别分组）
+    size_t totalInstances = 0;       ///< 总实例数
+    size_t drawCalls = 0;            ///< Draw Call 数量（每个组一次）
+    size_t lod0Instances = 0;        ///< LOD0 实例数
+    size_t lod1Instances = 0;        ///< LOD1 实例数
+    size_t lod2Instances = 0;        ///< LOD2 实例数
+    size_t lod3Instances = 0;        ///< LOD3 实例数
+    size_t culledCount = 0;          ///< 剔除数量
+};
+```
+
+**获取统计信息**:
+
+```cpp
+#include "render/renderer.h"
+
+Renderer* renderer = ...;
+
+// 获取 LOD 实例化统计信息
+auto stats = renderer->GetLODInstancingStats();
+
+std::cout << "LOD 组数: " << stats.lodGroupCount << std::endl;
+std::cout << "总实例数: " << stats.totalInstances << std::endl;
+std::cout << "Draw Calls: " << stats.drawCalls << std::endl;
+std::cout << "LOD0: " << stats.lod0Instances << std::endl;
+std::cout << "LOD1: " << stats.lod1Instances << std::endl;
+std::cout << "LOD2: " << stats.lod2Instances << std::endl;
+std::cout << "LOD3: " << stats.lod3Instances << std::endl;
+
+// 计算性能提升
+if (stats.totalInstances > 0 && stats.drawCalls > 0) {
+    float reduction = (1.0f - static_cast<float>(stats.drawCalls) / stats.totalInstances) * 100.0f;
+    std::cout << "Draw Call 减少: " << reduction << "%" << std::endl;
+}
+```
+
+**示例输出**:
+
+```
+LOD 组数: 2
+总实例数: 100
+Draw Calls: 2
+LOD0: 47
+LOD1: 53
+Draw Call 减少: 98%
+```
+
+**说明**:
+- `lodGroupCount`: 按网格、材质、LOD级别分组的组数，每个组对应一次 Draw Call
+- `totalInstances`: 所有实例的总数
+- `drawCalls`: 实际的 Draw Call 数量（通常远小于实例数）
+- 性能提升：100个实例仅需2个 Draw Call，减少了98%的 Draw Call
+
 ---
 
 ## 常见问题
@@ -1132,6 +1256,49 @@ world->RemoveComponent<LODComponent>(entity);
 
 A: 不是。如果没有配置 LOD 资源，系统会使用原始资源。只有配置了 LOD 资源时才会使用。
 
+### Q: 如何使用 LOD 实例化渲染？
+
+A: 在 Renderer 级别启用 LOD 实例化渲染（阶段2.3）：
+
+```cpp
+// 启用 LOD 实例化渲染
+renderer->SetLODInstancingEnabled(true);
+
+// 检查是否可用
+if (renderer->IsLODInstancingAvailable()) {
+    // LOD 实例化渲染可用，将自动使用
+}
+```
+
+**优势**:
+- 大幅减少 Draw Call（100个实例可能只需2-10个 Draw Call）
+- 自动按 LOD 级别分组，相同 LOD 级别的实例批量渲染
+- 与批处理系统兼容，可以共存
+
+**注意**:
+- LOD 实例化渲染优先级高于批处理系统
+- 如果 LOD 实例化不可用，会自动回退到批处理模式
+- 需要实体配置 `LODComponent` 才能使用 LOD 实例化渲染
+
+### Q: LOD 实例化渲染与批处理模式的关系？
+
+A: LOD 实例化渲染是独立系统，可以与任何批处理模式共存（阶段2.3）：
+
+```cpp
+// 可以同时设置批处理模式和 LOD 实例化
+renderer->SetBatchingMode(BatchingMode::GpuInstancing);
+renderer->SetLODInstancingEnabled(true);
+
+// 优先级：LOD 实例化渲染 > 批处理系统
+// 如果 LOD 实例化可用，优先使用 LOD 实例化渲染
+// 如果不可用，回退到批处理模式
+```
+
+**兼容性**:
+- `BatchingMode::Disabled`: LOD 实例化仍可使用
+- `BatchingMode::CpuMerge`: LOD 实例化仍可使用
+- `BatchingMode::GpuInstancing`: LOD 实例化仍可使用，两者可以协同工作
+
 ### Q: LOD 不同级别的网格是如何得到的？中等级别是否降低了网格数量？
 
 A: 是的，LOD 不同级别通过降低网格复杂度来实现：
@@ -1191,6 +1358,100 @@ world->AddComponent<LODComponent>(entity, lodComp);
 
 ---
 
+## LOD 实例化渲染（阶段2.2 + 阶段2.3）
+
+### 概述
+
+LOD 实例化渲染将相同网格、相同材质、相同 LOD 级别的实例分组，使用 GPU 实例化渲染，大幅减少 Draw Call。
+
+**性能提升**:
+- 100个实例：从100个 Draw Call 减少到2-10个 Draw Call
+- 1000个实例：从1000个 Draw Call 减少到10-50个 Draw Call
+- 性能提升：**20-100倍** Draw Call 减少
+
+### Renderer API（阶段2.3）
+
+```cpp
+class Renderer {
+public:
+    // 设置 LOD 实例化渲染模式
+    void SetLODInstancingEnabled(bool enabled);
+    
+    // 获取是否启用
+    bool IsLODInstancingEnabled() const;
+    
+    // 检查是否可用
+    bool IsLODInstancingAvailable() const;
+    
+    // 获取统计信息
+    struct LODInstancingStats {
+        size_t lodGroupCount = 0;
+        size_t totalInstances = 0;
+        size_t drawCalls = 0;
+        size_t lod0Instances = 0;
+        size_t lod1Instances = 0;
+        size_t lod2Instances = 0;
+        size_t lod3Instances = 0;
+        size_t culledCount = 0;
+    };
+    
+    LODInstancingStats GetLODInstancingStats() const;
+};
+```
+
+### 使用示例
+
+```cpp
+// 1. 启用 LOD 实例化渲染
+renderer->SetLODInstancingEnabled(true);
+
+// 2. 检查是否可用
+if (renderer->IsLODInstancingAvailable()) {
+    std::cout << "LOD 实例化渲染可用" << std::endl;
+}
+
+// 3. 获取统计信息
+auto stats = renderer->GetLODInstancingStats();
+std::cout << "LOD 组数: " << stats.lodGroupCount << std::endl;
+std::cout << "总实例数: " << stats.totalInstances << std::endl;
+std::cout << "Draw Calls: " << stats.drawCalls << std::endl;
+```
+
+### 与批处理系统集成（阶段2.3）
+
+LOD 实例化渲染可以与任何批处理模式共存：
+
+```cpp
+// 设置批处理模式
+renderer->SetBatchingMode(BatchingMode::GpuInstancing);
+
+// 启用 LOD 实例化渲染
+renderer->SetLODInstancingEnabled(true);
+
+// 优先级：LOD 实例化渲染 > 批处理系统
+// 如果 LOD 实例化可用，优先使用
+// 如果不可用，回退到批处理模式
+```
+
+**兼容性**:
+- ✅ `BatchingMode::Disabled`: LOD 实例化仍可使用
+- ✅ `BatchingMode::CpuMerge`: LOD 实例化仍可使用
+- ✅ `BatchingMode::GpuInstancing`: LOD 实例化仍可使用，两者可以协同工作
+
+### 工作原理
+
+1. **分组**：按网格、材质、LOD级别分组
+2. **收集**：收集每个组的实例数据（变换矩阵、颜色等）
+3. **上传**：上传实例数据到 GPU（VBO）
+4. **渲染**：使用 `DrawInstanced` 批量渲染
+
+**分组示例**:
+- 组1：网格A + 材质M + LOD0 → 47个实例 → 1个 Draw Call
+- 组2：网格A + 材质M + LOD1 → 53个实例 → 1个 Draw Call
+- 总计：100个实例，2个 Draw Call（减少98%）
+
+---
+
 ## 相关 API 和文档
 
 - **[LODGenerator API](LODGenerator.md)** - LOD 网格和纹理生成器
@@ -1207,16 +1468,26 @@ world->AddComponent<LODComponent>(entity, lodComp);
 - [Mesh API](Mesh.md) - 网格系统
 - [Model API](Model.md) - 模型系统
 - [Material API](Material.md) - 材质系统
+- [Renderer API](Renderer.md) - 渲染器 API（包含 LOD 实例化渲染支持）
 - [ECS Integration](../ECS_INTEGRATION.md) - ECS 系统集成指南
 - [LOD 优化方案](../todolists/LOD_Instanced_Rendering_Optimization.md) - LOD 系统设计文档
 
 ---
 
-**文档版本**: v1.2  
+**文档版本**: v1.3  
 **最后更新**: 2025-11-29  
 **对应代码版本**: RenderEngine v1.0.0
 
 **更新历史**:
+- **v1.3** (2025-11-29): 添加阶段2.3 - LOD 实例化渲染与批处理系统集成
+  - 添加 Renderer 级别的 LOD 实例化渲染 API 文档
+  - 添加 `SetLODInstancingEnabled()`、`IsLODInstancingEnabled()`、`IsLODInstancingAvailable()` 方法说明
+  - 添加 `LODInstancingStats` 结构体和 `GetLODInstancingStats()` 方法说明
+  - 添加"LOD 实例化渲染"章节，包含工作原理、使用示例和性能提升说明
+  - 添加"Renderer 级别的 LOD 实例化统计"章节
+  - 更新"使用示例"章节，添加启用 LOD 实例化渲染的示例（方式A和方式B）
+  - 更新"常见问题"章节，添加"如何使用 LOD 实例化渲染"和"LOD 实例化渲染与批处理模式的关系"问题
+  - 更新"相关 API 和文档"部分，添加 Renderer API 链接
 - **v1.2** (2025-11-29): 更新 LOD 切换逻辑说明
   - 更新平滑过渡逻辑说明，明确当前版本会在距离跨过阈值时立即切换
   - 更新 `transitionDistance` 说明，说明当前保留但未用于切换控制

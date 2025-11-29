@@ -585,7 +585,8 @@ Renderer::Renderer()
     , m_fpsUpdateTimer(0.0f)
     , m_frameCount(0)
     , m_batchingMode(BatchingMode::Disabled)
-    , m_activeLayerMask(0xFFFFFFFFu) {
+    , m_activeLayerMask(0xFFFFFFFFu)
+    , m_lodInstancingEnabled(true) {  // 默认启用 LOD 实例化渲染
     
     // 注意：构造阶段尚未被其他线程访问
     m_context = std::make_shared<OpenGLContext>();
@@ -1204,6 +1205,48 @@ void Renderer::SetActiveLayerMask(uint32_t mask) {
 
 uint32_t Renderer::GetActiveLayerMask() const {
     return m_activeLayerMask.load(std::memory_order_relaxed);
+}
+
+// ========================================================================
+// LOD 实例化渲染支持（阶段2.3：与批处理系统集成）
+// ========================================================================
+
+void Renderer::SetLODInstancingEnabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_lodInstancingEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool Renderer::IsLODInstancingEnabled() const {
+    return m_lodInstancingEnabled.load(std::memory_order_relaxed);
+}
+
+Renderer::LODInstancingStats Renderer::GetLODInstancingStats() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_lodInstancingStats;
+}
+
+void Renderer::UpdateLODInstancingStats(const LODInstancingStats& stats) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_lodInstancingStats = stats;
+}
+
+bool Renderer::IsLODInstancingAvailable() const {
+    // 检查 LOD 实例化渲染是否可用
+    // 条件：
+    // 1. LOD 实例化渲染已启用
+    // 2. 批处理模式兼容（LOD 实例化可以与任何批处理模式共存）
+    //    注意：LOD 实例化渲染是独立的系统，不依赖批处理模式
+    //    但如果批处理模式为 GpuInstancing，则两者可以协同工作
+    
+    if (!IsLODInstancingEnabled()) {
+        return false;
+    }
+    
+    // LOD 实例化渲染可以与任何批处理模式共存
+    // 如果批处理模式为 GpuInstancing，两者可以协同工作
+    // 如果批处理模式为 Disabled 或 CpuMerge，LOD 实例化仍可使用
+    // （LOD 实例化渲染是独立的系统，有自己的实例化机制）
+    return true;
 }
 
 void Renderer::ApplyLayerOverrides(const RenderLayerDescriptor& descriptor,

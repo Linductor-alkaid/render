@@ -233,18 +233,25 @@ public:
     
     /**
      * @brief 设置是否启用 LOD 实例化渲染
+     * 
+     * @deprecated 阶段2.3：请使用 Renderer::SetLODInstancingEnabled() 代替
+     * 此方法保留用于向后兼容，但会同步到 Renderer 的设置
+     * 
      * @param enabled 是否启用
      * 
      * @note 启用后，相同网格、相同材质、相同 LOD 级别的实例会批量渲染
      * @note 可以显著减少 Draw Call，提升性能
      */
-    void SetLODInstancingEnabled(bool enabled) { m_lodInstancingEnabled = enabled; }
+    void SetLODInstancingEnabled(bool enabled);
     
     /**
      * @brief 获取是否启用 LOD 实例化渲染
+     * 
+     * 阶段2.3：从 Renderer 获取设置，而不是使用本地设置
+     * 
      * @return 如果启用返回 true
      */
-    [[nodiscard]] bool IsLODInstancingEnabled() const { return m_lodInstancingEnabled; }
+    [[nodiscard]] bool IsLODInstancingEnabled() const;
     
     void OnCreate(World* world) override;
     void OnDestroy() override;
@@ -280,9 +287,10 @@ private:
     RenderStats m_stats;                        ///< 渲染统计信息
     std::vector<MeshRenderable> m_renderables;  ///< Renderable 对象池（避免每帧创建销毁）
     
-    // LOD 实例化渲染（阶段2.2）
+    // LOD 实例化渲染（阶段2.2 + 阶段2.3）
     LODInstancedRenderer m_lodRenderer;         ///< LOD 实例化渲染器
-    bool m_lodInstancingEnabled = true;         ///< 是否启用 LOD 实例化渲染
+    // 注意：阶段2.3后，m_lodInstancingEnabled 不再使用
+    // 改为从 Renderer 获取设置（通过 IsLODInstancingEnabled()）
     uint64_t m_frameId = 0;                     ///< 当前帧 ID（用于 LOD 计算）
 };
 

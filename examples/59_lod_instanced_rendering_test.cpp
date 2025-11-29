@@ -1,12 +1,18 @@
 /**
  * @file 59_lod_instanced_rendering_test.cpp
- * @brief LOD 实例化渲染测试 - 测试阶段2.2的LOD实例化渲染功能
+ * @brief LOD 实例化渲染测试 - 测试阶段2.2和阶段2.3的LOD实例化渲染功能
  * 
  * 测试内容：
  * 1. 创建大量相同网格的实体（用于测试实例化）
  * 2. 配置LOD组件，自动计算LOD级别
  * 3. 启用LOD实例化渲染，验证批量渲染效果
  * 4. 对比启用/禁用实例化渲染的性能差异
+ * 
+ * 阶段2.3新增测试：
+ * 5. 测试Renderer级别的LOD实例化设置
+ * 6. 测试LOD实例化统计信息获取
+ * 7. 测试兼容性检查
+ * 8. 测试与批处理模式的交互
  */
 
 #include <render/renderer.h>
@@ -49,6 +55,9 @@ struct SceneConfig {
     int instanceCount = 100;  // 实例数量
     float gridSize = 30.0f;   // 网格大小（增大以确保可见）
     bool enableInstancing = true;  // 是否启用实例化渲染
+    
+    // 阶段2.3：批处理模式测试
+    BatchingMode batchingMode = BatchingMode::GpuInstancing;  // 默认使用GPU实例化
 };
 
 } // namespace
@@ -79,6 +88,9 @@ int main(int argc, char* argv[]) {
         sceneConfig.instanceCount,
         sceneConfig.enableInstancing ? "enabled" : "disabled"
     );
+    
+    // 阶段2.3：测试Renderer级别的LOD实例化设置
+    Logger::GetInstance().Info("[LODInstancedRenderingTest] === Phase 2.3: Testing Renderer-level LOD Instancing ===");
 
     Renderer* renderer = Renderer::Create();
     if (!renderer->Initialize("LOD Instanced Rendering Test", 1600, 900)) {
@@ -87,6 +99,28 @@ int main(int argc, char* argv[]) {
     }
     renderer->SetClearColor(Color(0.05f, 0.05f, 0.1f, 1.0f));  // 深蓝色背景，与红色网格形成对比
     renderer->SetVSync(true);
+    
+    // 阶段2.3：设置批处理模式
+    renderer->SetBatchingMode(sceneConfig.batchingMode);
+    Logger::GetInstance().InfoFormat(
+        "[LODInstancedRenderingTest] Batching mode set to: %d (0=Disabled, 1=CpuMerge, 2=GpuInstancing)",
+        static_cast<int>(sceneConfig.batchingMode)
+    );
+    
+    // 阶段2.3：测试Renderer级别的LOD实例化设置
+    renderer->SetLODInstancingEnabled(sceneConfig.enableInstancing);
+    Logger::GetInstance().InfoFormat(
+        "[LODInstancedRenderingTest] Renderer LOD instancing: %s",
+        renderer->IsLODInstancingEnabled() ? "enabled" : "disabled"
+    );
+    
+    // 阶段2.3：测试兼容性检查
+    bool lodInstancingAvailable = renderer->IsLODInstancingAvailable();
+    Logger::GetInstance().InfoFormat(
+        "[LODInstancedRenderingTest] LOD instancing available: %s",
+        lodInstancingAvailable ? "yes" : "no"
+    );
+    
     if (auto context = renderer->GetContext()) {
         SDL_SetWindowRelativeMouseMode(context->GetWindow(), true);
     }
@@ -182,10 +216,28 @@ int main(int argc, char* argv[]) {
 
     world->PostInitialize();
     
-    // 获取 MeshRenderSystem 并配置实例化渲染
+    // 获取 MeshRenderSystem
     auto* meshRenderSystem = world->GetSystem<MeshRenderSystem>();
+    
+    // 阶段2.3：MeshRenderSystem现在从Renderer获取设置，不需要单独设置
+    // 但为了向后兼容，仍然可以调用（会同步到Renderer）
     if (meshRenderSystem) {
-        meshRenderSystem->SetLODInstancingEnabled(sceneConfig.enableInstancing);
+        // 验证MeshRenderSystem的设置与Renderer一致
+        bool meshSystemEnabled = meshRenderSystem->IsLODInstancingEnabled();
+        bool rendererEnabled = renderer->IsLODInstancingEnabled();
+        if (meshSystemEnabled != rendererEnabled) {
+            Logger::GetInstance().WarningFormat(
+                "[LODInstancedRenderingTest] Warning: MeshRenderSystem and Renderer settings mismatch! "
+                "MeshSystem=%s, Renderer=%s",
+                meshSystemEnabled ? "enabled" : "disabled",
+                rendererEnabled ? "enabled" : "disabled"
+            );
+        } else {
+            Logger::GetInstance().InfoFormat(
+                "[LODInstancedRenderingTest] MeshRenderSystem and Renderer settings synchronized: %s",
+                meshSystemEnabled ? "enabled" : "disabled"
+            );
+        }
     }
 
     // 创建相机（使用与58测试相同的初始化方式）
@@ -310,6 +362,7 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: ESC to exit");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: WASD 前后左右, Q/E 上下, Shift 加速");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: Tab 捕获/释放鼠标, I 切换实例化渲染");
+    Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: B 切换批处理模式 (阶段2.3)");
 
     bool running = true;
     Uint64 prevTicks = SDL_GetTicks();
@@ -345,11 +398,47 @@ int main(int argc, char* argv[]) {
                 }
             }
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_I) {
+                // 阶段2.3：使用Renderer级别的设置
                 sceneConfig.enableInstancing = !sceneConfig.enableInstancing;
-                meshRenderSystem->SetLODInstancingEnabled(sceneConfig.enableInstancing);
+                renderer->SetLODInstancingEnabled(sceneConfig.enableInstancing);
+                
+                // 验证MeshRenderSystem同步了设置
+                bool meshSystemEnabled = meshRenderSystem ? meshRenderSystem->IsLODInstancingEnabled() : false;
+                bool rendererEnabled = renderer->IsLODInstancingEnabled();
+                
                 Logger::GetInstance().InfoFormat(
-                    "[LODInstancedRenderingTest] Instancing %s",
-                    sceneConfig.enableInstancing ? "enabled" : "disabled"
+                    "[LODInstancedRenderingTest] LOD Instancing %s (Renderer: %s, MeshSystem: %s, Available: %s)",
+                    sceneConfig.enableInstancing ? "enabled" : "disabled",
+                    rendererEnabled ? "enabled" : "disabled",
+                    meshSystemEnabled ? "enabled" : "disabled",
+                    renderer->IsLODInstancingAvailable() ? "yes" : "no"
+                );
+            }
+            
+            // 阶段2.3：切换批处理模式
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_B) {
+                // 循环切换批处理模式
+                switch (sceneConfig.batchingMode) {
+                    case BatchingMode::Disabled:
+                        sceneConfig.batchingMode = BatchingMode::CpuMerge;
+                        break;
+                    case BatchingMode::CpuMerge:
+                        sceneConfig.batchingMode = BatchingMode::GpuInstancing;
+                        break;
+                    case BatchingMode::GpuInstancing:
+                        sceneConfig.batchingMode = BatchingMode::Disabled;
+                        break;
+                }
+                renderer->SetBatchingMode(sceneConfig.batchingMode);
+                
+                // 检查LOD实例化是否仍然可用
+                bool lodInstancingAvailable = renderer->IsLODInstancingAvailable();
+                
+                Logger::GetInstance().InfoFormat(
+                    "[LODInstancedRenderingTest] Batching mode: %d (0=Disabled, 1=CpuMerge, 2=GpuInstancing), "
+                    "LOD Instancing available: %s",
+                    static_cast<int>(sceneConfig.batchingMode),
+                    lodInstancingAvailable ? "yes" : "no"
                 );
             }
             if (mouseCaptured && event.type == SDL_EVENT_MOUSE_MOTION) {
@@ -439,15 +528,21 @@ int main(int argc, char* argv[]) {
         const auto& stats = meshRenderSystem->GetStats();
         perfStats.drawCalls = stats.drawCalls;
         perfStats.visibleMeshes = stats.visibleMeshes;
+        
+        // 阶段2.3：获取Renderer级别的LOD实例化统计信息
+        auto lodInstancingStats = renderer->GetLODInstancingStats();
 
         // 前10帧或每60帧输出一次性能统计
         if (perfStats.frameCount <= 10 || perfStats.frameCount % 60 == 0) {
             float fps = 1.0f / perfStats.avgFrameTime;
+            
+            // 阶段2.3：输出Renderer级别的LOD实例化统计信息
             Logger::GetInstance().InfoFormat(
                 "[LODInstancedRenderingTest] Frame %d | FPS: %.1f | Frame: %.3fms | "
                 "Draw Calls: %zu | Visible: %zu | Culled: %zu | "
                 "LOD: enabled=%zu, LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, culled=%zu | "
-                "Instancing: %s",
+                "Instancing: %s | Batching: %d | "
+                "LOD Stats (Renderer): groups=%zu, instances=%zu, drawCalls=%zu",
                 perfStats.frameCount,
                 fps,
                 perfStats.avgFrameTime * 1000.0f,
@@ -460,7 +555,11 @@ int main(int argc, char* argv[]) {
                 stats.lod2Count,
                 stats.lod3Count,
                 stats.lodCulledCount,
-                sceneConfig.enableInstancing ? "ON" : "OFF"
+                sceneConfig.enableInstancing ? "ON" : "OFF",
+                static_cast<int>(renderer->GetBatchingMode()),
+                lodInstancingStats.lodGroupCount,
+                lodInstancingStats.totalInstances,
+                lodInstancingStats.drawCalls
             );
             
             // 第一帧输出详细信息
@@ -472,6 +571,31 @@ int main(int argc, char* argv[]) {
                     perfStats.visibleMeshes,
                     stats.culledMeshes,
                     perfStats.drawCalls
+                );
+                
+                // 阶段2.3：输出Renderer级别的LOD实例化详细统计
+                Logger::GetInstance().InfoFormat(
+                    "[LODInstancedRenderingTest] Phase 2.3 - Renderer LOD Instancing Stats: "
+                    "Groups=%zu, Total Instances=%zu, Draw Calls=%zu, "
+                    "LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, Culled=%zu",
+                    lodInstancingStats.lodGroupCount,
+                    lodInstancingStats.totalInstances,
+                    lodInstancingStats.drawCalls,
+                    lodInstancingStats.lod0Instances,
+                    lodInstancingStats.lod1Instances,
+                    lodInstancingStats.lod2Instances,
+                    lodInstancingStats.lod3Instances,
+                    lodInstancingStats.culledCount
+                );
+                
+                // 阶段2.3：验证兼容性
+                bool lodInstancingAvailable = renderer->IsLODInstancingAvailable();
+                Logger::GetInstance().InfoFormat(
+                    "[LODInstancedRenderingTest] Phase 2.3 - Compatibility Check: "
+                    "LOD Instancing Enabled=%s, Available=%s, Batching Mode=%d",
+                    renderer->IsLODInstancingEnabled() ? "yes" : "no",
+                    lodInstancingAvailable ? "yes" : "no",
+                    static_cast<int>(renderer->GetBatchingMode())
                 );
                 
                 if (perfStats.visibleMeshes == 0 && stats.culledMeshes == 0) {
