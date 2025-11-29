@@ -46,6 +46,8 @@ G:\myproject\render/
 │   │   ├── skinning.cpp            # 骨骼动画系统
 │   │   ├── geometry_preset.cpp     # 预设几何体
 │   │   ├── framebuffer.cpp         # 帧缓冲
+│   │   ├── lod_generator.cpp       # LOD网格生成器
+│   │   ├── lod_instanced_renderer.cpp # LOD实例化渲染器
 │   │   └── lighting/               # 光照系统
 │   │       ├── light.cpp           # 光源实现
 │   │       └── light_manager.cpp    # 光源管理器
@@ -134,6 +136,9 @@ G:\myproject\render/
 │       ├── renderer.h              # 主渲染器接口
 │       ├── types.h                 # 基础类型定义
 │       ├── math_utils.h            # 数学工具函数
+│       ├── lod_system.h            # LOD系统（组件、配置、选择器）
+│       ├── lod_generator.h         # LOD网格生成器
+│       ├── lod_instanced_renderer.h # LOD实例化渲染器
 │       ├── *.h                     # 其他各模块头文件
 │
 ├── third_party/                     # 第三方库
@@ -186,6 +191,8 @@ RenderEngine 采用清晰的分层架构，从底层到上层依次为：
 - **EntityManager**: 实体生命周期管理
 - **ComponentRegistry**: 组件类型注册和管理
 - **Systems**: 各功能系统（渲染、动画、物理等）
+- **LODComponent**: LOD组件，提供基于距离的细节级别管理，与TransformComponent和MeshRenderComponent配合使用
+- **MeshRenderSystem**: 集成LOD计算的渲染系统，每帧批量计算LOD级别并选择合适的LOD资源
 
 #### 1.5 应用框架层
 - **SceneManager**: 场景管理，支持场景切换和过渡
@@ -294,6 +301,13 @@ World
 - **实例化渲染**: 批量渲染相同几何体
 - **视锥剔除**: 只渲染可见对象
 - **LOD系统**: 距离相关的细节层次
+  - **自动LOD计算**: 基于相机距离自动选择合适的LOD级别
+  - **批量LOD更新**: 批量处理多个实体的LOD级别计算
+  - **网格简化**: 使用meshoptimizer库自动生成不同LOD级别的网格
+  - **纹理LOD**: 支持使用mipmap实现纹理的自动LOD
+  - **实例化LOD渲染**: 支持GPU实例化与LOD系统的集成，高效渲染大量实例
+  - **平滑切换**: 通过距离阈值控制LOD切换的平滑度
+  - **与剔除系统集成**: LOD计算与远距离剔除保持一致，每帧执行
 
 #### 4.2 内存优化
 - **对象池**: 频繁创建销毁的对象使用池管理
@@ -445,12 +459,92 @@ struct SpriteAnimationComponent {
 - **材质状态**: 缓存和复用材质状态
 - **渲染状态**: 高效的状态切换机制
 
+#### 3.3 LOD系统
+- **网格简化**: 使用meshoptimizer库自动生成不同LOD级别的网格
+- **批量LOD生成**: 支持批量生成多个网格或模型的LOD级别
+- **文件保存/加载**: 支持将LOD网格保存为OBJ文件，运行时直接加载
+- **纹理LOD**: 支持使用mipmap实现纹理的自动LOD，无需手动准备多个纹理文件
+
+### 4. LOD系统架构
+
+#### 4.1 LOD系统组成
+
+**核心组件**:
+- **LODComponent**: ECS组件，附加到实体上，提供LOD配置和当前LOD级别
+- **LODConfig**: LOD配置结构，定义距离阈值、LOD资源（网格、模型、材质、纹理）
+- **LODSelector**: LOD选择器类，负责批量计算实体到相机的距离并选择LOD级别
+- **LODGenerator**: LOD网格生成器，使用meshoptimizer库自动生成不同LOD级别的简化网格
+- **LODInstancedRenderer**: LOD实例化渲染器，支持GPU实例化与LOD系统的集成
+
+**文件位置**:
+- `include/render/lod_system.h`: LOD系统核心（组件、配置、选择器）
+- `include/render/lod_generator.h`: LOD网格生成器
+- `include/render/lod_instanced_renderer.h`: LOD实例化渲染器
+- `src/ecs/systems.cpp`: MeshRenderSystem集成LOD计算
+- `src/rendering/lod_generator.cpp`: LOD生成器实现
+- `src/rendering/lod_instanced_renderer.cpp`: LOD实例化渲染器实现
+
+#### 4.2 LOD工作流程
+
+1. **LOD资源准备阶段**:
+   - 使用`LODGenerator`从源网格自动生成LOD1、LOD2、LOD3级别的简化网格
+   - 或手动加载不同LOD级别的网格文件
+   - 配置纹理LOD（使用mipmap或不同分辨率的纹理）
+
+2. **LOD配置阶段**:
+   - 为实体添加`LODComponent`
+   - 配置距离阈值（如`{50.0f, 150.0f, 500.0f, 1000.0f}`）
+   - 设置LOD资源（网格、材质、纹理）
+
+3. **运行时LOD计算**:
+   - `MeshRenderSystem`每帧调用`BatchCalculateLOD`批量计算LOD级别
+   - 使用与远距离剔除相同的位置获取方式和距离计算
+   - 当距离跨过阈值时立即切换LOD级别，与远距离剔除保持一致
+
+4. **渲染阶段**:
+   - 根据`LODComponent.currentLOD`选择对应的LOD资源（网格、材质）
+   - 支持实例化渲染时按LOD级别分组，提升渲染效率
+
+#### 4.3 LOD生成器功能
+
+**网格简化**:
+- 支持目标三角形数量模式（推荐）和目标误差模式
+- 自动计算推荐的简化参数（LOD1保留50%，LOD2保留25%，LOD3保留10%）
+- 支持属性保留（法线、纹理坐标、颜色等）
+- 支持边界锁定、正则化等高级选项
+
+**模型支持**:
+- 支持为整个Model及其所有部分生成LOD级别
+- 支持批量处理多个网格的LOD级别
+- 支持文件保存/加载，预生成LOD后运行时直接加载
+
+**纹理LOD**:
+- 支持使用mipmap实现纹理的自动LOD（推荐）
+- 自动为材质的所有纹理配置mipmap
+- 无需手动准备多个纹理文件
+
+#### 4.4 LOD系统集成
+
+**ECS集成**:
+- `LODComponent`作为ECS组件，与`TransformComponent`和`MeshRenderComponent`配合使用
+- `MeshRenderSystem`自动集成LOD计算和LOD资源选择
+- 支持实例化渲染时按LOD级别分组渲染
+
+**性能优化**:
+- 批量计算多个实体的LOD级别，减少重复计算
+- 每帧都执行LOD计算，确保实时响应相机位置变化
+- 与远距离剔除使用相同的位置获取方式和计算逻辑
+- 支持LOD级别的剔除（超出最大距离时）
+
 ## 总结
 
 RenderEngine 是一个设计精良的现代渲染引擎，具有以下特点：
 
 1. **架构清晰**: 分层设计，职责明确
 2. **性能优化**: 多种优化策略，适合实时渲染
+   - LOD系统：自动网格简化和纹理LOD，显著优化渲染性能
+   - 实例化渲染：支持GPU实例化与LOD系统的集成
+   - 批量计算：批量处理多个实体的LOD级别
 3. **扩展性强**: 模块化设计，易于添加新功能
 4. **代码质量高**: 现代C++实践，内存安全
 5. **文档完善**: 详细的文档和示例

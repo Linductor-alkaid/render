@@ -135,7 +135,7 @@ LOD 级别距离阈值（从近到远）。例如 `{50.0f, 150.0f, 500.0f, 1000.
 每个 LOD 级别对应的纹理集合。仅在 `textureStrategy == UseLODTextures` 时使用。
 
 #### transitionDistance
-LOD 切换的平滑过渡距离（单位：世界单位）。只有当距离变化超过此阈值时才会切换 LOD，避免频繁切换。
+LOD 切换的平滑过渡距离（单位：世界单位）。**注意**：当前版本中，LOD 级别会在距离跨过阈值时立即切换，此字段保留用于未来可能的平滑过渡功能。切换基于距离阈值，与远距离剔除保持一致。
 
 #### boundingBoxScale
 包围盒缩放因子，用于考虑对象大小的距离计算。较大的对象应该使用更大的距离阈值。
@@ -336,7 +336,8 @@ static void BatchCalculateLOD(
 **注意**:
 - 此方法会修改实体的 `LODComponent`，更新 `currentLOD` 和统计信息
 - 如果实体没有 `LODComponent` 或 `TransformComponent`，会被跳过
-- 使用 `transitionDistance` 实现平滑过渡，避免频繁切换
+- LOD 级别会在距离跨过阈值时立即切换，与远距离剔除保持一致
+- 每帧都会计算 LOD，确保实时响应相机位置变化
 
 #### BatchCalculateLODWithBounds
 ```cpp
@@ -959,20 +960,22 @@ lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
 lodComp.config.distanceThresholds = {100.0f, 300.0f, 800.0f, 2000.0f};
 ```
 
-### 2. 平滑过渡距离
+### 2. 距离阈值配置（平滑过渡）
 
-较大的 `transitionDistance` 可以减少 LOD 切换频率，但可能导致视觉上的延迟：
+通过调整距离阈值的间隔来控制 LOD 切换的平滑度。较大的阈值间隔可以减少切换频率：
 
 ```cpp
-// 快速切换（适合动态场景）
-lodComp.config.transitionDistance = 5.0f;
+// 快速切换（较小的阈值间隔，适合动态场景）
+lodComp.config.distanceThresholds = {30.0f, 80.0f, 200.0f, 500.0f};
 
 // 标准切换
-lodComp.config.transitionDistance = 10.0f;
+lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
 
-// 平滑切换（适合静态场景）
-lodComp.config.transitionDistance = 20.0f;
+// 平滑切换（较大的阈值间隔，适合静态场景）
+lodComp.config.distanceThresholds = {100.0f, 300.0f, 800.0f, 2000.0f};
 ```
+
+**注意**：当前版本的 LOD 系统会在距离跨过阈值时立即切换，与远距离剔除保持一致。`transitionDistance` 字段保留用于未来可能的平滑过渡功能。
 
 ### 3. 包围盒缩放
 
@@ -993,9 +996,9 @@ lodComp.config.boundingBoxScale = 2.0f;
 
 `LODSelector::BatchCalculateLOD` 已经优化了批量处理。建议：
 
-- 每帧更新一次（或每 N 帧更新一次，通过 `frameId` 控制）
+- 每帧更新一次（与远距离剔除保持一致，确保实时响应）
 - 在 `MeshRenderSystem` 之前运行 LOD 更新系统（优先级 < 100）
-- 使用 `transitionDistance` 避免频繁切换
+- 通过调整距离阈值间隔来控制切换平滑度（见"平滑过渡距离"章节）
 
 ### 5. 纹理策略选择
 
@@ -1086,11 +1089,15 @@ if (LODDebug::IsLODEnabled(world, entity)) {
 
 ### Q: LOD 切换太频繁怎么办？
 
-A: 增加 `transitionDistance`：
+A: 调整距离阈值，使阈值间隔更大：
 
 ```cpp
-lodComp.config.transitionDistance = 20.0f;  // 从默认的 10.0f 增加到 20.0f
+// 增大阈值间隔，使切换不那么频繁
+lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};  // 间隔较小
+lodComp.config.distanceThresholds = {100.0f, 300.0f, 800.0f, 2000.0f};  // 间隔较大，切换更平滑
 ```
+
+**说明**：当前版本的 LOD 系统会在距离跨过阈值时立即切换，与远距离剔除保持一致。如果需要更平滑的过渡，可以增大阈值之间的间隔。
 
 ### Q: 如何为不同大小的对象设置不同的 LOD 距离？
 
@@ -1205,11 +1212,17 @@ world->AddComponent<LODComponent>(entity, lodComp);
 
 ---
 
-**文档版本**: v1.1  
-**最后更新**: 2025-11-28  
+**文档版本**: v1.2  
+**最后更新**: 2025-11-29  
 **对应代码版本**: RenderEngine v1.0.0
 
 **更新历史**:
+- **v1.2** (2025-11-29): 更新 LOD 切换逻辑说明
+  - 更新平滑过渡逻辑说明，明确当前版本会在距离跨过阈值时立即切换
+  - 更新 `transitionDistance` 说明，说明当前保留但未用于切换控制
+  - 更新"平滑过渡距离"章节，改为通过调整距离阈值间隔来控制切换平滑度
+  - 更新常见问题中的"LOD 切换太频繁"解答，改为调整阈值间隔而非 `transitionDistance`
+  - 明确说明 LOD 计算与远距离剔除保持一致，每帧都执行
 - **v1.1** (2025-11-28): 添加纹理 LOD 使用 LODGenerator 的说明
   - 更新"使用 Mipmap"章节，添加使用 `LODGenerator` 自动配置的示例
   - 更新"配置 LOD 纹理"示例，推荐使用 `LODGenerator` 自动配置

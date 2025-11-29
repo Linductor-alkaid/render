@@ -40,10 +40,14 @@ graph TB
         Renderer --> RenderLayer[渲染层级]
         Renderer --> BatchManager[批处理管理器]
         Renderer --> LightManager[光照管理器]
+        Renderer --> LODSystem[LOD系统]
 
         RenderState --> MaterialStateCache[材质状态缓存]
         RenderLayer --> MaterialSortKey[材质排序键]
         BatchManager --> RenderBatch[渲染批次]
+        LODSystem --> LODSelector[LOD选择器]
+        LODSystem --> LODGenerator[LOD生成器]
+        LODSystem --> LODInstancedRenderer[LOD实例化渲染器]
     end
 
     %% 资源管理层
@@ -56,6 +60,7 @@ graph TB
         ResourceManager --> TextureLoader[纹理加载器]
         ResourceManager --> MeshLoader[网格加载器]
         ResourceManager --> ModelLoader[模型加载器]
+        ResourceManager --> LODGenerator[LOD生成器]
     end
 
     %% 渲染对象层
@@ -150,10 +155,13 @@ graph TB
     SceneManager --> ECSWorld
     CoreRenderModule --> Renderer
     RenderSystem --> Renderer
+    RenderSystem --> LODSystem
     Renderer --> Renderable
     ResourceManager --> Renderable
+    ResourceManager --> LODGenerator
     UIModule --> UICanvas
     AnimationSystem --> SpriteAnimator
+    CameraSystem --> LODSelector
 
     style UserApp fill:#e1f5fe
     style Renderer fill:#f3e5f5
@@ -209,6 +217,7 @@ graph TB
         LightComponent[光源组件]
         UIComponent[UI组件]
         AnimationComponent[动画组件]
+        LODComponent[LOD组件]
 
         TransformComponent --> ComponentType
         MeshRenderComponent --> ComponentType
@@ -217,6 +226,7 @@ graph TB
         LightComponent --> ComponentType
         UIComponent --> ComponentType
         AnimationComponent --> ComponentType
+        LODComponent --> ComponentType
     end
 
     subgraph "Core Systems"
@@ -257,7 +267,8 @@ graph LR
 
     subgraph "Culling & Batching"
         FrustumCulling[视锥剔除] --> DistanceCulling[距离剔除]
-        DistanceCulling --> MaterialSorting[材质排序]
+        DistanceCulling --> LODCalculation[LOD计算]
+        LODCalculation --> MaterialSorting[材质排序]
         MaterialSorting --> LayerSorting[层级排序]
         LayerSorting --> Batching[批处理]
     end
@@ -281,6 +292,7 @@ graph LR
     end
 
     ECSUpdate --> FrustumCulling
+    LODCalculation --> MaterialSorting
     Batching --> BeginFrame
 
     Disabled --> GeometryPass
@@ -679,7 +691,8 @@ flowchart TD
     HandleInput --> UpdateScene[更新场景]
     UpdateScene --> UpdateECS[更新ECS系统]
     UpdateECS --> CullObjects[剔除对象]
-    CullObjects --> SortRenderables[排序渲染对象]
+    CullObjects --> CalculateLOD[计算LOD级别]
+    CalculateLOD --> SortRenderables[排序渲染对象]
     SortRenderables --> BatchRenderables[批处理渲染对象]
     BatchRenderables --> RenderFrame[渲染帧]
     RenderFrame --> PresentFrame[呈现帧]
@@ -718,6 +731,139 @@ flowchart TD
     style RenderStart fill:#fce4ec
 ```
 
+## LOD系统架构图
+
+```mermaid
+graph TB
+    subgraph "LOD System Core"
+        LODComponent[LOD组件] --> LODConfig[LOD配置]
+        LODConfig --> DistanceThresholds[距离阈值]
+        LODConfig --> LODResources[LOD资源]
+        LODResources --> LODMeshes[LOD网格]
+        LODResources --> LODMaterials[LOD材质]
+        LODResources --> LODTextures[LOD纹理]
+        
+        LODSelector[LOD选择器] --> BatchCalculateLOD[批量计算LOD]
+        LODSelector --> CalculateDistance[计算距离]
+        BatchCalculateLOD --> LODComponent
+    end
+
+    subgraph "LOD Generation"
+        LODGenerator[LOD生成器] --> MeshSimplifier[网格简化器]
+        MeshSimplifier --> MeshOptimizer[meshoptimizer库]
+        
+        LODGenerator --> GenerateLODLevels[生成LOD级别]
+        LODGenerator --> GenerateModelLOD[生成模型LOD]
+        LODGenerator --> BatchGenerateLOD[批量生成LOD]
+        
+        LODGenerator --> SaveLODFiles[保存LOD文件]
+        LODGenerator --> LoadLODFiles[加载LOD文件]
+    end
+
+    subgraph "Texture LOD"
+        TextureMipmap[纹理Mipmap]
+        AutoConfigureTexture[自动配置纹理]
+        TextureLODStrategy[纹理LOD策略]
+        
+        TextureMipmap --> AutoConfigureTexture
+        AutoConfigureTexture --> TextureLODStrategy
+        TextureLODStrategy --> UseMipmap[使用Mipmap]
+        TextureLODStrategy --> UseLODTextures[使用LOD纹理]
+    end
+
+    subgraph "LOD Rendering"
+        LODInstancedRenderer[LOD实例化渲染器] --> GroupByLOD[按LOD分组]
+        GroupByLOD --> InstanceBatching[实例批处理]
+        InstanceBatching --> GPURendering[GPU渲染]
+        
+        MeshRenderSystem[网格渲染系统] --> BatchCalculateLOD
+        MeshRenderSystem --> LODInstancedRenderer
+        MeshRenderSystem --> SelectLODResource[选择LOD资源]
+        SelectLODResource --> LODMeshes
+        SelectLODResource --> LODMaterials
+    end
+
+    subgraph "Integration"
+        ECSWorld[ECS世界] --> LODComponent
+        CameraSystem[相机系统] --> CameraPosition[相机位置]
+        CameraPosition --> BatchCalculateLOD
+        TransformComponent[变换组件] --> EntityPosition[实体位置]
+        EntityPosition --> CalculateDistance
+    end
+
+    MeshSimplifier --> GenerateLODLevels
+    GenerateLODLevels --> LODMeshes
+    AutoConfigureTexture --> LODTextures
+    BatchCalculateLOD --> SelectLODResource
+
+    style LODComponent fill:#e1f5fe
+    style LODGenerator fill:#fff3e0
+    style LODSelector fill:#f3e5f5
+    style LODInstancedRenderer fill:#e8f5e8
+```
+
+## LOD工作流程图
+
+```mermaid
+flowchart TD
+    %% LOD资源准备阶段
+    Start[开始] --> LoadSourceMesh[加载源网格]
+    LoadSourceMesh --> ChooseMethod{选择LOD生成方式}
+    
+    ChooseMethod -->|自动生成| AutoGenerate[LODGenerator自动生成]
+    ChooseMethod -->|手动加载| ManualLoad[手动加载LOD文件]
+    
+    AutoGenerate --> GenerateLOD1[生成LOD1网格]
+    GenerateLOD1 --> GenerateLOD2[生成LOD2网格]
+    GenerateLOD2 --> GenerateLOD3[生成LOD3网格]
+    GenerateLOD3 --> SaveLOD[保存LOD文件可选]
+    
+    ManualLoad --> LoadLOD0[加载LOD0网格]
+    LoadLOD0 --> LoadLOD1[加载LOD1网格]
+    LoadLOD1 --> LoadLOD2[加载LOD2网格]
+    LoadLOD2 --> LoadLOD3[加载LOD3网格]
+    
+    SaveLOD --> ConfigureLOD
+    LoadLOD3 --> ConfigureLOD[配置LODComponent]
+    
+    %% LOD配置阶段
+    ConfigureLOD --> SetThresholds[设置距离阈值]
+    SetThresholds --> SetResources[设置LOD资源]
+    SetResources --> ConfigTexture[配置纹理LOD]
+    ConfigTexture --> AddToEntity[添加到实体]
+    
+    %% 运行时阶段
+    AddToEntity --> RuntimeLoop[运行时循环]
+    RuntimeLoop --> GetCameraPos[获取相机位置]
+    GetCameraPos --> BatchCalculate[批量计算LOD级别]
+    
+    BatchCalculate --> CalcDistance[计算实体到相机距离]
+    CalcDistance --> CompareThresholds[比较距离阈值]
+    CompareThresholds --> SelectLOD{选择LOD级别}
+    
+    SelectLOD -->|距离 < 阈值1| LOD0[使用LOD0]
+    SelectLOD -->|阈值1 <= 距离 < 阈值2| LOD1[使用LOD1]
+    SelectLOD -->|阈值2 <= 距离 < 阈值3| LOD2[使用LOD2]
+    SelectLOD -->|阈值3 <= 距离 < 阈值4| LOD3[使用LOD3]
+    SelectLOD -->|距离 >= 阈值4| Culled[剔除]
+    
+    LOD0 --> UpdateComponent[更新LODComponent.currentLOD]
+    LOD1 --> UpdateComponent
+    LOD2 --> UpdateComponent
+    LOD3 --> UpdateComponent
+    Culled --> SkipRender[跳过渲染]
+    
+    UpdateComponent --> SelectResource[选择对应LOD资源]
+    SelectResource --> Render[渲染]
+    Render --> RuntimeLoop
+    
+    style Start fill:#e1f5fe
+    style AutoGenerate fill:#fff3e0
+    style ConfigureLOD fill:#f3e5f5
+    style BatchCalculate fill:#e8f5e8
+    style Render fill:#fce4ec
+```
+
 ## 总结
 
 RenderEngine 项目采用了现代软件工程的最佳实践，具有以下特点：
@@ -728,6 +874,7 @@ RenderEngine 项目采用了现代软件工程的最佳实践，具有以下特�
 3. **ECS架构**: 灵活的实体组件系统，支持复杂游戏逻辑
 4. **批处理优化**: 多种批处理策略，提升渲染性能
 5. **异步加载**: 非阻塞的资源加载系统，改善用户体验
+6. **LOD系统**: 完整的细节层次系统，支持自动网格简化和纹理LOD，显著优化渲染性能
 
 ### 技术特色
 1. **现代C++**: 充分利用C++20特性，类型安全且性能优异
