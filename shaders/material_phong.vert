@@ -47,7 +47,11 @@ void main() {
     // 世界空间位置
     FragPos = vec3(modelMatrix * vec4(aPosition, 1.0));
     
-    mat3 normalMatrix = mat3(transpose(inverse(modelMatrix)));
+    // ✅ 法线矩阵计算：提取3x3矩阵的上部分（旋转+缩放）
+    // 使用 transpose(inverse()) 来正确处理非均匀缩放
+    // 注意：对于均匀缩放，这仍然正确，只是稍微低效
+    mat3 model3x3 = mat3(modelMatrix);
+    mat3 normalMatrix = transpose(inverse(model3x3));
     
     // 世界空间法线与切线空间
     Normal = normalize(normalMatrix * aNormal);

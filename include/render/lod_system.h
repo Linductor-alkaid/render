@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 
 namespace Render {
 
@@ -487,10 +488,8 @@ public:
             
             auto& lodComp = world->GetComponent<ECS::LODComponent>(entity);
             
-            // 避免每帧都更新（可以每 N 帧更新一次）
-            if (lodComp.lastUpdateFrame == frameId) {
-                continue;
-            }
+            // ✅ 与远距离剔除保持一致：每帧都计算LOD
+            // 移除帧ID检查，确保每帧都能更新LOD级别（远距离剔除也是每帧都执行）
             
             // 获取 Transform 组件
             if (!world->HasComponent<ECS::TransformComponent>(entity)) {
@@ -502,24 +501,25 @@ public:
                 continue;
             }
             
-            // 计算距离
-            Vector3 entityPos = transformComp.transform->GetWorldPosition();
+            // ✅ 计算距离：使用与远距离剔除相同的位置获取方式
+            // 使用 GetPosition() 获取位置（与远距离剔除的 ShouldCull 保持一致）
+            // 这样可以确保距离计算与远距离剔除使用相同的坐标系统
+            Vector3 entityPos = transformComp.GetPosition();
             float distance = CalculateDistance(entityPos, cameraPosition);
             
             // 计算 LOD 级别
             LODLevel newLOD = lodComp.config.CalculateLOD(distance);
             
-            // 平滑过渡：避免频繁切换
-            if (newLOD != lodComp.currentLOD) {
-                float transitionThreshold = lodComp.config.transitionDistance;
-                float distanceDiff = std::abs(distance - lodComp.lastDistance);
-                
-                // 只有在距离变化足够大时才切换
-                if (distanceDiff > transitionThreshold) {
-                    lodComp.currentLOD = newLOD;
-                    lodComp.lodSwitchCount++;
-                    lodComp.lastLOD = lodComp.currentLOD;
-                }
+            // ✅ 平滑过渡：避免频繁切换（与远距离剔除的实时性保持一致）
+            // 第一次计算时（lastDistance为0），直接更新LOD级别
+            bool isFirstUpdate = (lodComp.lastDistance == 0.0f);
+            
+            // ✅ 强制更新逻辑：第一次更新时总是更新，后续更新直接切换
+            // 如果newLOD与currentLOD不同，说明距离已经跨过了阈值，应该立即切换
+            if (isFirstUpdate || newLOD != lodComp.currentLOD) {
+                lodComp.currentLOD = newLOD;
+                lodComp.lodSwitchCount++;
+                lodComp.lastLOD = lodComp.currentLOD;
             }
             
             lodComp.lastDistance = distance;
@@ -560,10 +560,8 @@ public:
             
             auto& lodComp = world->GetComponent<ECS::LODComponent>(entity);
             
-            // 避免每帧都更新
-            if (lodComp.lastUpdateFrame == frameId) {
-                continue;
-            }
+            // ✅ 与远距离剔除保持一致：每帧都计算LOD
+            // 移除帧ID检查，确保每帧都能更新LOD级别（远距离剔除也是每帧都执行）
             
             // 获取 Transform 组件
             if (!world->HasComponent<ECS::TransformComponent>(entity)) {
@@ -575,8 +573,9 @@ public:
                 continue;
             }
             
-            // 计算距离（使用包围盒或位置）
-            Vector3 entityPos = transformComp.transform->GetWorldPosition();
+            // ✅ 计算距离：使用与远距离剔除相同的位置获取方式
+            // 使用 GetPosition() 获取位置（与远距离剔除的 ShouldCull 保持一致）
+            Vector3 entityPos = transformComp.GetPosition();
             float distance;
             
             if (getBounds) {
@@ -594,17 +593,23 @@ public:
             // 计算 LOD 级别
             LODLevel newLOD = lodComp.config.CalculateLOD(distance);
             
-            // 平滑过渡：避免频繁切换
-            if (newLOD != lodComp.currentLOD) {
-                float transitionThreshold = lodComp.config.transitionDistance;
-                float distanceDiff = std::abs(distance - lodComp.lastDistance);
-                
-                // 只有在距离变化足够大时才切换
-                if (distanceDiff > transitionThreshold) {
-                    lodComp.currentLOD = newLOD;
-                    lodComp.lodSwitchCount++;
-                    lodComp.lastLOD = lodComp.currentLOD;
-                }
+            // ✅ 平滑过渡：避免频繁切换（与远距离剔除的实时性保持一致）
+            // 第一次计算时（lastDistance为0），直接更新LOD级别
+            bool isFirstUpdate = (lodComp.lastDistance == 0.0f);
+            
+            // ✅ 强制更新逻辑：第一次更新时总是更新，后续更新根据距离变化决定
+            if (isFirstUpdate) {
+                // 第一次更新：强制更新LOD级别
+                lodComp.currentLOD = newLOD;
+                lodComp.lodSwitchCount++;
+                lodComp.lastLOD = lodComp.currentLOD;
+            } else if (newLOD != lodComp.currentLOD) {
+                // ✅ 后续更新：当新LOD与当前LOD不同时，直接切换
+                // 平滑过渡通过transitionDistance控制，但不应阻止LOD级别的切换
+                // 如果计算出的newLOD与currentLOD不同，说明距离已经跨过了阈值，应该切换
+                lodComp.currentLOD = newLOD;
+                lodComp.lodSwitchCount++;
+                lodComp.lastLOD = lodComp.currentLOD;
             }
             
             lodComp.lastDistance = distance;

@@ -1514,8 +1514,9 @@ void MeshRenderSystem::Update(float deltaTime) {
     // 重置统计信息
     m_stats = RenderStats{};
     
-    // 阶段2.2: 批量计算 LOD（如果启用实例化渲染）
-    if (m_lodInstancingEnabled && m_world) {
+    // ✅ 批量计算 LOD（无论是否启用实例化渲染）
+    // 自动LOD计算应该在所有情况下都执行，以确保LOD级别根据相机距离自动更新
+    if (m_world) {
         // 获取主相机位置
         Vector3 cameraPosition = GetMainCameraPosition();
         
@@ -1533,7 +1534,7 @@ void MeshRenderSystem::Update(float deltaTime) {
             }
         }
         
-        // 批量计算 LOD
+        // 批量计算 LOD（自动根据相机距离更新LOD级别）
         if (!lodEntities.empty()) {
             BatchCalculateLOD(lodEntities, cameraPosition, frameId);
         }
@@ -2101,8 +2102,53 @@ void MeshRenderSystem::BatchCalculateLOD(const std::vector<EntityID>& entities,
         return;
     }
     
-    // 使用 LODSelector 批量计算 LOD
+    // ✅ 使用 LODSelector 批量计算 LOD
     LODSelector::BatchCalculateLOD(entities, m_world, cameraPosition, frameId);
+    
+    // ✅ 调试：记录LOD更新统计和距离信息（每100帧记录一次）
+    static uint64_t debugCounter = 0;
+    if (++debugCounter % 100 == 0 && !entities.empty()) {
+        size_t lod0Count = 0, lod1Count = 0, lod2Count = 0, lod3Count = 0, culledCount = 0;
+        float minDistance = std::numeric_limits<float>::max();
+        float maxDistance = 0.0f;
+        float avgDistance = 0.0f;
+        
+        for (EntityID entity : entities) {
+            if (m_world->HasComponent<LODComponent>(entity) && 
+                m_world->HasComponent<TransformComponent>(entity)) {
+                auto& lodComp = m_world->GetComponent<LODComponent>(entity);
+                auto& transformComp = m_world->GetComponent<TransformComponent>(entity);
+                
+                Vector3 entityPos = transformComp.GetPosition();
+                float distance = (entityPos - cameraPosition).norm();
+                minDistance = std::min(minDistance, distance);
+                maxDistance = std::max(maxDistance, distance);
+                avgDistance += distance;
+                
+                switch (lodComp.currentLOD) {
+                    case LODLevel::LOD0: lod0Count++; break;
+                    case LODLevel::LOD1: lod1Count++; break;
+                    case LODLevel::LOD2: lod2Count++; break;
+                    case LODLevel::LOD3: lod3Count++; break;
+                    case LODLevel::Culled: culledCount++; break;
+                    default: break;
+                }
+            }
+        }
+        
+        if (lod0Count + lod1Count + lod2Count + lod3Count + culledCount > 0) {
+            avgDistance /= static_cast<float>(lod0Count + lod1Count + lod2Count + lod3Count + culledCount);
+        }
+        
+        Logger::GetInstance().InfoFormat(
+            "[MeshRenderSystem] LOD Stats (frame %llu, camera pos: %.1f,%.1f,%.1f): "
+            "LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, Culled=%zu | "
+            "Distance: min=%.1f, max=%.1f, avg=%.1f",
+            frameId, cameraPosition.x(), cameraPosition.y(), cameraPosition.z(),
+            lod0Count, lod1Count, lod2Count, lod3Count, culledCount,
+            minDistance, maxDistance, avgDistance
+        );
+    }
 }
 
 Vector3 MeshRenderSystem::GetMainCameraPosition() const {

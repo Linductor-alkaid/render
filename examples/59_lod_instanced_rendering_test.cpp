@@ -267,7 +267,10 @@ int main(int argc, char* argv[]) {
         // 配置 LOD 组件
         LODComponent lodComp;
         lodComp.config.enabled = true;
-        lodComp.config.distanceThresholds = {10.0f, 30.0f, 60.0f, 100.0f};
+        // ✅ 调整距离阈值：LOD0范围应该更大，确保靠近球体时能显示LOD0
+        // 相机初始位置约(0, 10, 20)，到原点的距离约22.36
+        // 增大LOD0阈值到50，确保在相机初始位置附近的球体能显示LOD0
+        lodComp.config.distanceThresholds = {50.0f, 100.0f, 150.0f, 200.0f};
         lodComp.config.transitionDistance = 5.0f;
         
         // 配置完整的 LOD 网格列表
@@ -393,12 +396,17 @@ int main(int argc, char* argv[]) {
         cameraTransformComp.SetPosition(cameraPosition);
         cameraTransformComp.SetRotation(viewRotation);
 
-        // 让所有实例旋转
-        for (auto entity : instanceEntities) {
-            auto& transform = world->GetComponent<TransformComponent>(entity);
-            Quaternion baseRotation = transform.GetRotation();
-            Quaternion spin = MathUtils::FromEulerDegrees(0.0f, accumTime * 30.0f, 0.0f);
-            transform.SetRotation(baseRotation * spin);
+        // 让所有实例旋转（可选，用于测试）
+        // 如果禁用旋转后条纹消失，说明问题与旋转+法线变换有关
+        // 如果仍然存在，说明问题与旋转无关
+        bool enableInstanceRotation = false;  // 设置为 false 禁用旋转
+        if (enableInstanceRotation) {
+            for (auto entity : instanceEntities) {
+                auto& transform = world->GetComponent<TransformComponent>(entity);
+                Quaternion baseRotation = transform.GetRotation();
+                Quaternion spin = MathUtils::FromEulerDegrees(0.0f, accumTime * 30.0f, 0.0f);
+                transform.SetRotation(baseRotation * spin);
+            }
         }
 
         renderer->BeginFrame();
