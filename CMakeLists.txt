@@ -259,6 +259,7 @@ set(RENDER_SOURCES
     src/rendering/skinning.cpp
     src/rendering/geometry_preset.cpp
     src/rendering/lod_generator.cpp
+    src/rendering/lod_loader.cpp
     src/rendering/lod_instanced_renderer.cpp
     src/ecs/sprite_animation_script_registry.cpp
 
@@ -410,6 +411,7 @@ set(RENDER_HEADERS
     include/render/geometry_preset.h
     include/render/lod_system.h
     include/render/lod_generator.h
+    include/render/lod_loader.h
     include/render/lod_instanced_renderer.h
     include/render/debug/sprite_animation_debugger.h
     include/render/debug/sprite_animation_debug_panel.h

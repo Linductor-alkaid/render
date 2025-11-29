@@ -950,9 +950,17 @@ private:
 
 ### 阶段 3: 高级优化 (P2)
 
-#### 3.1 LOD 数据加载和管理
+#### 3.1 LOD 数据加载和管理 ✅ **已完成**
 
 **方案**：实现 LOD 网格/模型的加载和管理
+
+**实现状态**：
+- ✅ `LODLoader` 类已实现（`include/render/lod_loader.h`）
+- ✅ 支持从文件加载 LOD 网格（灵活命名模式）
+- ✅ 支持自动生成 LOD 网格（复用 LODGenerator）
+- ✅ 支持混合模式（文件优先，不存在则生成）
+- ✅ 命名模式支持占位符：`{name}`, `{level}`, `{ext}`
+- ✅ 零破坏：LODGenerator 的现有 API 保持不变
 
 ```cpp
 // include/render/lod_loader.h
