@@ -253,6 +253,22 @@ public:
      */
     [[nodiscard]] bool IsLODInstancingEnabled() const;
     
+    /**
+     * @brief 设置是否启用 LOD 视锥体裁剪优化（阶段3.3）
+     * 
+     * 启用后，使用 LODFrustumCullingSystem 进行批量视锥体裁剪和 LOD 选择
+     * 可以进一步提升性能，特别是在大量实体的场景中
+     * 
+     * @param enabled 是否启用
+     */
+    void SetLODFrustumCullingEnabled(bool enabled) { m_lodFrustumCullingEnabled = enabled; }
+    
+    /**
+     * @brief 获取是否启用 LOD 视锥体裁剪优化（阶段3.3）
+     * @return 如果启用返回 true
+     */
+    [[nodiscard]] bool IsLODFrustumCullingEnabled() const { return m_lodFrustumCullingEnabled; }
+    
     void OnCreate(World* world) override;
     void OnDestroy() override;
     
@@ -292,6 +308,9 @@ private:
     // 注意：阶段2.3后，m_lodInstancingEnabled 不再使用
     // 改为从 Renderer 获取设置（通过 IsLODInstancingEnabled()）
     uint64_t m_frameId = 0;                     ///< 当前帧 ID（用于 LOD 计算）
+    
+    // 阶段3.3：LOD 视锥体裁剪优化
+    bool m_lodFrustumCullingEnabled = false;    ///< 是否启用 LOD 视锥体裁剪优化
 };
 
 // ============================================================

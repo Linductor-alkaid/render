@@ -332,7 +332,7 @@ void LODInstancedRenderer::UploadInstanceMatrices(
     
     instanceVBOs.capacity = matrices.size();
     
-    LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceMatrices - %zu matrices", matrices.size());
+    // LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceMatrices - %zu matrices", matrices.size());
 }
 
 void LODInstancedRenderer::UploadInstanceColors(
@@ -360,7 +360,7 @@ void LODInstancedRenderer::UploadInstanceColors(
                  GL_DYNAMIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     
-    LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceColors - %zu colors", colors.size());
+    // LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceColors - %zu colors", colors.size());
 }
 
 void LODInstancedRenderer::UploadInstanceCustomParams(
@@ -388,7 +388,7 @@ void LODInstancedRenderer::UploadInstanceCustomParams(
                  GL_DYNAMIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     
-    LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceCustomParams - %zu params", customParams.size());
+    // LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceCustomParams - %zu params", customParams.size());
 }
 
 LODInstancedRenderer::InstanceVBOs& LODInstancedRenderer::GetOrCreateInstanceVBOs(

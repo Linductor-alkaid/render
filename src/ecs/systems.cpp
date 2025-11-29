@@ -1600,8 +1600,46 @@ void MeshRenderSystem::SubmitRenderables() {
             // 清空上一帧的实例化渲染器
             m_lodRenderer.Clear();
             
-            // 收集实例数据
-            for (const auto& entity : entities) {
+            // ==================== 阶段3.3：LOD 视锥体裁剪优化 ====================
+            // 如果启用阶段3.3优化，使用 LODFrustumCullingSystem 进行批量视锥体裁剪和 LOD 选择
+            std::vector<EntityID> entitiesToProcess;
+            size_t totalEntities = entities.size();
+            
+            if (m_lodFrustumCullingEnabled && m_cameraSystem) {
+                Camera* mainCamera = m_cameraSystem->GetMainCameraObject();
+                if (mainCamera) {
+                    // 使用 LODFrustumCullingSystem 进行批量视锥体裁剪和 LOD 选择
+                    std::vector<EntityID> entityList(entities.begin(), entities.end());
+                    auto visibleEntitiesByLOD = LODFrustumCullingSystem::BatchCullAndSelectLOD(
+                        entityList,
+                        m_world,
+                        mainCamera,
+                        m_frameId
+                    );
+                    
+                    // 收集所有可见实体（按 LOD 级别分组）
+                    size_t visibleCount = 0;
+                    for (const auto& [lodLevel, visibleEntities] : visibleEntitiesByLOD) {
+                        visibleCount += visibleEntities.size();
+                        entitiesToProcess.insert(entitiesToProcess.end(), 
+                                                 visibleEntities.begin(), 
+                                                 visibleEntities.end());
+                    }
+                    
+                    // 更新剔除统计（阶段3.3优化已经处理了视锥体裁剪）
+                    size_t culledCount = totalEntities - visibleCount;
+                    m_stats.culledMeshes += culledCount;
+                } else {
+                    // 如果无法获取相机，回退到原始逻辑
+                    entitiesToProcess.assign(entities.begin(), entities.end());
+                }
+            } else {
+                // 未启用阶段3.3优化，使用原始逻辑
+                entitiesToProcess.assign(entities.begin(), entities.end());
+            }
+            
+            // 收集实例数据（只处理可见实体）
+            for (const auto& entity : entitiesToProcess) {
                 auto& transform = m_world->GetComponent<TransformComponent>(entity);
                 auto& meshComp = m_world->GetComponent<MeshRenderComponent>(entity);
                 
@@ -1664,25 +1702,33 @@ void MeshRenderSystem::SubmitRenderables() {
                     continue;
                 }
                 
-                // 视锥体裁剪优化
-                Vector3 position = transform.GetPosition();
-                
-                // 从网格包围盒计算半径（使用 LOD 网格）
-                float radius = 1.0f;  // 默认半径
-                if (renderMesh) {
-                    AABB bounds = renderMesh->CalculateBounds();
-                    Vector3 size = bounds.max - bounds.min;
-                    radius = size.norm() * 0.5f;  // 包围盒对角线的一半作为半径
+                // ==================== 视锥体裁剪优化 ====================
+                // 阶段3.3：如果启用了LOD视锥体裁剪优化，LODFrustumCullingSystem已经处理了视锥体裁剪
+                // 这里只需要对未启用阶段3.3优化的情况进行视锥体裁剪
+                if (!m_lodFrustumCullingEnabled) {
+                    Vector3 position = transform.GetPosition();
                     
-                    // 考虑Transform的缩放
-                    Vector3 scale = transform.GetScale();
-                    float maxScale = std::max(std::max(scale.x(), scale.y()), scale.z());
-                    radius *= maxScale;
-                }
-                
-                if (ShouldCull(position, radius)) {
-                    m_stats.culledMeshes++;
-                    continue;
+                    // 从网格包围盒计算半径（使用 LOD 网格）
+                    float radius = 1.0f;  // 默认半径
+                    if (renderMesh) {
+                        AABB bounds = renderMesh->CalculateBounds();
+                        Vector3 size = bounds.max - bounds.min;
+                        radius = size.norm() * 0.5f;  // 包围盒对角线的一半作为半径
+                        
+                        // 考虑Transform的缩放
+                        Vector3 scale = transform.GetScale();
+                        float maxScale = std::max(std::max(scale.x(), scale.y()), scale.z());
+                        radius *= maxScale;
+                    }
+                    
+                    if (ShouldCull(position, radius)) {
+                        m_stats.culledMeshes++;
+                        continue;
+                    }
+                } else {
+                    // 阶段3.3：LODFrustumCullingSystem已经处理了视锥体裁剪和LOD选择
+                    // 只需要更新剔除统计（LODFrustumCullingSystem已经剔除了不可见实体）
+                    // 注意：这里的实体都是可见的，所以不需要再次剔除
                 }
                 
                 // ✅ 检查材质是否有效

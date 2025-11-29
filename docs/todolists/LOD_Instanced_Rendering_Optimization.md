@@ -1446,6 +1446,6 @@ void ConfigureLODForEntities(
 
 **文档版本**: v1.0  
 **最后更新**: 2025-11-28  
-**作者**: AI Assistant  
+**作者**: Linductor
 **审核状态**: 待审核
 

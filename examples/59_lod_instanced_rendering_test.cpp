@@ -1,6 +1,6 @@
 /**
  * @file 59_lod_instanced_rendering_test.cpp
- * @brief LOD 实例化渲染测试 - 测试阶段2.2和阶段2.3的LOD实例化渲染功能
+ * @brief LOD 实例化渲染测试 - 测试阶段2.2、阶段2.3和阶段3.3的LOD优化功能
  * 
  * 测试内容：
  * 1. 创建大量相同网格的实体（用于测试实例化）
@@ -13,6 +13,11 @@
  * 6. 测试LOD实例化统计信息获取
  * 7. 测试兼容性检查
  * 8. 测试与批处理模式的交互
+ * 
+ * 阶段3.3新增测试：
+ * 9. 测试LOD视锥体裁剪优化（LODFrustumCullingSystem）
+ * 10. 测试批量视锥体裁剪和LOD选择
+ * 11. 对比使用LOD视锥体裁剪优化前后的性能差异
  */
 
 #include <render/renderer.h>
@@ -58,6 +63,9 @@ struct SceneConfig {
     
     // 阶段2.3：批处理模式测试
     BatchingMode batchingMode = BatchingMode::GpuInstancing;  // 默认使用GPU实例化
+    
+    // 阶段3.3：LOD视锥体裁剪优化测试
+    bool enableLODFrustumCulling = false;  // 是否启用LOD视锥体裁剪优化
 };
 
 } // namespace
@@ -238,6 +246,13 @@ int main(int argc, char* argv[]) {
                 meshSystemEnabled ? "enabled" : "disabled"
             );
         }
+        
+        // 阶段3.3：同步LOD视锥体裁剪优化设置
+        meshRenderSystem->SetLODFrustumCullingEnabled(sceneConfig.enableLODFrustumCulling);
+        Logger::GetInstance().InfoFormat(
+            "[LODInstancedRenderingTest] Phase 3.3 - MeshRenderSystem LOD Frustum Culling: %s",
+            meshRenderSystem->IsLODFrustumCullingEnabled() ? "enabled" : "disabled"
+        );
     }
 
     // 创建相机（使用与58测试相同的初始化方式）
@@ -363,6 +378,7 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: WASD 前后左右, Q/E 上下, Shift 加速");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: Tab 捕获/释放鼠标, I 切换实例化渲染");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: B 切换批处理模式 (阶段2.3)");
+    Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: F 切换LOD视锥体裁剪优化 (阶段3.3)");
 
     bool running = true;
     Uint64 prevTicks = SDL_GetTicks();
@@ -439,6 +455,22 @@ int main(int argc, char* argv[]) {
                     "LOD Instancing available: %s",
                     static_cast<int>(sceneConfig.batchingMode),
                     lodInstancingAvailable ? "yes" : "no"
+                );
+            }
+            
+            // 阶段3.3：切换LOD视锥体裁剪优化
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F) {
+                sceneConfig.enableLODFrustumCulling = !sceneConfig.enableLODFrustumCulling;
+                
+                // 同步到MeshRenderSystem
+                if (meshRenderSystem) {
+                    meshRenderSystem->SetLODFrustumCullingEnabled(sceneConfig.enableLODFrustumCulling);
+                }
+                
+                Logger::GetInstance().InfoFormat(
+                    "[LODInstancedRenderingTest] Phase 3.3 - LOD Frustum Culling: %s (MeshRenderSystem: %s)",
+                    sceneConfig.enableLODFrustumCulling ? "enabled" : "disabled",
+                    meshRenderSystem && meshRenderSystem->IsLODFrustumCullingEnabled() ? "enabled" : "disabled"
                 );
             }
             if (mouseCaptured && event.type == SDL_EVENT_MOUSE_MOTION) {
@@ -521,6 +553,19 @@ int main(int argc, char* argv[]) {
             );
         }
         
+        // 阶段3.3：测试LOD视锥体裁剪优化（仅用于统计，实际优化已在MeshRenderSystem中集成）
+        // 注意：如果MeshRenderSystem已启用阶段3.3优化，这里只做统计对比
+        if (sceneConfig.enableLODFrustumCulling && meshRenderSystem && meshRenderSystem->IsLODFrustumCullingEnabled()) {
+            // 阶段3.3优化已在MeshRenderSystem中生效，这里只输出提示
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                Logger::GetInstance().Info(
+                    "[LODInstancedRenderingTest] Phase 3.3 - LOD Frustum Culling is integrated in MeshRenderSystem"
+                );
+                loggedOnce = true;
+            }
+        }
+        
         world->Update(deltaTime);
         renderer->FlushRenderQueue();
 
@@ -542,7 +587,8 @@ int main(int argc, char* argv[]) {
                 "Draw Calls: %zu | Visible: %zu | Culled: %zu | "
                 "LOD: enabled=%zu, LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, culled=%zu | "
                 "Instancing: %s | Batching: %d | "
-                "LOD Stats (Renderer): groups=%zu, instances=%zu, drawCalls=%zu",
+                "LOD Stats (Renderer): groups=%zu, instances=%zu, drawCalls=%zu | "
+                "Phase 3.3 Frustum Culling: %s",
                 perfStats.frameCount,
                 fps,
                 perfStats.avgFrameTime * 1000.0f,
@@ -559,7 +605,8 @@ int main(int argc, char* argv[]) {
                 static_cast<int>(renderer->GetBatchingMode()),
                 lodInstancingStats.lodGroupCount,
                 lodInstancingStats.totalInstances,
-                lodInstancingStats.drawCalls
+                lodInstancingStats.drawCalls,
+                sceneConfig.enableLODFrustumCulling ? "ON" : "OFF"
             );
             
             // 第一帧输出详细信息

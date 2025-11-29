@@ -2,7 +2,7 @@
 
 **审查日期**: 2025-11-05  
 **审查范围**: ECS系统中ResourceManager的调用完整性和安全规范  
-**审查人**: AI Assistant
+**审查人**: Linductor
 
 ---
 

@@ -22,6 +22,7 @@ LOD（Level of Detail）系统提供基于距离的细节级别管理，通过�
 - ✅ **向后兼容**：LOD 为可选功能，不影响现有代码
 - ✅ **实例化渲染**：支持 LOD 实例化渲染，大幅减少 Draw Call（阶段2.2）
 - ✅ **批处理集成**：与批处理系统无缝集成，支持优先级和回退机制（阶段2.3）
+- ✅ **视锥体裁剪优化**：结合视锥体裁剪和 LOD 选择，进一步提升性能（阶段3.3）
 
 ---
 
@@ -418,6 +419,105 @@ LODLevel GetEntityLODLevel(ECS::World* world, ECS::EntityID entity);
 - `entity` - 实体 ID
 
 **返回**: LOD 级别，如果实体没有 `LODComponent` 返回 `LODLevel::LOD0`
+
+---
+
+### LODFrustumCullingSystem（阶段3.3）
+
+LOD 视锥体裁剪系统，结合视锥体裁剪和 LOD 选择，进一步提升性能。系统先进行视锥体裁剪，只对可见实体计算 LOD，减少不必要的计算。
+
+```cpp
+class LODFrustumCullingSystem {
+public:
+    /**
+     * @brief 批量进行视锥体裁剪和 LOD 选择
+     * @param entities 实体列表
+     * @param world ECS World 对象指针
+     * @param camera 相机对象
+     * @param frameId 当前帧 ID
+     * @return 可见实体列表（按 LOD 分组）
+     */
+    static std::map<LODLevel, std::vector<ECS::EntityID>> BatchCullAndSelectLOD(
+        const std::vector<ECS::EntityID>& entities,
+        ECS::World* world,
+        const Camera* camera,
+        uint64_t frameId
+    );
+    
+    /**
+     * @brief 批量进行视锥体裁剪和 LOD 选择（考虑包围盒）
+     * @param entities 实体列表
+     * @param world ECS World 对象指针
+     * @param camera 相机对象
+     * @param frameId 当前帧 ID
+     * @param getBounds 函数，用于获取实体的包围盒
+     * @return 可见实体列表（按 LOD 分组）
+     */
+    static std::map<LODLevel, std::vector<ECS::EntityID>> BatchCullAndSelectLODWithBounds(
+        const std::vector<ECS::EntityID>& entities,
+        ECS::World* world,
+        const Camera* camera,
+        uint64_t frameId,
+        std::function<AABB(ECS::EntityID)> getBounds
+    );
+};
+```
+
+**方法说明**:
+
+#### BatchCullAndSelectLOD
+```cpp
+static std::map<LODLevel, std::vector<ECS::EntityID>> BatchCullAndSelectLOD(
+    const std::vector<ECS::EntityID>& entities,
+    ECS::World* world,
+    const Camera* camera,
+    uint64_t frameId
+);
+```
+批量进行视锥体裁剪和 LOD 选择。先进行视锥体裁剪，只对可见实体计算 LOD，提升性能。
+
+**参数**:
+- `entities` - 实体列表
+- `world` - ECS World 对象指针
+- `camera` - 相机对象（用于获取视锥体和位置）
+- `frameId` - 当前帧 ID（用于避免重复计算）
+
+**返回**: 按 LOD 级别分组的可见实体列表
+
+**性能优化**:
+- 先进行视锥体裁剪，减少需要计算 LOD 的实体数量
+- 批量计算距离和 LOD 级别，提升缓存命中率
+- 使用帧 ID 避免重复计算
+- 近距离保护：相机 5 米内的物体不进行视锥体裁剪
+- 扩大安全边距：包围球半径扩大 2.5 倍，避免边缘物体被过度剔除
+
+**注意**:
+- 如果实体没有 `LODComponent`，会被归类到 `LODLevel::LOD0`
+- 如果实体不在视锥体内，会被跳过（不包含在结果中）
+- 如果实体的 LOD 级别是 `Culled`，会被跳过（不包含在结果中）
+
+#### BatchCullAndSelectLODWithBounds
+```cpp
+static std::map<LODLevel, std::vector<ECS::EntityID>> BatchCullAndSelectLODWithBounds(
+    const std::vector<ECS::EntityID>& entities,
+    ECS::World* world,
+    const Camera* camera,
+    uint64_t frameId,
+    std::function<AABB(ECS::EntityID)> getBounds
+);
+```
+批量进行视锥体裁剪和 LOD 选择（使用包围盒版本）。与 `BatchCullAndSelectLOD` 类似，但使用包围盒进行更准确的视锥体裁剪和距离计算。
+
+**参数**:
+- `entities` - 实体列表
+- `world` - ECS World 对象指针
+- `camera` - 相机对象
+- `frameId` - 当前帧 ID
+- `getBounds` - 函数，用于获取实体的包围盒（世界空间）
+
+**返回**: 按 LOD 级别分组的可见实体列表
+
+**注意**: `getBounds` 函数签名：`AABB(EntityID entity)`
 
 ---
 
@@ -943,7 +1043,69 @@ std::vector<EntityID> treeEntityList(treeEntities.begin(), treeEntities.end());
 ConfigureLODForEntities(world.get(), treeEntityList, sharedConfig);
 ```
 
-#### 6. 启用 LOD 实例化渲染（阶段2.2 + 阶段2.3）
+#### 6. 启用 LOD 视锥体裁剪优化（阶段3.3）
+
+##### 方式 A: 使用 MeshRenderSystem 设置（推荐）
+
+```cpp
+#include "render/ecs/systems.h"
+
+// 获取 MeshRenderSystem
+auto* meshSystem = world->GetSystem<MeshRenderSystem>();
+if (meshSystem) {
+    // 启用 LOD 视锥体裁剪优化
+    meshSystem->SetLODFrustumCullingEnabled(true);
+    
+    // 检查是否启用
+    if (meshSystem->IsLODFrustumCullingEnabled()) {
+        std::cout << "LOD 视锥体裁剪优化已启用" << std::endl;
+    }
+}
+```
+
+**优势**:
+- 先进行视锥体裁剪，只对可见实体计算 LOD，减少不必要的计算
+- 批量处理，提升缓存命中率
+- 近距离保护：相机 5 米内的物体不进行视锥体裁剪
+- 扩大安全边距：包围球半径扩大 2.5 倍，避免边缘物体被过度剔除
+
+**注意**:
+- 需要启用 LOD 实例化渲染才能使用此优化
+- 如果 LOD 实例化渲染不可用，会自动回退到原始逻辑
+
+##### 方式 B: 直接使用 LODFrustumCullingSystem
+
+```cpp
+#include "render/lod_system.h"
+
+// 获取主相机
+Camera* mainCamera = cameraSystem->GetMainCameraObject();
+if (mainCamera) {
+    // 获取所有需要测试的实体
+    auto entities = world->Query<TransformComponent, MeshRenderComponent>();
+    std::vector<EntityID> entityList(entities.begin(), entities.end());
+    
+    // 使用 LODFrustumCullingSystem 进行批量视锥体裁剪和 LOD 选择
+    static uint64_t frameId = 0;
+    frameId++;
+    
+    auto visibleEntitiesByLOD = LODFrustumCullingSystem::BatchCullAndSelectLOD(
+        entityList,
+        world.get(),
+        mainCamera,
+        frameId
+    );
+    
+    // 处理可见实体（按 LOD 级别分组）
+    for (const auto& [lodLevel, visibleEntities] : visibleEntitiesByLOD) {
+        for (EntityID entity : visibleEntities) {
+            // 处理可见实体...
+        }
+    }
+}
+```
+
+#### 7. 启用 LOD 实例化渲染（阶段2.2 + 阶段2.3）
 
 ##### 方式 A: 使用 Renderer 级别设置（推荐，阶段2.3）
 
@@ -1078,6 +1240,33 @@ lodComp.config.boundingBoxScale = 2.0f;
 - **DisableTextures**：在 LOD2+ 禁用纹理，节省内存和带宽
   - 适合极简渲染场景
   - 可以显著减少纹理采样开销
+
+### 6. LOD 视锥体裁剪优化（阶段3.3）
+
+启用 LOD 视锥体裁剪优化可以进一步提升性能，特别是在大量实体的场景中：
+
+```cpp
+// 启用 LOD 视锥体裁剪优化
+auto* meshSystem = world->GetSystem<MeshRenderSystem>();
+if (meshSystem) {
+    meshSystem->SetLODFrustumCullingEnabled(true);
+}
+```
+
+**性能提升**:
+- 先进行视锥体裁剪，只对可见实体计算 LOD，减少不必要的计算
+- 批量处理，提升缓存命中率
+- 在大量实体的场景中，可以显著减少 CPU 开销
+
+**优化细节**:
+- **近距离保护**：相机 5 米内的物体不进行视锥体裁剪，避免误剔除
+- **扩大安全边距**：包围球半径扩大 2.5 倍，避免边缘物体（尤其是下边和左右两边）被过度剔除
+- **包围球计算**：使用包围盒对角线的一半作为半径，考虑 Transform 的缩放
+
+**使用建议**:
+- 在大量实体的场景中（1000+ 实体）启用此优化
+- 需要启用 LOD 实例化渲染才能使用此优化
+- 如果发现物体被过度剔除，可以调整安全边距（修改代码中的 `2.5f` 系数）
 
 ---
 
@@ -1280,6 +1469,46 @@ if (renderer->IsLODInstancingAvailable()) {
 - 如果 LOD 实例化不可用，会自动回退到批处理模式
 - 需要实体配置 `LODComponent` 才能使用 LOD 实例化渲染
 
+### Q: 如何使用 LOD 视锥体裁剪优化（阶段3.3）？
+
+A: 在 MeshRenderSystem 中启用 LOD 视锥体裁剪优化：
+
+```cpp
+// 获取 MeshRenderSystem
+auto* meshSystem = world->GetSystem<MeshRenderSystem>();
+if (meshSystem) {
+    // 启用 LOD 视锥体裁剪优化
+    meshSystem->SetLODFrustumCullingEnabled(true);
+    
+    // 检查是否启用
+    if (meshSystem->IsLODFrustumCullingEnabled()) {
+        std::cout << "LOD 视锥体裁剪优化已启用" << std::endl;
+    }
+}
+```
+
+**优势**:
+- 先进行视锥体裁剪，只对可见实体计算 LOD，减少不必要的计算
+- 批量处理，提升缓存命中率
+- 在大量实体的场景中，可以显著减少 CPU 开销
+
+**注意**:
+- 需要启用 LOD 实例化渲染才能使用此优化
+- 如果 LOD 实例化渲染不可用，会自动回退到原始逻辑
+
+### Q: 为什么部分物体在还能看到的时候就被剔除了？
+
+A: 这是视锥体裁剪过度剔除的问题。系统已经实现了以下优化来避免此问题：
+
+1. **近距离保护**：相机 5 米内的物体不进行视锥体裁剪
+2. **扩大安全边距**：包围球半径扩大 2.5 倍，避免边缘物体被过度剔除
+3. **准确的包围球计算**：使用包围盒对角线的一半作为半径，考虑 Transform 的缩放
+
+如果仍然出现过度剔除，可以：
+- 检查物体的包围盒是否正确
+- 检查 Transform 的缩放是否正确
+- 调整安全边距（修改代码中的 `2.5f` 系数，在 `LODFrustumCullingSystem::BatchCullAndSelectLOD` 中）
+
 ### Q: LOD 实例化渲染与批处理模式的关系？
 
 A: LOD 实例化渲染是独立系统，可以与任何批处理模式共存（阶段2.3）：
@@ -1474,11 +1703,18 @@ renderer->SetLODInstancingEnabled(true);
 
 ---
 
-**文档版本**: v1.3  
+**文档版本**: v1.4  
 **最后更新**: 2025-11-29  
 **对应代码版本**: RenderEngine v1.0.0
 
 **更新历史**:
+- **v1.4** (2025-11-29): 添加阶段3.3 - LOD 视锥体裁剪优化
+  - 添加 `LODFrustumCullingSystem` 类文档，包含 `BatchCullAndSelectLOD` 和 `BatchCullAndSelectLODWithBounds` 方法说明
+  - 添加 `MeshRenderSystem::SetLODFrustumCullingEnabled()` 和 `IsLODFrustumCullingEnabled()` 方法说明
+  - 添加"LOD 视锥体裁剪优化"使用示例（方式A和方式B）
+  - 添加"性能优化建议"章节中的"LOD 视锥体裁剪优化"部分
+  - 添加"常见问题"章节中的"如何使用 LOD 视锥体裁剪优化"和"为什么部分物体在还能看到的时候就被剔除了"问题
+  - 更新功能特性列表，添加视锥体裁剪优化支持
 - **v1.3** (2025-11-29): 添加阶段2.3 - LOD 实例化渲染与批处理系统集成
   - 添加 Renderer 级别的 LOD 实例化渲染 API 文档
   - 添加 `SetLODInstancingEnabled()`、`IsLODInstancingEnabled()`、`IsLODInstancingAvailable()` 方法说明

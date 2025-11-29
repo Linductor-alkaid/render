@@ -5,6 +5,7 @@
 #include "render/model.h"
 #include "render/material.h"
 #include "render/texture.h"
+#include "render/camera.h"
 #include "render/ecs/world.h"
 #include "render/ecs/components.h"
 #include "render/ecs/entity.h"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <map>
 
 namespace Render {
 
@@ -23,6 +25,7 @@ class Mesh;
 class Model;
 class Material;
 class Texture;
+class Camera;
 
 namespace ECS {
 // 前向声明
@@ -438,7 +441,7 @@ public:
      * @return 调整后的距离（单位：世界单位）
      */
     [[nodiscard]] static float CalculateDistanceWithBounds(
-        const Vector3& entityPosition,
+        const Vector3& /* entityPosition */,
         const AABB& entityBounds,
         const Vector3& cameraPosition,
         float boundingBoxScale = 1.0f
@@ -689,6 +692,358 @@ namespace LODDebug {
         return lodComp.currentLOD;
     }
 }
+
+/**
+ * @brief LOD 视锥体裁剪系统
+ * 
+ * 结合视锥体裁剪和 LOD 选择，进一步提升性能
+ * 在视锥体裁剪的同时计算 LOD 级别，返回按 LOD 分组的可见实体列表
+ * 
+ * **使用示例**：
+ * @code
+ * // 获取主相机
+ * Camera* mainCamera = GetMainCamera();
+ * 
+ * // 批量进行视锥体裁剪和 LOD 选择
+ * auto visibleEntitiesByLOD = LODFrustumCullingSystem::BatchCullAndSelectLOD(
+ *     entities,
+ *     &world,
+ *     mainCamera,
+ *     frameId
+ * );
+ * 
+ * // 按 LOD 级别渲染
+ * for (const auto& [lodLevel, entities] : visibleEntitiesByLOD) {
+ *     RenderLODGroup(lodLevel, entities);
+ * }
+ * @endcode
+ */
+class LODFrustumCullingSystem {
+public:
+    /**
+     * @brief 批量进行视锥体裁剪和 LOD 选择
+     * 
+     * 对实体列表同时进行视锥体裁剪和 LOD 级别计算，返回按 LOD 分组的可见实体列表
+     * 
+     * @param entities 实体列表（应该包含 TransformComponent，可选 LODComponent）
+     * @param world ECS World 对象指针
+     * @param camera 相机对象（用于获取视锥体和位置）
+     * @param frameId 当前帧 ID（用于避免重复计算）
+     * @return 按 LOD 级别分组的可见实体列表
+     * 
+     * @note 如果实体没有 LODComponent，会被归类到 LODLevel::LOD0
+     * @note 如果实体不在视锥体内，会被跳过（不包含在结果中）
+     * @note 如果实体的 LOD 级别是 Culled，会被跳过（不包含在结果中）
+     * 
+     * **性能优化**：
+     * - 先进行视锥体裁剪，减少需要计算 LOD 的实体数量
+     * - 批量计算距离和 LOD 级别，提升缓存命中率
+     * - 使用帧 ID 避免重复计算
+     */
+    static std::map<LODLevel, std::vector<ECS::EntityID>> BatchCullAndSelectLOD(
+        const std::vector<ECS::EntityID>& entities,
+        ECS::World* world,
+        const Camera* camera,
+        uint64_t frameId
+    ) {
+        std::map<LODLevel, std::vector<ECS::EntityID>> result;
+        
+        if (!world || !camera || entities.empty()) {
+            return result;
+        }
+        
+        // 获取视锥体和相机位置
+        const Frustum& frustum = camera->GetFrustum();
+        Vector3 cameraPos = camera->GetPosition();
+        
+        // 遍历所有实体
+        for (ECS::EntityID entity : entities) {
+            // 检查是否有 Transform 组件
+            if (!world->HasComponent<ECS::TransformComponent>(entity)) {
+                continue;
+            }
+            
+            auto& transformComp = world->GetComponent<ECS::TransformComponent>(entity);
+            if (!transformComp.transform) {
+                continue;
+            }
+            
+            // 获取实体位置和包围球半径
+            Vector3 entityPos = transformComp.GetPosition();
+            
+            // 尝试获取包围球半径（从 MeshRenderComponent 或使用默认值）
+            float radius = 1.0f;  // 默认半径
+            if (world->HasComponent<ECS::MeshRenderComponent>(entity)) {
+                auto& meshComp = world->GetComponent<ECS::MeshRenderComponent>(entity);
+                if (meshComp.mesh) {
+                    // 尝试从网格获取包围盒
+                    AABB bounds = meshComp.mesh->CalculateBounds();
+                    // 检查包围盒是否有效（min <= max）
+                    if (bounds.min.x() <= bounds.max.x() && 
+                        bounds.min.y() <= bounds.max.y() && 
+                        bounds.min.z() <= bounds.max.z()) {
+                        Vector3 boundsSize = bounds.GetSize();
+                        // 使用包围盒对角线的一半作为半径（与 MeshRenderSystem 保持一致）
+                        radius = boundsSize.norm() * 0.5f;
+                        
+                        // 考虑Transform的缩放（与 MeshRenderSystem 保持一致）
+                        if (transformComp.transform) {
+                            Vector3 scale = transformComp.transform->GetScale();
+                            float maxScale = std::max(std::max(scale.x(), scale.y()), scale.z());
+                            radius *= maxScale;
+                        }
+                    }
+                }
+            }
+            
+            // ==================== 近距离保护：相机附近的物体永不剔除 ====================
+            // 与 MeshRenderSystem::ShouldCull 保持一致
+            Vector3 cameraPos = camera->GetPosition();
+            float distanceToCamera = (entityPos - cameraPos).norm();
+            const float noCullRadius = 5.0f;  // 5米内的物体不剔除
+            
+            bool skipFrustumCull = false;
+            if (distanceToCamera < noCullRadius + radius) {
+                // 物体在相机附近，跳过视锥体裁剪，直接处理LOD选择
+                skipFrustumCull = true;
+            }
+            
+            // ==================== 视锥体裁剪 ====================
+            if (!skipFrustumCull) {
+                // 扩大包围球半径以避免过度剔除（与 MeshRenderSystem 保持一致）
+                // 增加更大的安全边距，避免边缘物体被过度剔除
+                // 注意：从1.5倍增加到2.5倍，提供更大的安全边距，避免下边和左右两边的物体被过度剔除
+                float expandedRadius = radius * 2.5f;  // 增加到2.5倍，提供更大的安全边距
+                
+                if (!frustum.IntersectsSphere(entityPos, expandedRadius)) {
+                    // 实体不在视锥体内，跳过
+                    continue;
+                }
+            }
+            
+            // ==================== LOD 选择 ====================
+            LODLevel lodLevel = LODLevel::LOD0;  // 默认 LOD0
+            
+            if (world->HasComponent<ECS::LODComponent>(entity)) {
+                auto& lodComp = world->GetComponent<ECS::LODComponent>(entity);
+                
+                if (lodComp.config.enabled) {
+                    // 计算距离
+                    float distance = LODSelector::CalculateDistance(entityPos, cameraPos);
+                    
+                    // 计算 LOD 级别
+                    lodLevel = lodComp.config.CalculateLOD(distance);
+                    
+                    // 如果 LOD 级别是 Culled，跳过
+                    if (lodLevel == LODLevel::Culled) {
+                        continue;
+                    }
+                    
+                    // 更新 LOD 组件（与 LODSelector::BatchCalculateLOD 保持一致）
+                    // 第一次计算时（lastDistance为0），直接更新LOD级别
+                    bool isFirstUpdate = (lodComp.lastDistance == 0.0f);
+                    
+                    if (isFirstUpdate || lodLevel != lodComp.currentLOD) {
+                        lodComp.currentLOD = lodLevel;
+                        lodComp.lodSwitchCount++;
+                        lodComp.lastLOD = lodComp.currentLOD;
+                    }
+                    
+                    lodComp.lastDistance = distance;
+                    lodComp.lastUpdateFrame = frameId;
+                }
+            }
+            
+            // 将实体添加到对应 LOD 级别的列表中
+            result[lodLevel].push_back(entity);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * @brief 批量进行视锥体裁剪和 LOD 选择（使用包围盒版本）
+     * 
+     * 与 BatchCullAndSelectLOD 类似，但使用包围盒进行更准确的视锥体裁剪和距离计算
+     * 
+     * @param entities 实体列表
+     * @param world ECS World 对象指针
+     * @param camera 相机对象
+     * @param frameId 当前帧 ID
+     * @param getBounds 函数，用于获取实体的包围盒（可选，如果为 nullptr 则使用默认包围球）
+     * @return 按 LOD 级别分组的可见实体列表
+     * 
+     * @note getBounds 函数签名：AABB(EntityID entity)
+     * @note 如果 getBounds 为 nullptr，则使用默认的包围球进行视锥体裁剪
+     */
+    static std::map<LODLevel, std::vector<ECS::EntityID>> BatchCullAndSelectLODWithBounds(
+        const std::vector<ECS::EntityID>& entities,
+        ECS::World* world,
+        const Camera* camera,
+        uint64_t frameId,
+        std::function<AABB(ECS::EntityID)> getBounds = nullptr
+    ) {
+        std::map<LODLevel, std::vector<ECS::EntityID>> result;
+        
+        if (!world || !camera || entities.empty()) {
+            return result;
+        }
+        
+        // 获取视锥体和相机位置
+        const Frustum& frustum = camera->GetFrustum();
+        Vector3 cameraPos = camera->GetPosition();
+        
+        // 遍历所有实体
+        for (ECS::EntityID entity : entities) {
+            // 检查是否有 Transform 组件
+            if (!world->HasComponent<ECS::TransformComponent>(entity)) {
+                continue;
+            }
+            
+            auto& transformComp = world->GetComponent<ECS::TransformComponent>(entity);
+            if (!transformComp.transform) {
+                continue;
+            }
+            
+            // 获取实体位置
+            Vector3 entityPos = transformComp.GetPosition();
+            
+            // ==================== 视锥体裁剪（使用包围盒）====================
+            bool isVisible = false;
+            float radius = 1.0f;  // 默认半径（用于距离计算）
+            Vector3 cameraPos = camera->GetPosition();
+            float distanceToCamera = (entityPos - cameraPos).norm();
+            const float noCullRadius = 5.0f;  // 近距离保护半径
+            
+            if (getBounds) {
+                // 使用提供的包围盒函数
+                AABB bounds = getBounds(entity);
+                // 检查包围盒是否有效（min <= max）
+                if (bounds.min.x() <= bounds.max.x() && 
+                    bounds.min.y() <= bounds.max.y() && 
+                    bounds.min.z() <= bounds.max.z()) {
+                    // 计算包围盒大小（用于距离计算）
+                    Vector3 boundsSize = bounds.GetSize();
+                    radius = boundsSize.norm() * 0.5f;  // 使用对角线的一半
+                    
+                    // 考虑Transform的缩放
+                    if (transformComp.transform) {
+                        Vector3 scale = transformComp.transform->GetScale();
+                        float maxScale = std::max(std::max(scale.x(), scale.y()), scale.z());
+                        radius *= maxScale;
+                    }
+                    
+                    // ==================== 近距离保护 ====================
+                    if (distanceToCamera < noCullRadius + radius) {
+                        // 物体在相机附近，不剔除
+                        isVisible = true;
+                    } else {
+                        // 扩大包围盒进行视锥体裁剪，避免过度剔除
+                        // 使用包围盒的扩展版本（增加安全边距）
+                        AABB expandedBounds;
+                        Vector3 extents = bounds.GetExtents();
+                        Vector3 center = bounds.GetCenter();
+                        // 扩大包围盒（增加25%的安全边距）
+                        Vector3 expandedExtents = extents * 1.25f;
+                        expandedBounds.min = center - expandedExtents;
+                        expandedBounds.max = center + expandedExtents;
+                        
+                        isVisible = frustum.IntersectsAABB(expandedBounds);
+                    }
+                } else {
+                    // 包围盒无效，使用默认包围球
+                    radius = 1.0f;
+                    
+                    // ==================== 近距离保护 ====================
+                    if (distanceToCamera < noCullRadius + radius) {
+                        isVisible = true;
+                    } else {
+                        float expandedRadius = radius * 2.5f;  // 增加到2.5倍
+                        isVisible = frustum.IntersectsSphere(entityPos, expandedRadius);
+                    }
+                }
+            } else {
+                // 没有提供包围盒函数，使用默认包围球
+                radius = 1.0f;
+                
+                // ==================== 近距离保护 ====================
+                if (distanceToCamera < noCullRadius + radius) {
+                    // 物体在相机附近，不剔除
+                    isVisible = true;
+                } else {
+                    // 扩大包围球半径以避免过度剔除
+                    float expandedRadius = radius * 2.5f;  // 增加到2.5倍
+                    isVisible = frustum.IntersectsSphere(entityPos, expandedRadius);
+                }
+            }
+            
+            if (!isVisible) {
+                // 实体不在视锥体内，跳过
+                continue;
+            }
+            
+            // ==================== LOD 选择 ====================
+            LODLevel lodLevel = LODLevel::LOD0;  // 默认 LOD0
+            
+            if (world->HasComponent<ECS::LODComponent>(entity)) {
+                auto& lodComp = world->GetComponent<ECS::LODComponent>(entity);
+                
+                if (lodComp.config.enabled) {
+                    // 计算距离（使用包围盒版本）
+                    float distance;
+                    
+                    if (getBounds) {
+                        AABB bounds = getBounds(entity);
+                        // 检查包围盒是否有效（min <= max）
+                        if (bounds.min.x() <= bounds.max.x() && 
+                            bounds.min.y() <= bounds.max.y() && 
+                            bounds.min.z() <= bounds.max.z()) {
+                            distance = LODSelector::CalculateDistanceWithBounds(
+                                entityPos,
+                                bounds,
+                                cameraPos,
+                                lodComp.config.boundingBoxScale
+                            );
+                        } else {
+                            distance = LODSelector::CalculateDistance(entityPos, cameraPos);
+                        }
+                    } else {
+                        distance = LODSelector::CalculateDistance(entityPos, cameraPos);
+                    }
+                    
+                    // 计算 LOD 级别
+                    lodLevel = lodComp.config.CalculateLOD(distance);
+                    
+                    // 如果 LOD 级别是 Culled，跳过
+                    if (lodLevel == LODLevel::Culled) {
+                        continue;
+                    }
+                    
+                    // 更新 LOD 组件（与 LODSelector::BatchCalculateLODWithBounds 保持一致）
+                    bool isFirstUpdate = (lodComp.lastDistance == 0.0f);
+                    
+                    if (isFirstUpdate) {
+                        lodComp.currentLOD = lodLevel;
+                        lodComp.lodSwitchCount++;
+                        lodComp.lastLOD = lodComp.currentLOD;
+                    } else if (lodLevel != lodComp.currentLOD) {
+                        lodComp.currentLOD = lodLevel;
+                        lodComp.lodSwitchCount++;
+                        lodComp.lastLOD = lodComp.currentLOD;
+                    }
+                    
+                    lodComp.lastDistance = distance;
+                    lodComp.lastUpdateFrame = frameId;
+                }
+            }
+            
+            // 将实体添加到对应 LOD 级别的列表中
+            result[lodLevel].push_back(entity);
+        }
+        
+        return result;
+    }
+};
 
 } // namespace Render
 

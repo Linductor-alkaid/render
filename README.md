@@ -104,10 +104,6 @@ cmake --build .
 ### ⚡ 性能优化
 - [数学库性能优化报告](docs/MATH_FINAL_OPTIMIZATION_REPORT.md) **新增**
 
-## 许可证
-
-MIT License
-
 ## 作者
 
 Linductor
