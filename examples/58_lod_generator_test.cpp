@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
     world->Initialize();
 
     world->RegisterComponent<TransformComponent>();
-    world->RegisterComponent<MeshRenderComponent>();
+    world->RegisterComponent<ModelComponent>();
     world->RegisterComponent<LODComponent>();
     world->RegisterComponent<CameraComponent>();
     world->RegisterComponent<NameComponent>();
@@ -236,7 +236,7 @@ int main(int argc, char* argv[]) {
     world->RegisterSystem<TransformSystem>();
     world->RegisterSystem<CameraSystem>();
     world->RegisterSystem<UniformSystem>(renderer);
-    world->RegisterSystem<MeshRenderSystem>(renderer);
+    world->RegisterSystem<ModelRenderSystem>(renderer);
 
     world->PostInitialize();
 
@@ -292,67 +292,43 @@ int main(int argc, char* argv[]) {
     world->RegisterSystem<LODUpdateSystemImpl>();
     */
 
-    // 创建 4 个实体，分别渲染 LOD0, LOD1, LOD2, LOD3
+    // 创建 4 个实体，分别直接使用 LOD0, LOD1, LOD2, LOD3 的完整模型
+    // 不使用自动LOD切换，每个实体固定显示对应LOD级别的模型
     std::vector<EntityID> lodEntities;
-    // allLODMeshes 已在上面定义和填充
 
-    // 获取材质（使用模型中的第一个材质）
-    Ref<Material> material = nullptr;
-    model->AccessParts([&](const std::vector<ModelPart>& parts) {
-        if (!parts.empty() && parts[0].material) {
-            material = parts[0].material;
-        }
-    });
-
-    if (!material) {
-        // 创建默认材质
-        material = std::make_shared<Material>();
-        material->SetShader(phongShader);
-        material->SetColor("diffuseColor", Color(0.8f, 0.8f, 0.9f, 1.0f));
+    // 确保所有LOD模型都已生成
+    if (lodModels.size() < 4 || !lodModels[0] || !lodModels[1] || !lodModels[2] || !lodModels[3]) {
+        Logger::GetInstance().Error("[LODGeneratorTest] Not all LOD models are available");
+        Renderer::Destroy(renderer);
+        return -1;
     }
 
-    for (size_t i = 0; i < allLODMeshes.size(); ++i) {
+    for (size_t i = 0; i <= 3; ++i) {
         EntityID entity = world->CreateEntity({ 
             .name = "Miku_LOD" + std::to_string(i), 
             .active = true 
         });
 
-        // 设置位置（横向排列）
+        // 设置位置（横向排列，间距更大）
         TransformComponent transform;
-        transform.SetPosition(Vector3((i - 1.5f) * 3.0f, 0.0f, 0.0f));
+        transform.SetPosition(Vector3((i - 1.5f) * 8.0f, 0.0f, 0.0f));  // 间距从3.0增加到5.0
         transform.SetRotation(MathUtils::FromEulerDegrees(0.0f, 180.0f, 0.0f));
         transform.SetScale(1.0f);
         world->AddComponent(entity, transform);
 
-        // 设置网格渲染组件（使用LOD0作为基础网格）
-        MeshRenderComponent meshComp;
-        meshComp.mesh = allLODMeshes[0];  // 所有实体都使用LOD0作为基础
-        meshComp.material = material;
-        meshComp.layerID = 0;
-        meshComp.castShadows = true;
-        meshComp.receiveShadows = true;
-        meshComp.resourcesLoaded = true;  // 标记资源已加载（因为我们直接设置了 mesh 和 material）
-        world->AddComponent(entity, meshComp);
+        // 设置模型组件：直接使用对应LOD级别的模型
+        // LOD0实体使用lodModels[0]，LOD1实体使用lodModels[1]，以此类推
+        ModelComponent modelComp;
+        modelComp.SetModel(lodModels[i]);  // 直接使用对应LOD级别的模型
+        modelComp.visible = true;
+        modelComp.castShadows = true;
+        modelComp.receiveShadows = true;
+        modelComp.layerID = 0;
+        modelComp.renderPriority = 0;
+        world->AddComponent(entity, modelComp);
 
-        // 为所有实体设置 LOD 组件，配置完整的 LOD 网格列表
-        // 然后直接设置 currentLOD 来测试不同级别的效果
-        LODComponent lodComp;
-        lodComp.config.enabled = true;
-        lodComp.config.distanceThresholds = {50.0f, 150.0f, 500.0f, 1000.0f};
-        lodComp.config.transitionDistance = 10.0f;
-        
-        // 配置完整的 LOD 网格列表（所有级别）
-        lodComp.config.lodMeshes.resize(4);
-        lodComp.config.lodMeshes[0] = allLODMeshes[0];  // LOD0
-        lodComp.config.lodMeshes[1] = allLODMeshes[1];  // LOD1
-        lodComp.config.lodMeshes[2] = allLODMeshes[2];  // LOD2
-        lodComp.config.lodMeshes[3] = allLODMeshes[3];  // LOD3
-        
-        // 直接设置当前 LOD 级别，用于测试不同级别的视觉效果
-        // 这样可以直接看到 LOD0, LOD1, LOD2, LOD3 的区别
-        lodComp.currentLOD = static_cast<LODLevel>(i);
-        
-        world->AddComponent(entity, lodComp);
+        // 不添加LODComponent，禁用自动LOD切换
+        // 每个实体固定显示对应LOD级别的模型，不会根据距离自动切换
 
         lodEntities.push_back(entity);
     }
@@ -360,6 +336,7 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("[LODGeneratorTest] Created 4 entities (LOD0, LOD1, LOD2, LOD3)");
     Logger::GetInstance().Info("[LODGeneratorTest] Controls: ESC to exit");
     Logger::GetInstance().Info("[LODGeneratorTest] Controls: WASD 前后左右, Q/E 上下, Shift 加速, 鼠标视角, Tab 捕获/释放鼠标");
+    Logger::GetInstance().Info("[LODGeneratorTest] Controls: 按 G 键切换网格渲染模式（线框/填充）");
 
     bool running = true;
     Uint64 prevTicks = SDL_GetTicks();
@@ -369,6 +346,7 @@ int main(int argc, char* argv[]) {
     float cameraYaw = MathUtils::RadiansToDegrees(std::atan2(toTarget.x(), -toTarget.z()));
     float cameraPitch = MathUtils::RadiansToDegrees(std::asin(std::clamp(toTarget.y(), -1.0f, 1.0f)));
     bool mouseCaptured = true;
+    bool wireframeMode = true;  // 默认启用线框模式
 
     while (running) {
         SDL_Event event;
@@ -384,6 +362,13 @@ int main(int argc, char* argv[]) {
                 if (auto context = renderer->GetContext()) {
                     SDL_SetWindowRelativeMouseMode(context->GetWindow(), mouseCaptured);
                 }
+            }
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_G) {
+                wireframeMode = !wireframeMode;
+                Logger::GetInstance().InfoFormat(
+                    "[LODGeneratorTest] 网格渲染模式: %s",
+                    wireframeMode ? "线框模式" : "填充模式"
+                );
             }
             if (mouseCaptured && event.type == SDL_EVENT_MOUSE_MOTION) {
                 constexpr float sensitivity = 0.15f;
@@ -436,9 +421,13 @@ int main(int argc, char* argv[]) {
         renderer->BeginFrame();
         renderer->Clear();
 
-        // 启用网格模式（线框模式）
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glLineWidth(1.0f);  // 设置线宽
+        // 根据按键切换网格渲染模式（线框/填充）
+        if (wireframeMode) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(1.0f);  // 设置线宽
+        } else {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
 
         if (auto uniformMgr = phongShader->GetUniformManager()) {
             uniformMgr->SetVector3("uLightPos", sceneConfig.lightPosition);
@@ -453,9 +442,6 @@ int main(int argc, char* argv[]) {
 
         world->Update(deltaTime);
         renderer->FlushRenderQueue();
-        
-        // 恢复填充模式（可选，如果需要在同一帧中渲染其他填充物体）
-        // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         renderer->EndFrame();
         renderer->Present();
