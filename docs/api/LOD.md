@@ -146,6 +146,24 @@ LOD 切换的平滑过渡距离（单位：世界单位）。**注意**：当前
 #### enabled
 是否启用 LOD。如果为 `false`，始终使用 LOD0（最高细节）。
 
+#### frustumOutBehavior（阶段3.3扩展）
+视锥体外的行为模式，控制视锥体外的实体如何处理：
+- `Cull`（默认）：完全剔除，不渲染（性能最好）
+- `UseLowerLOD`：使用更低的LOD级别，降低细节但保持光影效果
+- `UseMinimalLOD`：使用最低LOD级别（LOD3），极简渲染
+
+**使用场景**：
+- `Cull`：适合大多数情况，完全剔除视锥体外的物体
+- `UseLowerLOD`：需要保持光影效果时（如阴影投射），降低细节但继续渲染
+- `UseMinimalLOD`：需要极简渲染时，使用最低LOD级别
+
+#### frustumOutLODReduction（阶段3.3扩展）
+当 `frustumOutBehavior == UseLowerLOD` 时，降低多少级LOD。默认值：2（降低2级）
+
+**示例**：
+- 如果正常是LOD1，降级2级后使用LOD3
+- 如果正常是LOD0，降级2级后使用LOD2
+
 **方法说明**:
 
 ##### CalculateLOD
@@ -222,6 +240,10 @@ namespace ECS {
 - `lastUpdateFrame` - 上次更新的帧 ID（避免每帧都更新）
 - `lodSwitchCount` - LOD 切换次数（用于性能分析）
 - `lastLOD` - 上次的 LOD 级别（用于检测 LOD 切换）
+- `affectedByFrustumCulling` - 是否受视锥体裁剪影响（阶段3.3扩展）
+  - 如果为 `false`，该实体不受视锥体裁剪影响，始终按距离计算LOD
+  - 用于重要的物体（如UI、特效等）需要保证渲染
+  - 默认值：`true`（受视锥体裁剪影响）
 
 **方法说明**:
 
@@ -1268,6 +1290,12 @@ if (meshSystem) {
 - 需要启用 LOD 实例化渲染才能使用此优化
 - 如果发现物体被过度剔除，可以调整安全边距（修改代码中的 `2.5f` 系数）
 
+**视锥体外的行为配置**（阶段3.3扩展）:
+- **完全剔除**（`Cull`，默认）：性能最好，适合大多数情况
+- **使用更低LOD**（`UseLowerLOD`）：降低细节但保持光影效果，适合需要阴影投射的场景
+- **使用最低LOD**（`UseMinimalLOD`）：极简渲染，适合需要极简渲染的场景
+- **不受视锥体裁剪影响**（`affectedByFrustumCulling = false`）：用于重要的物体需要保证渲染
+
 ---
 
 ## 统计信息
@@ -1703,11 +1731,19 @@ renderer->SetLODInstancingEnabled(true);
 
 ---
 
-**文档版本**: v1.4  
+**文档版本**: v1.5  
 **最后更新**: 2025-11-29  
 **对应代码版本**: RenderEngine v1.0.0
 
 **更新历史**:
+- **v1.5** (2025-11-29): 扩展阶段3.3 - LOD 视锥体裁剪优化配置选项
+  - 添加 `LODConfig::FrustumOutBehavior` 枚举，支持视锥体外的行为配置（Cull、UseLowerLOD、UseMinimalLOD）
+  - 添加 `LODConfig::frustumOutBehavior` 和 `frustumOutLODReduction` 配置选项
+  - 添加 `LODComponent::affectedByFrustumCulling` 标志，支持标记实体不受视锥体裁剪影响
+  - 扩展 `LODFrustumCullingSystem`，支持视锥体外的实体使用更低LOD级别
+  - 添加"配置视锥体外的行为"使用示例（方式A-D）
+  - 添加"常见问题"章节中的"如何配置视锥体外的物体使用更低LOD级别"和"如何标记某些实体不受视锥体裁剪影响"问题
+  - 更新性能优化建议，添加视锥体外的行为配置说明
 - **v1.4** (2025-11-29): 添加阶段3.3 - LOD 视锥体裁剪优化
   - 添加 `LODFrustumCullingSystem` 类文档，包含 `BatchCullAndSelectLOD` 和 `BatchCullAndSelectLODWithBounds` 方法说明
   - 添加 `MeshRenderSystem::SetLODFrustumCullingEnabled()` 和 `IsLODFrustumCullingEnabled()` 方法说明

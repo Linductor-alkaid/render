@@ -163,6 +163,41 @@ struct LODConfig {
      */
     bool enabled = true;
     
+    // ==================== 视锥体裁剪配置（阶段3.3扩展）====================
+    
+    /**
+     * @brief 视锥体外的行为模式
+     * 
+     * 控制视锥体外的实体如何处理：
+     * - Cull: 完全剔除（不渲染）
+     * - UseLowerLOD: 使用更低的LOD级别（降低细节但保持光影效果）
+     * - UseMinimalLOD: 使用最低LOD级别（LOD3，极简渲染）
+     */
+    enum class FrustumOutBehavior {
+        Cull,              ///< 完全剔除（默认）
+        UseLowerLOD,      ///< 使用更低的LOD级别（降低1-2级）
+        UseMinimalLOD     ///< 使用最低LOD级别（LOD3）
+    };
+    
+    /**
+     * @brief 视锥体外的行为
+     * 
+     * 当实体不在视锥体内时，如何处理：
+     * - Cull: 完全剔除，不渲染（默认，性能最好）
+     * - UseLowerLOD: 使用更低的LOD级别，降低细节但保持光影效果
+     * - UseMinimalLOD: 使用最低LOD级别（LOD3），极简渲染
+     */
+    FrustumOutBehavior frustumOutBehavior = FrustumOutBehavior::Cull;
+    
+    /**
+     * @brief 视锥体外LOD降级级别数
+     * 
+     * 当 frustumOutBehavior == UseLowerLOD 时，降低多少级LOD
+     * 例如：如果正常是LOD1，降级2级后使用LOD3
+     * 默认值：2（降低2级）
+     */
+    int frustumOutLODReduction = 2;
+    
     // ==================== 辅助方法 ====================
     
     /**
@@ -321,6 +356,16 @@ struct LODComponent {
      * @brief LOD 配置
      */
     LODConfig config;
+    
+    /**
+     * @brief 是否受视锥体裁剪影响
+     * 
+     * 如果为 false，该实体不受视锥体裁剪影响，始终按距离计算LOD
+     * 用于重要的物体（如UI、特效等）需要保证渲染
+     * 
+     * 默认值：true（受视锥体裁剪影响）
+     */
+    bool affectedByFrustumCulling = true;
     
     /**
      * @brief 当前 LOD 级别
@@ -809,20 +854,47 @@ public:
             }
             
             // ==================== 视锥体裁剪 ====================
-            if (!skipFrustumCull) {
+            bool isInFrustum = true;
+            bool shouldCull = false;
+            
+            // 检查是否受视锥体裁剪影响
+            bool affectedByCulling = true;
+            LODConfig::FrustumOutBehavior frustumOutBehavior = LODConfig::FrustumOutBehavior::Cull;
+            int frustumOutLODReduction = 2;
+            
+            if (world->HasComponent<ECS::LODComponent>(entity)) {
+                auto& lodComp = world->GetComponent<ECS::LODComponent>(entity);
+                affectedByCulling = lodComp.affectedByFrustumCulling;
+                frustumOutBehavior = lodComp.config.frustumOutBehavior;
+                frustumOutLODReduction = lodComp.config.frustumOutLODReduction;
+            }
+            
+            if (!skipFrustumCull && affectedByCulling) {
                 // 扩大包围球半径以避免过度剔除（与 MeshRenderSystem 保持一致）
                 // 增加更大的安全边距，避免边缘物体被过度剔除
                 // 注意：从1.5倍增加到2.5倍，提供更大的安全边距，避免下边和左右两边的物体被过度剔除
                 float expandedRadius = radius * 2.5f;  // 增加到2.5倍，提供更大的安全边距
                 
-                if (!frustum.IntersectsSphere(entityPos, expandedRadius)) {
-                    // 实体不在视锥体内，跳过
-                    continue;
+                isInFrustum = frustum.IntersectsSphere(entityPos, expandedRadius);
+                
+                if (!isInFrustum) {
+                    // 实体不在视锥体内
+                    // 根据配置决定如何处理
+                    if (frustumOutBehavior == LODConfig::FrustumOutBehavior::Cull) {
+                        // 完全剔除，跳过
+                        shouldCull = true;
+                    }
+                    // 否则继续处理，使用降低的LOD级别
                 }
+            }
+            
+            if (shouldCull) {
+                continue;
             }
             
             // ==================== LOD 选择 ====================
             LODLevel lodLevel = LODLevel::LOD0;  // 默认 LOD0
+            bool useReducedLOD = false;  // 是否使用降低的LOD级别
             
             if (world->HasComponent<ECS::LODComponent>(entity)) {
                 auto& lodComp = world->GetComponent<ECS::LODComponent>(entity);
@@ -833,6 +905,23 @@ public:
                     
                     // 计算 LOD 级别
                     lodLevel = lodComp.config.CalculateLOD(distance);
+                    
+                    // 如果不在视锥体内，根据配置降低LOD级别
+                    if (!isInFrustum && affectedByCulling) {
+                        if (frustumOutBehavior == LODConfig::FrustumOutBehavior::UseLowerLOD) {
+                            // 降低指定的LOD级别数
+                            int currentLODIndex = static_cast<int>(lodLevel);
+                            int reducedLODIndex = currentLODIndex + frustumOutLODReduction;
+                            // 限制在有效范围内
+                            reducedLODIndex = std::min(reducedLODIndex, static_cast<int>(LODLevel::LOD3));
+                            lodLevel = static_cast<LODLevel>(reducedLODIndex);
+                            useReducedLOD = true;
+                        } else if (frustumOutBehavior == LODConfig::FrustumOutBehavior::UseMinimalLOD) {
+                            // 使用最低LOD级别
+                            lodLevel = LODLevel::LOD3;
+                            useReducedLOD = true;
+                        }
+                    }
                     
                     // 如果 LOD 级别是 Culled，跳过
                     if (lodLevel == LODLevel::Culled) {
@@ -851,6 +940,13 @@ public:
                     
                     lodComp.lastDistance = distance;
                     lodComp.lastUpdateFrame = frameId;
+                }
+            } else if (!isInFrustum && affectedByCulling) {
+                // 没有LODComponent但不在视锥体内，根据默认行为处理
+                if (frustumOutBehavior == LODConfig::FrustumOutBehavior::Cull) {
+                    continue;  // 默认完全剔除
+                } else if (frustumOutBehavior == LODConfig::FrustumOutBehavior::UseMinimalLOD) {
+                    lodLevel = LODLevel::LOD3;  // 使用最低LOD
                 }
             }
             
@@ -977,8 +1073,30 @@ public:
                 }
             }
             
-            if (!isVisible) {
-                // 实体不在视锥体内，跳过
+            // ==================== 视锥体裁剪处理 ====================
+            bool shouldCull = false;
+            bool affectedByCulling = true;
+            LODConfig::FrustumOutBehavior frustumOutBehavior = LODConfig::FrustumOutBehavior::Cull;
+            int frustumOutLODReduction = 2;
+            
+            if (world->HasComponent<ECS::LODComponent>(entity)) {
+                auto& lodComp = world->GetComponent<ECS::LODComponent>(entity);
+                affectedByCulling = lodComp.affectedByFrustumCulling;
+                frustumOutBehavior = lodComp.config.frustumOutBehavior;
+                frustumOutLODReduction = lodComp.config.frustumOutLODReduction;
+            }
+            
+            if (!isVisible && affectedByCulling) {
+                // 实体不在视锥体内
+                // 根据配置决定如何处理
+                if (frustumOutBehavior == LODConfig::FrustumOutBehavior::Cull) {
+                    // 完全剔除，跳过
+                    shouldCull = true;
+                }
+                // 否则继续处理，使用降低的LOD级别
+            }
+            
+            if (shouldCull) {
                 continue;
             }
             
@@ -1014,6 +1132,21 @@ public:
                     // 计算 LOD 级别
                     lodLevel = lodComp.config.CalculateLOD(distance);
                     
+                    // 如果不在视锥体内，根据配置降低LOD级别
+                    if (!isVisible && affectedByCulling) {
+                        if (frustumOutBehavior == LODConfig::FrustumOutBehavior::UseLowerLOD) {
+                            // 降低指定的LOD级别数
+                            int currentLODIndex = static_cast<int>(lodLevel);
+                            int reducedLODIndex = currentLODIndex + frustumOutLODReduction;
+                            // 限制在有效范围内
+                            reducedLODIndex = std::min(reducedLODIndex, static_cast<int>(LODLevel::LOD3));
+                            lodLevel = static_cast<LODLevel>(reducedLODIndex);
+                        } else if (frustumOutBehavior == LODConfig::FrustumOutBehavior::UseMinimalLOD) {
+                            // 使用最低LOD级别
+                            lodLevel = LODLevel::LOD3;
+                        }
+                    }
+                    
                     // 如果 LOD 级别是 Culled，跳过
                     if (lodLevel == LODLevel::Culled) {
                         continue;
@@ -1034,6 +1167,13 @@ public:
                     
                     lodComp.lastDistance = distance;
                     lodComp.lastUpdateFrame = frameId;
+                }
+            } else if (!isVisible && affectedByCulling) {
+                // 没有LODComponent但不在视锥体内，根据默认行为处理
+                if (frustumOutBehavior == LODConfig::FrustumOutBehavior::Cull) {
+                    continue;  // 默认完全剔除
+                } else if (frustumOutBehavior == LODConfig::FrustumOutBehavior::UseMinimalLOD) {
+                    lodLevel = LODLevel::LOD3;  // 使用最低LOD
                 }
             }
             
