@@ -236,7 +236,11 @@ int main(int argc, char* argv[]) {
     }
     Logger::GetInstance().Info("✓ 渲染器初始化成功");
     
-    // 设置渲染状态
+    // ==================== 禁用 LOD 实例化渲染（35测试不需要）====================
+    // 注意：Renderer默认启用LOD实例化，但对于35测试，我们需要禁用它以使用传统渲染路径
+    renderer->SetLODInstancingEnabled(false);
+    Logger::GetInstance().Info("✓ LOD实例化渲染已禁用（使用传统渲染路径）");
+    
     auto renderState = renderer->GetRenderState();
     renderState->SetDepthTest(true);
     renderState->SetCullFace(CullFace::Back);
