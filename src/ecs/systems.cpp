@@ -1916,27 +1916,27 @@ void MeshRenderSystem::SubmitRenderables() {
             }
             
             // ==================== 实例化渲染支持 ====================
-            // 注意：完整的实例化渲染需要：
-            // 1. 上传实例变换矩阵到 GPU（VBO 或 UBO）
-            // 2. 着色器支持实例化（layout(location=3) in mat4 instanceMatrix）
-            // 3. 调用 DrawInstanced 而不是 Draw
-            
-            // 当前实现：检测实例化标志并记录警告
+            // 注意：传统实例化（useInstancing + instanceCount）用于单个实体渲染多个实例的场景
+            // 但推荐使用 LOD 实例化渲染（通过创建多个实体，每个实体有自己的 TransformComponent）
+            // LOD 实例化会自动将相同 mesh/material 的实体批量渲染，性能更好且符合 ECS 设计理念
+            //
+            // 如果检测到传统实例化标志，记录信息（但不实现，因为 LOD 实例化已覆盖此需求）
             if (meshComp.useInstancing && meshComp.instanceCount > 1) {
                 static bool warnedOnce = false;
                 if (!warnedOnce) {
-                    Logger::GetInstance().WarningFormat("[MeshRenderSystem] Instanced rendering detected but not fully implemented. "
-                                                       "Will render single instance. See docs for full implementation.");
+                    Logger::GetInstance().InfoFormat(
+                        "[MeshRenderSystem] Traditional instancing (useInstancing=true) detected for entity %u. "
+                        "Recommendation: Use LOD instancing instead by creating multiple entities with TransformComponent. "
+                        "LOD instancing automatically batches entities with same mesh/material for better performance.",
+                        entity.index);
                     warnedOnce = true;
                 }
                 
-                // TODO: 完整实现需要：
-                // 1. 创建实例变换矩阵 VBO
-                // 2. 绑定到 VAO 的实例化属性
-                // 3. 调用 mesh->DrawInstanced(meshComp.instanceCount)
-                
-                // 临时：只渲染第一个实例
-                // 未来可以扩展 MeshRenderable 支持实例化
+                // 注意：传统实例化未实现，因为：
+                // 1. LOD 实例化已经实现了批量渲染功能（通过 LODInstancedRenderer）
+                // 2. 如果需要渲染多个相同物体，应该创建多个实体，让 LOD 实例化自动处理
+                // 3. 特殊场景（如粒子系统、草地渲染）应该使用专门的系统，而不是 MeshRenderSystem
+                // 4. 这样更符合 ECS 架构设计（每个实例是一个实体）
             }
             
             // 创建 MeshRenderable 并添加到对象池
