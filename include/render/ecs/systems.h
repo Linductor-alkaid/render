@@ -347,11 +347,24 @@ public:
 private:
     void SubmitRenderables();
     bool ShouldCull(const Vector3& position, float radius) const;
+    
+    /**
+     * @brief 检查是否启用 LOD 实例化渲染（阶段2.3）
+     * @return 如果启用返回 true
+     */
+    [[nodiscard]] bool IsLODInstancingEnabled() const;
 
     Renderer* m_renderer = nullptr;
     CameraSystem* m_cameraSystem = nullptr;
     RenderStats m_stats;
     std::vector<ModelRenderable> m_renderables;
+    
+    // LOD 实例化渲染（阶段2.2 + 阶段2.3）
+    LODInstancedRenderer m_lodRenderer;         ///< LOD 实例化渲染器
+    uint64_t m_frameId = 0;                     ///< 当前帧 ID（用于 LOD 计算）
+    
+    // 阶段3.3：LOD 视锥体裁剪优化（可选）
+    bool m_lodFrustumCullingEnabled = false;    ///< 是否启用 LOD 视锥体裁剪优化
 };
 
 // ============================================================

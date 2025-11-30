@@ -418,6 +418,8 @@ BatchableItem CreateBatchableItem(Renderable* renderable) {
             return item;
         }
         case RenderableType::Model: {
+            // Model 类型在 FlushRenderQueue 中会为每个 Part 创建独立的批处理项
+            // 这里只返回一个占位项，实际不会使用
             item.key.renderableType = RenderableType::Model;
             item.type = BatchItemType::Unsupported;
             item.batchable = false;
@@ -1095,13 +1097,108 @@ void Renderer::FlushRenderQueue() {
                     recordPtr = &fallbackLayerRecord;
                 }
 
-                if (recordPtr) {
-                    ApplyLayerOverrides(recordPtr->descriptor, recordPtr->state);
-                }
+            if (recordPtr) {
+                ApplyLayerOverrides(recordPtr->descriptor, recordPtr->state);
             }
+        }
 
+        // 特殊处理 Model 类型：为每个 ModelPart 创建独立的批处理项
+        if (renderable->GetType() == RenderableType::Model) {
+            auto* modelRenderable = static_cast<ModelRenderable*>(renderable);
+            ModelPtr model = modelRenderable->GetModel();
+            
+            if (model) {
+                Matrix4 worldMatrix = renderable->GetWorldMatrix();
+                
+                model->AccessParts([&](const std::vector<ModelPart>& parts) {
+                    for (const auto& part : parts) {
+                        if (!part.mesh || !part.material) {
+                            continue;
+                        }
+                        
+                        auto shader = part.material->GetShader();
+                        if (!shader) {
+                            continue;
+                        }
+                        
+                        const bool hasIndices = part.mesh->GetIndexCount() > 0;
+                        if (!hasIndices) {
+                            continue;
+                        }
+                        
+                        // 为每个 Part 创建独立的批处理项
+                        BatchableItem partItem{};
+                        partItem.renderable = renderable;  // 保留原始 renderable 引用
+                        partItem.type = BatchItemType::Mesh;
+                        partItem.key.renderableType = RenderableType::Model;
+                        partItem.key.layerID = renderable->GetLayerID();
+                        
+                        // 为每个 Part 构建独立的材质排序键
+                        // 使用 BuildMaterialSortKey 函数构建排序键
+                        uint32_t overrideHash = 0;
+                        uint32_t pipelineFlags = MaterialPipelineFlags_None;
+                        if (part.castShadows) {
+                            pipelineFlags |= MaterialPipelineFlags_CastShadow;
+                        }
+                        if (part.receiveShadows) {
+                            pipelineFlags |= MaterialPipelineFlags_ReceiveShadow;
+                        }
+                        
+                        // 计算覆盖哈希（可以包含纹理信息）
+                        if (auto diffuseTex = part.material->GetTexture("diffuseMap")) {
+                            overrideHash = HashCombine(overrideHash, HashPointer(diffuseTex.get()));
+                        }
+                        
+                        MaterialSortKey partSortKey = BuildMaterialSortKey(
+                            part.material.get(),
+                            overrideHash,
+                            pipelineFlags
+                        );
+                        
+                        partItem.key.materialKey = partSortKey;
+                        
+                        partItem.meshData.mesh = part.mesh;
+                        partItem.meshData.material = part.material;
+                        partItem.meshData.castShadows = part.castShadows;
+                        partItem.meshData.receiveShadows = part.receiveShadows;
+                        partItem.meshData.modelMatrix = worldMatrix * part.localTransform;
+                        partItem.meshData.hasMaterialOverride = false;
+                        
+                        partItem.key.materialHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(part.material.get()));
+                        partItem.key.shaderHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(shader.get()));
+                        partItem.key.meshHandle = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(part.mesh.get()));
+                        partItem.key.blendMode = part.material->GetBlendMode();
+                        partItem.key.cullFace = part.material->GetCullFace();
+                        partItem.key.depthTest = part.material->GetDepthTest();
+                        partItem.key.depthWrite = part.material->GetDepthWrite();
+                        partItem.key.castShadows = part.castShadows;
+                        partItem.key.receiveShadows = part.receiveShadows;
+                        partItem.key.viewHash = 0;
+                        partItem.key.projectionHash = 0;
+                        partItem.key.screenSpace = false;
+                        
+                        bool isTransparent = false;
+                        const BlendMode blendMode = part.material->GetBlendMode();
+                        if (blendMode == BlendMode::Alpha || blendMode == BlendMode::Additive) {
+                            isTransparent = true;
+                        }
+                        if (part.material->GetOpacity() < 1.0f) {
+                            isTransparent = true;
+                        }
+                        
+                        partItem.isTransparent = isTransparent;
+                        partItem.batchable = !isTransparent;
+                        partItem.instanceEligible = !isTransparent;
+                        
+                        m_batchManager.AddItem(partItem);
+                    }
+                });
+            }
+            // Model 无效时跳过，不创建批处理项
+        } else {
             m_batchManager.AddItem(CreateBatchableItem(renderable));
         }
+    }
 
         auto flushResult = m_batchManager.Flush(m_renderState.get());
         logInfo.result = flushResult;

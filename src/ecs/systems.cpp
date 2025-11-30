@@ -2284,8 +2284,50 @@ void ModelRenderSystem::Update(float deltaTime) {
         }
     }
 
+    m_frameId++;
     m_stats = RenderStats{};
+    
+    // ==================== 阶段3.1：批量 LOD 计算 ====================
+    // 在提交渲染前，批量计算所有实体的 LOD 级别
+    if (m_world && m_cameraSystem) {
+        Camera* camera = m_cameraSystem->GetMainCameraObject();
+        if (camera) {
+            Vector3 cameraPosition = camera->GetPosition();
+            
+            // 查询所有有 LODComponent 和 ModelComponent 的实体
+            auto lodEntities = m_world->Query<LODComponent, TransformComponent, ModelComponent>();
+            if (!lodEntities.empty()) {
+                // 批量计算 LOD（使用 Model 的包围盒）
+                std::vector<EntityID> entityList(lodEntities.begin(), lodEntities.end());
+                LODSelector::BatchCalculateLODWithBounds(
+                    entityList,
+                    m_world,
+                    cameraPosition,
+                    m_frameId,
+                    [this](EntityID entity) -> AABB {
+                        // 获取 Model 的包围盒
+                        if (m_world->HasComponent<ModelComponent>(entity)) {
+                            auto& modelComp = m_world->GetComponent<ModelComponent>(entity);
+                            if (modelComp.model) {
+                                return modelComp.model->GetBounds();
+                            }
+                        }
+                        return AABB();
+                    }
+                );
+            }
+        }
+    }
+    
     SubmitRenderables();
+}
+
+bool ModelRenderSystem::IsLODInstancingEnabled() const {
+    // 阶段2.3：从 Renderer 获取设置，而不是使用本地设置
+    if (m_renderer) {
+        return m_renderer->IsLODInstancingEnabled();
+    }
+    return false;  // 如果没有 Renderer，返回 false（禁用）
 }
 
 void ModelRenderSystem::SubmitRenderables() {
@@ -2308,6 +2350,349 @@ void ModelRenderSystem::SubmitRenderables() {
         Camera* camera = m_cameraSystem ? m_cameraSystem->GetMainCameraObject() : nullptr;
         Vector3 cameraPos = camera ? camera->GetPosition() : Vector3::Zero();
 
+        // ==================== 阶段2.2 + 阶段2.3: LOD 实例化渲染 ====================
+        // 如果启用 LOD 实例化渲染，使用 LODInstancedRenderer 进行批量渲染
+        // 优先级：LOD 实例化渲染 > 批处理系统
+        bool lodInstancingEnabled = IsLODInstancingEnabled();
+        bool lodInstancingAvailable = m_renderer && m_renderer->IsLODInstancingAvailable();
+        
+        if (lodInstancingEnabled && lodInstancingAvailable) {
+            // 清空上一帧的实例化渲染器
+            m_lodRenderer.Clear();
+            
+            // ==================== 阶段3.2：批量视锥体裁剪优化 ====================
+            // 如果启用阶段3.2优化，使用 LODFrustumCullingSystem 进行批量视锥体裁剪和 LOD 选择
+            std::map<LODLevel, std::vector<EntityID>> visibleEntitiesByLOD;
+            size_t totalEntities = entities.size();
+            bool useBatchCulling = m_lodFrustumCullingEnabled && m_cameraSystem;
+            
+            if (useBatchCulling) {
+                Camera* mainCamera = m_cameraSystem->GetMainCameraObject();
+                if (mainCamera) {
+                    // 使用 LODFrustumCullingSystem 进行批量视锥体裁剪和 LOD 选择
+                    std::vector<EntityID> entityList(entities.begin(), entities.end());
+                    visibleEntitiesByLOD = LODFrustumCullingSystem::BatchCullAndSelectLODWithBounds(
+                        entityList,
+                        m_world,
+                        mainCamera,
+                        m_frameId,
+                        [this](EntityID entity) -> AABB {
+                            // 获取 Model 的世界空间包围盒
+                            if (m_world->HasComponent<ModelComponent>(entity) &&
+                                m_world->HasComponent<TransformComponent>(entity)) {
+                                auto& modelComp = m_world->GetComponent<ModelComponent>(entity);
+                                auto& transformComp = m_world->GetComponent<TransformComponent>(entity);
+                                
+                                if (modelComp.model) {
+                                    AABB localBounds = modelComp.model->GetBounds();
+                                    Matrix4 worldMatrix = transformComp.GetWorldMatrix();
+                                    
+                                    // 变换包围盒的8个顶点
+                                    Vector3 corners[8];
+                                    corners[0] = Vector3(localBounds.min.x(), localBounds.min.y(), localBounds.min.z());
+                                    corners[1] = Vector3(localBounds.max.x(), localBounds.min.y(), localBounds.min.z());
+                                    corners[2] = Vector3(localBounds.min.x(), localBounds.max.y(), localBounds.min.z());
+                                    corners[3] = Vector3(localBounds.max.x(), localBounds.max.y(), localBounds.min.z());
+                                    corners[4] = Vector3(localBounds.min.x(), localBounds.min.y(), localBounds.max.z());
+                                    corners[5] = Vector3(localBounds.max.x(), localBounds.min.y(), localBounds.max.z());
+                                    corners[6] = Vector3(localBounds.min.x(), localBounds.max.y(), localBounds.max.z());
+                                    corners[7] = Vector3(localBounds.max.x(), localBounds.max.y(), localBounds.max.z());
+                                    
+                                    Vector3 worldMin = (worldMatrix * Vector4(corners[0].x(), corners[0].y(), corners[0].z(), 1.0f)).head<3>();
+                                    Vector3 worldMax = worldMin;
+                                    
+                                    for (int i = 1; i < 8; ++i) {
+                                        Vector3 worldCorner = (worldMatrix * Vector4(corners[i].x(), corners[i].y(), corners[i].z(), 1.0f)).head<3>();
+                                        worldMin = worldMin.cwiseMin(worldCorner);
+                                        worldMax = worldMax.cwiseMax(worldCorner);
+                                    }
+                                    
+                                    return AABB(worldMin, worldMax);
+                                }
+                            }
+                            return AABB();
+                        }
+                    );
+                    
+                    // 更新剔除统计（阶段3.2优化已经处理了视锥体裁剪）
+                    size_t visibleCount = 0;
+                    for (const auto& [lodLevel, visibleEntities] : visibleEntitiesByLOD) {
+                        visibleCount += visibleEntities.size();
+                    }
+                    size_t culledCount = totalEntities - visibleCount;
+                    m_stats.culledModels += culledCount;
+                } else {
+                    useBatchCulling = false;
+                }
+            }
+            
+            // 收集实例数据（只处理可见实体）
+            if (useBatchCulling) {
+                // 阶段3.2：使用批量视锥体裁剪的结果，按 LOD 级别处理
+                for (const auto& [lodLevel, visibleEntities] : visibleEntitiesByLOD) {
+                    if (lodLevel == LODLevel::Culled) {
+                        continue;
+                    }
+                    
+                    // 统计 LOD 使用情况
+                    m_stats.lodEnabledEntities += visibleEntities.size();
+                    switch (lodLevel) {
+                        case LODLevel::LOD0: m_stats.lod0Count += visibleEntities.size(); break;
+                        case LODLevel::LOD1: m_stats.lod1Count += visibleEntities.size(); break;
+                        case LODLevel::LOD2: m_stats.lod2Count += visibleEntities.size(); break;
+                        case LODLevel::LOD3: m_stats.lod3Count += visibleEntities.size(); break;
+                        default: break;
+                    }
+                    
+                    // 处理每个可见实体
+                    for (EntityID entity : visibleEntities) {
+                        auto& transformComp = m_world->GetComponent<TransformComponent>(entity);
+                        auto& modelComp = m_world->GetComponent<ModelComponent>(entity);
+                        
+                        // 检查可见性
+                        if (!modelComp.visible) {
+                            continue;
+                        }
+                        
+                        // 检查资源是否已加载
+                        if (!modelComp.resourcesLoaded || !modelComp.model) {
+                            continue;
+                        }
+                        
+                        // 获取 LOD 模型
+                        Ref<Model> renderModel = modelComp.model;
+                        if (m_world->HasComponent<LODComponent>(entity)) {
+                            auto& lodComp = m_world->GetComponent<LODComponent>(entity);
+                            renderModel = lodComp.config.GetLODModel(lodLevel, modelComp.model);
+                        }
+                        
+                        // 确保 LOD 模型有效
+                        if (!renderModel) {
+                            continue;
+                        }
+                        
+                        Matrix4 worldMatrix = transformComp.GetWorldMatrix();
+                        
+                        // 遍历 Model 的所有 Part
+                        renderModel->AccessParts([&](const std::vector<ModelPart>& parts) {
+                            for (const auto& part : parts) {
+                                if (!part.mesh || !part.material) {
+                                    continue;
+                                }
+                                
+                                auto shader = part.material->GetShader();
+                                if (!shader) {
+                                    continue;
+                                }
+                                
+                                const bool hasIndices = part.mesh->GetIndexCount() > 0;
+                                if (!hasIndices) {
+                                    continue;
+                                }
+                                
+                                // 计算 Part 的世界变换矩阵
+                                Matrix4 partWorldMatrix = worldMatrix * part.localTransform;
+                                
+                                // 构建实例数据
+                                InstanceData instanceData;
+                                instanceData.worldMatrix = partWorldMatrix;
+                                instanceData.worldPosition = partWorldMatrix.block<3, 1>(0, 3);
+                                instanceData.instanceID = entity.index;
+                                instanceData.instanceColor = Color::White();
+                                instanceData.customParams = Vector4::Zero();
+                                
+                                // 添加到实例化渲染器
+                                m_lodRenderer.AddInstance(
+                                    entity,
+                                    part.mesh,
+                                    part.material,
+                                    instanceData,
+                                    lodLevel
+                                );
+                                
+                                m_stats.submittedParts++;
+                            }
+                        });
+                        
+                        m_stats.visibleModels++;
+                    }
+                }
+            } else {
+                // 未启用批量视锥体裁剪，使用原始逐个处理逻辑
+                for (const auto& entity : entities) {
+                    auto& transformComp = m_world->GetComponent<TransformComponent>(entity);
+                    auto& modelComp = m_world->GetComponent<ModelComponent>(entity);
+                    
+                    // 检查可见性
+                    if (!modelComp.visible) {
+                        continue;
+                    }
+                    
+                    // 检查资源是否已加载
+                    if (!modelComp.resourcesLoaded || !modelComp.model) {
+                        continue;
+                    }
+                    
+                    // ==================== LOD 支持 ====================
+                    Ref<Model> renderModel = modelComp.model;
+                    LODLevel lodLevel = LODLevel::LOD0;
+                    bool usingLOD = false;
+                    
+                    if (m_world->HasComponent<LODComponent>(entity)) {
+                        auto& lodComp = m_world->GetComponent<LODComponent>(entity);
+                        lodLevel = lodComp.currentLOD;
+                        usingLOD = lodComp.config.enabled;
+                        
+                        // 统计 LOD 使用情况
+                        if (usingLOD) {
+                            m_stats.lodEnabledEntities++;
+                            
+                            // 如果 LOD 级别是 Culled，跳过渲染
+                            if (lodLevel == LODLevel::Culled) {
+                                m_stats.culledModels++;
+                                m_stats.lodCulledCount++;
+                                continue;
+                            }
+                            
+                            // 统计各 LOD 级别的使用数量
+                            switch (lodLevel) {
+                                case LODLevel::LOD0: m_stats.lod0Count++; break;
+                                case LODLevel::LOD1: m_stats.lod1Count++; break;
+                                case LODLevel::LOD2: m_stats.lod2Count++; break;
+                                case LODLevel::LOD3: m_stats.lod3Count++; break;
+                                default: break;
+                            }
+                        }
+                        
+                        // 使用 LOD 模型（如果配置了）
+                        renderModel = lodComp.config.GetLODModel(lodLevel, modelComp.model);
+                    }
+                    
+                    // 确保 LOD 模型有效
+                    if (!renderModel) {
+                        continue;
+                    }
+                    
+                    // ==================== 视锥体裁剪优化 ====================
+                    Matrix4 worldMatrix = transformComp.GetWorldMatrix();
+                    AABB localBounds = renderModel->GetBounds();
+                    Vector3 localCenter = localBounds.GetCenter();
+                    Vector3 localSize = localBounds.GetSize();
+                    float radius = localSize.norm() * 0.5f;
+                    if (radius <= 0.0f) {
+                        radius = 0.5f;
+                    }
+                    
+                    Vector3 worldCenter = (worldMatrix * Vector4(localCenter.x(), localCenter.y(), localCenter.z(), 1.0f)).head<3>();
+                    
+                    Vector3 scale = transformComp.GetScale();
+                    float maxScale = std::max({std::fabs(scale.x()), std::fabs(scale.y()), std::fabs(scale.z())});
+                    if (maxScale > 0.0f) {
+                        radius *= maxScale;
+                    }
+                    
+                    if (ShouldCull(worldCenter, radius)) {
+                        m_stats.culledModels++;
+                        continue;
+                    }
+                    
+                    // ==================== 遍历 Model 的所有 Part ====================
+                    // 为每个 Part 创建独立的实例
+                    renderModel->AccessParts([&](const std::vector<ModelPart>& parts) {
+                        for (const auto& part : parts) {
+                            if (!part.mesh || !part.material) {
+                                continue;
+                            }
+                            
+                            auto shader = part.material->GetShader();
+                            if (!shader) {
+                                continue;
+                            }
+                            
+                            const bool hasIndices = part.mesh->GetIndexCount() > 0;
+                            if (!hasIndices) {
+                                continue;
+                            }
+                            
+                            // 计算 Part 的世界变换矩阵（Model 的世界变换 * Part 的局部变换）
+                            Matrix4 partWorldMatrix = worldMatrix * part.localTransform;
+                            
+                            // 构建实例数据
+                            InstanceData instanceData;
+                            instanceData.worldMatrix = partWorldMatrix;
+                            instanceData.worldPosition = partWorldMatrix.block<3, 1>(0, 3);
+                            instanceData.instanceID = entity.index;
+                            instanceData.instanceColor = Color::White();
+                            instanceData.customParams = Vector4::Zero();
+                            
+                            // 添加到实例化渲染器
+                            // 注意：每个 Part 可能有不同的 mesh 和 material，会被自动分组
+                            m_lodRenderer.AddInstance(
+                                entity,
+                                part.mesh,
+                                part.material,
+                                instanceData,
+                                lodLevel
+                            );
+                            
+                            m_stats.submittedParts++;
+                        }
+                    });
+                    
+                    m_stats.visibleModels++;
+                }
+            }
+            
+            // 渲染所有实例组
+            auto renderState = m_renderer->GetRenderState();
+            m_lodRenderer.RenderAll(m_renderer, renderState.get());
+            
+            // 更新统计信息（从 LODInstancedRenderer 获取）
+            auto lodStats = m_lodRenderer.GetStats();
+            
+            // ✅ 阶段2.3：更新 Renderer 的 LOD 实例化统计信息
+            if (m_renderer) {
+                Renderer::LODInstancingStats rendererStats;
+                rendererStats.lodGroupCount = lodStats.groupCount;
+                rendererStats.totalInstances = lodStats.totalInstances;
+                rendererStats.drawCalls = lodStats.drawCalls;
+                rendererStats.lod0Instances = lodStats.lod0Instances;
+                rendererStats.lod1Instances = lodStats.lod1Instances;
+                rendererStats.lod2Instances = lodStats.lod2Instances;
+                rendererStats.lod3Instances = lodStats.lod3Instances;
+                rendererStats.culledCount = lodStats.culledCount;
+                m_renderer->UpdateLODInstancingStats(rendererStats);
+            }
+            
+            // ✅ 调试信息：显示提交的数量和 LOD 统计
+            static int logCounter = 0;
+            if (logCounter++ < 10 || logCounter % 60 == 0) {
+                if (m_stats.lodEnabledEntities > 0) {
+                    Logger::GetInstance().InfoFormat(
+                        "[ModelRenderSystem] LOD Instanced: %zu groups, %zu instances, %zu draw calls | "
+                        "LOD: enabled=%zu, LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, culled=%zu",
+                        lodStats.groupCount, lodStats.totalInstances, lodStats.drawCalls,
+                        m_stats.lodEnabledEntities, m_stats.lod0Count, m_stats.lod1Count,
+                        m_stats.lod2Count, m_stats.lod3Count, m_stats.lodCulledCount
+                    );
+                } else {
+                    Logger::GetInstance().InfoFormat(
+                        "[ModelRenderSystem] LOD Instanced: %zu groups, %zu instances, %zu draw calls",
+                        lodStats.groupCount, lodStats.totalInstances, lodStats.drawCalls
+                    );
+                }
+            }
+            
+            // 提前返回，不使用传统渲染方式
+            return;
+        } else if (lodInstancingEnabled && !lodInstancingAvailable) {
+            // ✅ 阶段2.3：回退机制 - LOD 实例化已启用但不可用，回退到批处理
+            Logger::GetInstance().WarningFormat(
+                "[ModelRenderSystem] LOD Instancing enabled but not available, falling back to batching mode"
+            );
+        }
+        
+        // ==================== 传统渲染方式（向后兼容） ====================
         std::vector<size_t> opaqueIndices;
         std::vector<size_t> transparentIndices;
         opaqueIndices.reserve(entities.size());
