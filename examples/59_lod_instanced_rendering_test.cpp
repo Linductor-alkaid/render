@@ -18,6 +18,11 @@
  * 9. 测试LOD视锥体裁剪优化（LODFrustumCullingSystem）
  * 10. 测试批量视锥体裁剪和LOD选择
  * 11. 对比使用LOD视锥体裁剪优化前后的性能差异
+ * 
+ * 阶段3.2新增测试：
+ * 12. 测试多线程数据准备功能
+ * 13. 对比启用/禁用多线程的性能差异
+ * 14. 测试多线程统计信息
  */
 
 #include <render/renderer.h>
@@ -41,6 +46,7 @@
 #include <memory>
 #include <vector>
 #include <random>
+#include <thread>
 
 using namespace Render;
 using namespace Render::ECS;
@@ -66,6 +72,10 @@ struct SceneConfig {
     
     // 阶段3.3：LOD视锥体裁剪优化测试
     bool enableLODFrustumCulling = false;  // 是否启用LOD视锥体裁剪优化
+    
+    // 阶段3.2：多线程数据准备测试
+    bool enableMultithreading = false;  // 是否启用多线程数据准备
+    int numThreads = -1;  // 工作线程数量（-1=自动检测）
 };
 
 } // namespace
@@ -379,6 +389,7 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: Tab 捕获/释放鼠标, I 切换实例化渲染");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: B 切换批处理模式 (阶段2.3)");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: F 切换LOD视锥体裁剪优化 (阶段3.3)");
+    Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: M 切换多线程数据准备 (阶段3.2)");
 
     bool running = true;
     Uint64 prevTicks = SDL_GetTicks();
@@ -472,6 +483,25 @@ int main(int argc, char* argv[]) {
                     sceneConfig.enableLODFrustumCulling ? "enabled" : "disabled",
                     meshRenderSystem && meshRenderSystem->IsLODFrustumCullingEnabled() ? "enabled" : "disabled"
                 );
+            }
+            
+            // 阶段3.2：切换多线程数据准备
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_M) {
+                sceneConfig.enableMultithreading = !sceneConfig.enableMultithreading;
+                
+                // 同步到MeshRenderSystem
+                if (meshRenderSystem) {
+                    if (sceneConfig.enableMultithreading) {
+                        meshRenderSystem->EnableLODMultithreading(sceneConfig.numThreads);
+                        Logger::GetInstance().InfoFormat(
+                            "[LODInstancedRenderingTest] Phase 3.2 - Multithreading: enabled (threads: %d)",
+                            sceneConfig.numThreads == -1 ? static_cast<int>(std::thread::hardware_concurrency() - 1) : sceneConfig.numThreads
+                        );
+                    } else {
+                        meshRenderSystem->DisableLODMultithreading();
+                        Logger::GetInstance().Info("[LODInstancedRenderingTest] Phase 3.2 - Multithreading: disabled");
+                    }
+                }
             }
             if (mouseCaptured && event.type == SDL_EVENT_MOUSE_MOTION) {
                 constexpr float sensitivity = 0.15f;
@@ -588,7 +618,8 @@ int main(int argc, char* argv[]) {
                 "LOD: enabled=%zu, LOD0=%zu, LOD1=%zu, LOD2=%zu, LOD3=%zu, culled=%zu | "
                 "Instancing: %s | Batching: %d | "
                 "LOD Stats (Renderer): groups=%zu, instances=%zu, drawCalls=%zu | "
-                "Phase 3.3 Frustum Culling: %s",
+                "Phase 3.3 Frustum Culling: %s | "
+                "Phase 3.2 Multithreading: %s",
                 perfStats.frameCount,
                 fps,
                 perfStats.avgFrameTime * 1000.0f,
@@ -606,7 +637,8 @@ int main(int argc, char* argv[]) {
                 lodInstancingStats.lodGroupCount,
                 lodInstancingStats.totalInstances,
                 lodInstancingStats.drawCalls,
-                sceneConfig.enableLODFrustumCulling ? "ON" : "OFF"
+                sceneConfig.enableLODFrustumCulling ? "ON" : "OFF",
+                sceneConfig.enableMultithreading ? "ON" : "OFF"
             );
             
             // 第一帧输出详细信息

@@ -296,6 +296,24 @@ public:
         return m_lodRenderer.GetPendingInstanceCount();
     }
     
+    /**
+     * @brief 启用多线程数据准备（阶段3.2）
+     * @param numThreads 工作线程数量（0=禁用，-1=自动检测）
+     * 
+     * 注意：多线程优化需要非常小心的同步设计，建议先实现前面的优化，
+     * 确认性能瓶颈后再考虑。多线程主要用于处理大量实例的场景。
+     */
+    void EnableLODMultithreading(int numThreads = -1) {
+        m_lodRenderer.EnableMultithreading(numThreads);
+    }
+    
+    /**
+     * @brief 禁用多线程数据准备（阶段3.2）
+     */
+    void DisableLODMultithreading() {
+        m_lodRenderer.DisableMultithreading();
+    }
+    
     void OnCreate(World* world) override;
     void OnDestroy() override;
     

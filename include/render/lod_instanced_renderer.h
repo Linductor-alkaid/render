@@ -14,6 +14,11 @@
 #include <functional>
 #include <algorithm>
 #include <chrono>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
+#include <queue>
 
 namespace Render {
 
@@ -327,6 +332,20 @@ public:
     void SetEstimatedGroupCount(size_t count) {
         m_estimatedGroupCount = count;
     }
+    
+    /**
+     * @brief 启用多线程数据准备
+     * @param numThreads 工作线程数量（0=禁用，-1=自动检测）
+     * 
+     * 注意：多线程优化需要非常小心的同步设计，建议先实现前面的优化，
+     * 确认性能瓶颈后再考虑。多线程主要用于处理大量实例的场景。
+     */
+    void EnableMultithreading(int numThreads = -1);
+    
+    /**
+     * @brief 禁用多线程
+     */
+    void DisableMultithreading();
 
 private:
     /**
@@ -563,6 +582,27 @@ private:
     
     // ✅ 是否支持持久映射（OpenGL 4.4+）
     bool m_supportsPersistentMapping = false;
+    
+    // ✅ 多线程相关
+    bool m_multithreadingEnabled = false;
+    std::vector<std::thread> m_workerThreads;
+    std::atomic<bool> m_shouldStop{false};
+    
+    // 任务队列
+    struct PrepareTask {
+        std::vector<PendingInstance> instances;
+        std::map<GroupKey, LODInstancedGroup>* targetGroups;
+    };
+    
+    std::mutex m_taskMutex;
+    std::condition_variable m_taskCV;
+    std::queue<PrepareTask> m_tasks;
+    
+    // ✅ 用于保护构建缓冲区的互斥锁（多线程访问时需要）
+    std::mutex m_buildBufferMutex;
+    
+    void WorkerThreadFunction();
+    void ProcessPrepareTask(const PrepareTask& task);
 };
 
 } // namespace Render
