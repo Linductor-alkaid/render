@@ -279,9 +279,7 @@ public:
      * @brief 获取组数量
      * @return 组数量
      */
-    [[nodiscard]] size_t GetGroupCount() const {
-        return m_groups.size();
-    }
+    [[nodiscard]] size_t GetGroupCount() const;
 
     /**
      * @brief 设置每帧最大处理实例数（分批处理）
@@ -437,8 +435,13 @@ private:
         Ref<Mesh> mesh
     );
     
-    // 分组映射：GroupKey -> LODInstancedGroup
-    std::map<GroupKey, LODInstancedGroup> m_groups;
+    // ✅ 双缓冲组
+    std::map<GroupKey, LODInstancedGroup> m_groups[2];
+    int m_currentRenderBuffer = 0;   // 当前渲染缓冲区索引
+    int m_currentBuildBuffer = 1;    // 当前构建缓冲区索引
+    
+    // ✅ 帧计数器（用于调试）
+    uint64_t m_frameCounter = 0;
     
     // 实例化 VBO 缓存（按网格缓存，避免重复创建）
     struct InstanceVBOs {

@@ -95,7 +95,9 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
         return;
     }
     
-    // ✅ 重置每帧统计
+    m_frameCounter++;
+    
+    // ✅ 重置统计
     m_stats.vboUploadCount = 0;
     m_stats.bytesUploaded = 0;
     m_stats.uploadTimeMs = 0.0f;
@@ -104,25 +106,15 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
     
     ScopedTimer totalTimer(m_stats.renderTimeMs);
     
-    // ✅ 分批处理机制：每帧只处理一定数量的实例
-    // 重置当前帧处理计数
+    // ✅ 重置当前帧处理计数
     m_currentFrameProcessed = 0;
     
-    // ✅ 清空上一帧的组（因为已经渲染过了）
-    // 注意：这里只清空组的内容，不删除组本身，因为组是按key索引的
-    // 如果下一帧有相同key的实例，会复用同一个组
-    for (auto& [key, group] : m_groups) {
-        group.Clear();
-    }
-    
-    // ✅ deque的size()是O(1)
+    // ✅ 处理待处理队列，添加到构建缓冲区
     size_t processCount = std::min(m_maxInstancesPerFrame, m_pendingInstances.size());
     
-    // 将待处理的实例添加到实际渲染组
     for (size_t i = 0; i < processCount; ++i) {
-        const auto& pending = m_pendingInstances[i];  // deque支持随机访问
+        const auto& pending = m_pendingInstances[i];
         
-        // 添加到实际渲染组
         AddInstanceToGroup(
             pending.entity,
             pending.mesh,
@@ -134,7 +126,6 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
         m_currentFrameProcessed++;
     }
     
-    // ✅ deque的erase from begin效率更高
     if (processCount > 0) {
         m_pendingInstances.erase(
             m_pendingInstances.begin(),
@@ -142,59 +133,75 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
         );
     }
     
-    // 如果当前帧没有处理任何实例，且没有待处理的实例，直接返回
-    if (m_groups.empty() && m_pendingInstances.empty()) {
+    // ✅ 先交换缓冲区（让构建缓冲区变成渲染缓冲区）
+    // 这样第一帧也能正确渲染（因为第一帧时构建缓冲区有数据，渲染缓冲区是空的）
+    std::swap(m_currentRenderBuffer, m_currentBuildBuffer);
+    
+    // ✅ 从渲染缓冲区获取要渲染的组
+    auto& renderGroups = m_groups[m_currentRenderBuffer];
+    
+    if (renderGroups.empty() && m_pendingInstances.empty()) {
         return;
     }
     
-    // 按材质排序键排序
+    // 排序
     std::vector<LODInstancedGroup*> sortedGroups;
-    sortedGroups.reserve(m_groups.size());
+    sortedGroups.reserve(renderGroups.size());
     
-    for (auto& [key, group] : m_groups) {
+    for (auto& [key, group] : renderGroups) {
         if (!group.IsEmpty()) {
             sortedGroups.push_back(&group);
         }
     }
     
-    // 如果没有可渲染的组，直接返回
     if (sortedGroups.empty()) {
         return;
     }
     
-    // 排序
     {
         ScopedTimer sortTimer(m_stats.sortTimeMs);
         
         MaterialSortKeyLess less;
         std::sort(sortedGroups.begin(), sortedGroups.end(),
             [&less](const LODInstancedGroup* a, const LODInstancedGroup* b) {
-                // 先按排序键排序
                 if (less(a->sortKey, b->sortKey) || less(b->sortKey, a->sortKey)) {
                     return less(a->sortKey, b->sortKey);
                 }
-                // 再按 LOD 级别排序
                 return static_cast<int>(a->lodLevel) < static_cast<int>(b->lodLevel);
             });
     }
     
-    // 渲染每个组
+    // 渲染
     for (auto* group : sortedGroups) {
         RenderGroup(group, renderer, renderState);
+    }
+    
+    // ✅ 清空构建缓冲区（为下一帧做准备）
+    // 注意：此时构建缓冲区是上一帧的渲染缓冲区，已经渲染过了，可以清空
+    for (auto& [key, group] : m_groups[m_currentBuildBuffer]) {
+        group.Clear();
     }
 }
 
 void LODInstancedRenderer::Clear() {
     ClearInstanceVBOs();
-    m_groups.clear();
-    m_pendingInstances.clear();  // ✅ 清空待处理队列
+    
+    // ✅ 清空两个缓冲区
+    m_groups[0].clear();
+    m_groups[1].clear();
+    
+    m_pendingInstances.clear();
     m_currentFrameProcessed = 0;
+    m_frameCounter = 0;
 }
 
 LODInstancedRenderer::Stats LODInstancedRenderer::GetStats() const {
-    Stats stats = m_stats;  // 复制持久数据
+    Stats stats = m_stats;
     
-    stats.groupCount = m_groups.size();
+    // ✅ 从渲染缓冲区统计（因为这是正在显示的）
+    const auto& renderGroups = m_groups[m_currentRenderBuffer];
+    
+    stats.groupCount = renderGroups.size();
     stats.pendingCount = m_pendingInstances.size();
     stats.totalInstances = 0;
     stats.drawCalls = 0;
@@ -205,12 +212,11 @@ LODInstancedRenderer::Stats LODInstancedRenderer::GetStats() const {
     stats.lod3Instances = 0;
     stats.culledCount = 0;
     
-    for (const auto& [key, group] : m_groups) {
+    for (const auto& [key, group] : renderGroups) {
         size_t instanceCount = group.GetInstanceCount();
         stats.totalInstances += instanceCount;
         stats.drawCalls++;
         
-        // 按 LOD 级别统计
         switch (group.lodLevel) {
             case LODLevel::LOD0:
                 stats.lod0Instances += instanceCount;
@@ -230,17 +236,18 @@ LODInstancedRenderer::Stats LODInstancedRenderer::GetStats() const {
         }
     }
     
-    // ✅ 更新峰值
     if (stats.totalInstances > stats.peakInstanceCount) {
         stats.peakInstanceCount = stats.totalInstances;
     }
     
-    // ✅ 计算内存使用
+    // 计算两个缓冲区的内存使用
     stats.totalAllocatedMemory = 0;
-    for (const auto& [key, group] : m_groups) {
-        stats.totalAllocatedMemory += 
-            group.instances.capacity() * sizeof(InstanceData) +
-            group.entities.capacity() * sizeof(ECS::EntityID);
+    for (int i = 0; i < 2; ++i) {
+        for (const auto& [key, group] : m_groups[i]) {
+            stats.totalAllocatedMemory += 
+                group.instances.capacity() * sizeof(InstanceData) +
+                group.entities.capacity() * sizeof(ECS::EntityID);
+        }
     }
     
     return stats;
@@ -249,13 +256,21 @@ LODInstancedRenderer::Stats LODInstancedRenderer::GetStats() const {
 size_t LODInstancedRenderer::GetInstanceCount(LODLevel lodLevel) const {
     size_t count = 0;
     
-    for (const auto& [key, group] : m_groups) {
+    // ✅ 从渲染缓冲区统计
+    const auto& renderGroups = m_groups[m_currentRenderBuffer];
+    
+    for (const auto& [key, group] : renderGroups) {
         if (group.lodLevel == lodLevel) {
             count += group.GetInstanceCount();
         }
     }
     
     return count;
+}
+
+size_t LODInstancedRenderer::GetGroupCount() const {
+    // ✅ 从渲染缓冲区统计
+    return m_groups[m_currentRenderBuffer].size();
 }
 
 // ==================== 私有方法实现 ====================
@@ -281,8 +296,8 @@ void LODInstancedRenderer::AddInstanceToGroup(
     key.lodLevel = lodLevel;
     key.sortKey = sortKey;
     
-    // 查找或创建组
-    auto& group = m_groups[key];
+    // ✅ 添加到构建缓冲区
+    auto& group = m_groups[m_currentBuildBuffer][key];
     
     if (group.instances.empty()) {
         // 初始化组
