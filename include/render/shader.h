@@ -40,6 +40,13 @@ public:
                       const std::string& geometryPath = "");
     
     /**
+     * @brief 从文件加载Compute Shader
+     * @param computePath Compute Shader文件路径
+     * @return 成功返回 true，失败返回 false
+     */
+    bool LoadComputeShaderFromFile(const std::string& computePath);
+    
+    /**
      * @brief 从源码字符串加载着色器
      * @param vertexSource 顶点着色器源码
      * @param fragmentSource 片段着色器源码
@@ -49,6 +56,13 @@ public:
     bool LoadFromSource(const std::string& vertexSource,
                         const std::string& fragmentSource,
                         const std::string& geometrySource = "");
+    
+    /**
+     * @brief 从源码字符串加载Compute Shader
+     * @param computeSource Compute Shader源码
+     * @return 成功返回 true，失败返回 false
+     */
+    bool LoadComputeShaderFromSource(const std::string& computeSource);
     
     /**
      * @brief 使用此着色器程序
@@ -112,6 +126,13 @@ protected:
                          uint32_t geometryShader = 0);
     
     /**
+     * @brief 链接Compute Shader程序
+     * @param computeShader Compute Shader ID
+     * @return 程序 ID，失败返回 0
+     */
+    uint32_t LinkComputeProgram(uint32_t computeShader);
+    
+    /**
      * @brief 检查着色器编译错误
      */
     bool CheckCompileErrors(uint32_t shader, ShaderType type);
@@ -135,6 +156,12 @@ protected:
                                 const std::string& geometrySource);
     
     /**
+     * @brief 从源码加载Compute Shader（内部方法，不加锁）
+     * @note 调用此方法前必须已持有 m_mutex 锁
+     */
+    bool LoadComputeShaderFromSource_Locked(const std::string& computeSource);
+    
+    /**
      * @brief 删除着色器程序（内部方法，不加锁）
      * @note 调用此方法前必须已持有 m_mutex 锁
      */
@@ -148,6 +175,7 @@ private:
     std::string m_vertexPath;
     std::string m_fragmentPath;
     std::string m_geometryPath;
+    std::string m_computePath;
     
     // Uniform 管理器
     std::unique_ptr<UniformManager> m_uniformManager;

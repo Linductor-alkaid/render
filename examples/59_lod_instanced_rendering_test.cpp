@@ -23,6 +23,11 @@
  * 12. 测试多线程数据准备功能
  * 13. 对比启用/禁用多线程的性能差异
  * 14. 测试多线程统计信息
+ * 
+ * 阶段3.3新增测试（GPU剔除）：
+ * 15. 测试GPU剔除功能
+ * 16. 对比启用/禁用GPU剔除的性能差异
+ * 17. 测试GPU剔除可用性检查
  */
 
 #include <render/renderer.h>
@@ -76,6 +81,9 @@ struct SceneConfig {
     // 阶段3.2：多线程数据准备测试
     bool enableMultithreading = false;  // 是否启用多线程数据准备
     int numThreads = -1;  // 工作线程数量（-1=自动检测）
+    
+    // 阶段3.3：GPU剔除测试
+    bool enableGPUCulling = false;  // 是否启用GPU剔除
 };
 
 } // namespace
@@ -263,6 +271,26 @@ int main(int argc, char* argv[]) {
             "[LODInstancedRenderingTest] Phase 3.3 - MeshRenderSystem LOD Frustum Culling: %s",
             meshRenderSystem->IsLODFrustumCullingEnabled() ? "enabled" : "disabled"
         );
+        
+        // 阶段3.3：检查GPU剔除可用性
+        bool gpuCullingAvailable = meshRenderSystem->IsLODGPUCullingAvailable();
+        Logger::GetInstance().InfoFormat(
+            "[LODInstancedRenderingTest] Phase 3.3 - GPU Culling Available: %s",
+            gpuCullingAvailable ? "yes" : "no"
+        );
+        
+        // 阶段3.3：同步GPU剔除设置
+        if (gpuCullingAvailable) {
+            meshRenderSystem->EnableLODGPUCulling(sceneConfig.enableGPUCulling);
+            Logger::GetInstance().InfoFormat(
+                "[LODInstancedRenderingTest] Phase 3.3 - GPU Culling: %s",
+                meshRenderSystem->IsLODGPUCullingEnabled() ? "enabled" : "disabled"
+            );
+        } else {
+            Logger::GetInstance().Warning(
+                "[LODInstancedRenderingTest] Phase 3.3 - GPU Culling not available (requires OpenGL 4.3+)"
+            );
+        }
     }
 
     // 创建相机（使用与58测试相同的初始化方式）
@@ -390,6 +418,7 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: B 切换批处理模式 (阶段2.3)");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: F 切换LOD视锥体裁剪优化 (阶段3.3)");
     Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: M 切换多线程数据准备 (阶段3.2)");
+    Logger::GetInstance().Info("[LODInstancedRenderingTest] Controls: G 切换GPU剔除 (阶段3.3)");
 
     bool running = true;
     Uint64 prevTicks = SDL_GetTicks();
@@ -500,6 +529,27 @@ int main(int argc, char* argv[]) {
                     } else {
                         meshRenderSystem->DisableLODMultithreading();
                         Logger::GetInstance().Info("[LODInstancedRenderingTest] Phase 3.2 - Multithreading: disabled");
+                    }
+                }
+            }
+            
+            // 阶段3.3：切换GPU剔除
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_G) {
+                sceneConfig.enableGPUCulling = !sceneConfig.enableGPUCulling;
+                
+                // 同步到MeshRenderSystem
+                if (meshRenderSystem) {
+                    if (meshRenderSystem->IsLODGPUCullingAvailable()) {
+                        meshRenderSystem->EnableLODGPUCulling(sceneConfig.enableGPUCulling);
+                        Logger::GetInstance().InfoFormat(
+                            "[LODInstancedRenderingTest] Phase 3.3 - GPU Culling: %s",
+                            sceneConfig.enableGPUCulling ? "enabled" : "disabled"
+                        );
+                    } else {
+                        Logger::GetInstance().Warning(
+                            "[LODInstancedRenderingTest] Phase 3.3 - GPU Culling not available (requires OpenGL 4.3+)"
+                        );
+                        sceneConfig.enableGPUCulling = false;
                     }
                 }
             }
@@ -619,7 +669,8 @@ int main(int argc, char* argv[]) {
                 "Instancing: %s | Batching: %d | "
                 "LOD Stats (Renderer): groups=%zu, instances=%zu, drawCalls=%zu | "
                 "Phase 3.3 Frustum Culling: %s | "
-                "Phase 3.2 Multithreading: %s",
+                "Phase 3.2 Multithreading: %s | "
+                "Phase 3.3 GPU Culling: %s",
                 perfStats.frameCount,
                 fps,
                 perfStats.avgFrameTime * 1000.0f,
@@ -638,7 +689,8 @@ int main(int argc, char* argv[]) {
                 lodInstancingStats.totalInstances,
                 lodInstancingStats.drawCalls,
                 sceneConfig.enableLODFrustumCulling ? "ON" : "OFF",
-                sceneConfig.enableMultithreading ? "ON" : "OFF"
+                sceneConfig.enableMultithreading ? "ON" : "OFF",
+                sceneConfig.enableGPUCulling ? "ON" : "OFF"
             );
             
             // 第一帧输出详细信息

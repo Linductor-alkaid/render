@@ -314,6 +314,33 @@ public:
         m_lodRenderer.DisableMultithreading();
     }
     
+    /**
+     * @brief 启用GPU剔除（阶段3.3）
+     * @param enable 是否启用
+     * 
+     * 注意：需要OpenGL 4.3+支持Compute Shader
+     * GPU剔除在大量实例场景（10K+）下可以显著提升性能
+     */
+    void EnableLODGPUCulling(bool enable) {
+        m_lodRenderer.EnableGPUCulling(enable);
+    }
+    
+    /**
+     * @brief 检查GPU剔除是否可用（阶段3.3）
+     * @return 如果可用返回 true
+     */
+    [[nodiscard]] bool IsLODGPUCullingAvailable() const {
+        return m_lodRenderer.IsGPUCullingAvailable();
+    }
+    
+    /**
+     * @brief 检查GPU剔除是否启用（阶段3.3）
+     * @return 如果启用返回 true
+     */
+    [[nodiscard]] bool IsLODGPUCullingEnabled() const {
+        return m_lodRenderer.IsGPUCullingEnabled();
+    }
+    
     void OnCreate(World* world) override;
     void OnDestroy() override;
     

@@ -1,0 +1,127 @@
+#version 430 core
+
+// ✅ 阶段3.3：GPU剔除Compute Shader
+// 在GPU上进行视锥剔除和LOD选择，避免CPU-GPU往返
+
+layout(local_size_x = 256) in;
+
+// 输入：所有实例的变换矩阵
+layout(std430, binding = 0) readonly buffer InstanceMatrices {
+    mat4 instanceMatrices[];
+};
+
+// 输入：所有实例的包围球半径（可选，如果为0则使用默认值）
+layout(std430, binding = 4) readonly buffer InstanceRadii {
+    float instanceRadii[];
+};
+
+// 输入：相机参数
+uniform mat4 uViewProj;
+uniform vec3 uCameraPos;
+uniform vec4 uFrustumPlanes[6];  // 视锥平面（左、右、下、上、近、远）
+uniform float uLODDistances[4];   // LOD距离阈值
+uniform float uDefaultRadius = 1.0;  // 默认包围球半径
+
+// 输出：可见实例索引（按LOD级别分组）
+layout(std430, binding = 1) writeonly buffer VisibleInstances {
+    uint visibleIndices[];
+};
+
+// 输出：每个LOD级别的可见实例索引起始位置
+// 注意：这些偏移需要在CPU端计算，因为需要知道每个LOD级别的实例数
+layout(std430, binding = 2) buffer InstanceCounter {
+    uint visibleCount;      // 总可见实例数（原子计数器）
+    uint lod0Offset;        // LOD0实例的起始索引（由CPU设置）
+    uint lod1Offset;        // LOD1实例的起始索引（由CPU设置）
+    uint lod2Offset;        // LOD2实例的起始索引（由CPU设置）
+    uint lod3Offset;        // LOD3实例的起始索引（由CPU设置）
+};
+
+// 输出：每个LOD级别的实例数量
+layout(std430, binding = 3) buffer LODCounters {
+    uint lod0Count;
+    uint lod1Count;
+    uint lod2Count;
+    uint lod3Count;
+};
+
+// 边界球测试
+bool FrustumCullSphere(vec3 center, float radius) {
+    for (int i = 0; i < 6; ++i) {
+        // 平面方程：normal.x * x + normal.y * y + normal.z * z + distance = 0
+        // 点到平面的距离：dot(plane.xyz, center) + plane.w
+        float dist = dot(uFrustumPlanes[i].xyz, center) + uFrustumPlanes[i].w;
+        if (dist < -radius) {
+            return false;  // 完全在平面外侧，被剔除
+        }
+    }
+    return true;  // 与视锥体相交或在其内部
+}
+
+// 计算LOD级别
+uint ComputeLODLevel(float distance) {
+    if (distance < uLODDistances[0]) return 0;
+    if (distance < uLODDistances[1]) return 1;
+    if (distance < uLODDistances[2]) return 2;
+    if (distance < uLODDistances[3]) return 3;
+    return 4;  // Culled（超出最大距离）
+}
+
+void main() {
+    uint instanceID = gl_GlobalInvocationID.x;
+    
+    // 边界检查
+    if (instanceID >= instanceMatrices.length()) {
+        return;
+    }
+    
+    // 获取实例的世界变换矩阵
+    mat4 worldMatrix = instanceMatrices[instanceID];
+    vec3 worldPos = worldMatrix[3].xyz;  // 提取位置（矩阵的第四列）
+    
+    // 获取包围球半径
+    float boundingRadius = uDefaultRadius;
+    if (instanceID < instanceRadii.length() && instanceRadii[instanceID] > 0.0) {
+        boundingRadius = instanceRadii[instanceID];
+    }
+    
+    // 视锥剔除
+    if (!FrustumCullSphere(worldPos, boundingRadius)) {
+        return;  // 被剔除，不添加到可见列表
+    }
+    
+    // 计算距离和LOD
+    float distance = length(worldPos - uCameraPos);
+    uint lodLevel = ComputeLODLevel(distance);
+    
+    if (lodLevel == 4) {
+        return;  // 距离过远，剔除
+    }
+    
+    // 使用原子操作添加到可见列表（按LOD级别分组）
+    // 注意：由于原子操作的顺序性，我们需要先获取索引，然后写入
+    uint index;
+    uint baseOffset;
+    
+    if (lodLevel == 0) {
+        index = atomicAdd(lod0Count, 1);
+        baseOffset = lod0Offset;
+    } else if (lodLevel == 1) {
+        index = atomicAdd(lod1Count, 1);
+        baseOffset = lod1Offset;
+    } else if (lodLevel == 2) {
+        index = atomicAdd(lod2Count, 1);
+        baseOffset = lod2Offset;
+    } else {
+        // lodLevel == 3
+        index = atomicAdd(lod3Count, 1);
+        baseOffset = lod3Offset;
+    }
+    
+    // 写入可见实例索引
+    visibleIndices[baseOffset + index] = instanceID;
+    
+    // 更新总可见实例数
+    atomicAdd(visibleCount, 1);
+}
+

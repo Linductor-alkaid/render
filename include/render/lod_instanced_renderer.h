@@ -346,6 +346,27 @@ public:
      * @brief 禁用多线程
      */
     void DisableMultithreading();
+    
+    /**
+     * @brief 启用GPU剔除（阶段3.3）
+     * @param enable 是否启用
+     * 
+     * 注意：需要OpenGL 4.3+支持Compute Shader
+     * GPU剔除在大量实例场景（10K+）下可以显著提升性能
+     */
+    void EnableGPUCulling(bool enable);
+    
+    /**
+     * @brief 检查GPU剔除是否可用
+     * @return 如果可用返回 true
+     */
+    [[nodiscard]] bool IsGPUCullingAvailable() const;
+    
+    /**
+     * @brief 检查GPU剔除是否启用
+     * @return 如果启用返回 true
+     */
+    [[nodiscard]] bool IsGPUCullingEnabled() const { return m_gpuCullingEnabled; }
 
 private:
     /**
@@ -603,6 +624,60 @@ private:
     
     void WorkerThreadFunction();
     void ProcessPrepareTask(const PrepareTask& task);
+    
+    // ✅ 阶段3.3：GPU剔除相关
+    bool m_gpuCullingEnabled = false;
+    bool m_supportsComputeShader = false;  // 是否支持Compute Shader（OpenGL 4.3+）
+    Ref<Shader> m_cullingComputeShader;   // GPU剔除Compute Shader
+    
+    // GPU剔除缓冲区
+    GLuint m_allInstancesSSBO = 0;        // 所有实例矩阵SSBO
+    GLuint m_instanceRadiiSSBO = 0;       // 实例包围球半径SSBO
+    GLuint m_visibleIndicesSSBO = 0;      // 可见实例索引SSBO
+    GLuint m_counterSSBO = 0;             // 计数器SSBO（包含总可见数和各LOD偏移）
+    GLuint m_lodCountersSSBO = 0;         // LOD计数器SSBO
+    
+    // GPU剔除缓冲区容量
+    size_t m_gpuCullingMaxInstances = 0;   // 最大支持的实例数
+    
+    // GPU剔除结果（从GPU读取）
+    struct GPUCullingResult {
+        uint32_t visibleCount = 0;
+        uint32_t lod0Count = 0;
+        uint32_t lod1Count = 0;
+        uint32_t lod2Count = 0;
+        uint32_t lod3Count = 0;
+        uint32_t lod0Offset = 0;
+        uint32_t lod1Offset = 0;
+        uint32_t lod2Offset = 0;
+        uint32_t lod3Offset = 0;
+        std::vector<uint32_t> visibleIndices;  // 可见实例索引列表
+    };
+    
+    /**
+     * @brief 初始化GPU剔除（加载Compute Shader和创建SSBO）
+     */
+    void InitGPUCulling();
+    
+    /**
+     * @brief 执行GPU剔除
+     * @param camera 相机对象（用于获取视锥体和位置）
+     * @param allInstances 所有实例的矩阵列表
+     * @param instanceRadii 所有实例的包围球半径列表（可选）
+     * @param lodDistances LOD距离阈值
+     * @return GPU剔除结果
+     */
+    GPUCullingResult PerformGPUCulling(
+        const Camera* camera,
+        const std::vector<Matrix4>& allInstances,
+        const std::vector<float>& instanceRadii,
+        const std::vector<float>& lodDistances
+    );
+    
+    /**
+     * @brief 清理GPU剔除资源
+     */
+    void CleanupGPUCulling();
 };
 
 } // namespace Render

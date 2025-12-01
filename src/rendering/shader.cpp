@@ -316,5 +316,82 @@ void Shader::DeleteProgram_Locked() {
     }
 }
 
+bool Shader::LoadComputeShaderFromFile(const std::string& computePath) {
+    try {
+        const std::string computePathCopy = computePath;
+        
+        LOG_INFO("Loading compute shader from file: " + computePathCopy);
+        
+        std::string computeSource = FileUtils::ReadFile(computePathCopy);
+        if (computeSource.empty()) {
+            LOG_ERROR("Failed to read compute shader: " + computePathCopy);
+            return false;
+        }
+        
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_computePath = computePathCopy;
+        return LoadComputeShaderFromSource_Locked(computeSource);
+        
+    } catch (const std::exception& e) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Shader::LoadComputeShaderFromFile: Exception - " + std::string(e.what())));
+        return false;
+    } catch (...) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::Unknown, 
+                                 "Shader::LoadComputeShaderFromFile: Unknown exception"));
+        return false;
+    }
+}
+
+bool Shader::LoadComputeShaderFromSource(const std::string& computeSource) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return LoadComputeShaderFromSource_Locked(computeSource);
+}
+
+bool Shader::LoadComputeShaderFromSource_Locked(const std::string& computeSource) {
+    DeleteProgram_Locked();
+    
+    LOG_INFO("Compiling compute shader...");
+    
+    uint32_t computeShader = CompileShader(computeSource, ShaderType::Compute);
+    if (computeShader == 0) {
+        LOG_ERROR("Failed to compile compute shader");
+        return false;
+    }
+    LOG_INFO("Compute shader compiled successfully");
+    
+    m_programID = LinkComputeProgram(computeShader);
+    glDeleteShader(computeShader);
+    
+    if (m_programID == 0) {
+        LOG_ERROR("Failed to link compute shader program");
+        return false;
+    }
+    
+    LOG_INFO("Compute shader program linked successfully (ID: " + std::to_string(m_programID) + ")");
+    
+    // Compute Shader不需要UniformManager（通常使用SSBO）
+    // 但为了兼容性，仍然创建
+    m_uniformManager = std::make_unique<UniformManager>(m_programID);
+    
+    return true;
+}
+
+uint32_t Shader::LinkComputeProgram(uint32_t computeShader) {
+    GL_THREAD_CHECK();
+    
+    uint32_t program = glCreateProgram();
+    glAttachShader(program, computeShader);
+    glLinkProgram(program);
+    
+    if (!CheckLinkErrors(program)) {
+        glDeleteProgram(program);
+        return 0;
+    }
+    
+    glDetachShader(program, computeShader);
+    return program;
+}
+
 } // namespace Render
 

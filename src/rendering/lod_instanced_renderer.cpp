@@ -7,6 +7,9 @@
 #include "render/render_state.h"
 #include "render/logger.h"
 #include "render/gl_thread_checker.h"
+#include "render/shader.h"
+#include "render/camera.h"
+#include "render/file_utils.h"
 #include <glad/glad.h>
 #include <algorithm>
 #include <cstring>
@@ -50,10 +53,24 @@ LODInstancedRenderer::LODInstancedRenderer() {
                  std::to_string(major) + "." + std::to_string(minor) + 
                  "), using traditional approach");
     }
+    
+    // ✅ 阶段3.3：检查是否支持Compute Shader（OpenGL 4.3+）
+    m_supportsComputeShader = (major > 4) || (major == 4 && minor >= 3);
+    
+    if (m_supportsComputeShader) {
+        LOG_INFO("LODInstancedRenderer: Compute Shader supported (OpenGL " + 
+                 std::to_string(major) + "." + std::to_string(minor) + 
+                 "), GPU culling available");
+    } else {
+        LOG_INFO("LODInstancedRenderer: Compute Shader not available (OpenGL " + 
+                 std::to_string(major) + "." + std::to_string(minor) + 
+                 "), GPU culling disabled");
+    }
 }
 
 LODInstancedRenderer::~LODInstancedRenderer() {
     DisableMultithreading();
+    CleanupGPUCulling();
     ClearInstanceVBOs();
 }
 
@@ -1079,6 +1096,297 @@ void LODInstancedRenderer::ProcessPrepareTask(const PrepareTask& task) {
         group.entities.push_back(pending.entity);
         group.MarkDirty();
     }
+}
+
+// ==================== 阶段3.3：GPU剔除实现 ====================
+
+void LODInstancedRenderer::EnableGPUCulling(bool enable) {
+    if (enable == m_gpuCullingEnabled) {
+        return;
+    }
+    
+    if (enable) {
+        if (!m_supportsComputeShader) {
+            LOG_WARNING("LODInstancedRenderer: GPU culling requested but Compute Shader not supported");
+            return;
+        }
+        
+        InitGPUCulling();
+        m_gpuCullingEnabled = true;
+        LOG_INFO("LODInstancedRenderer: GPU culling enabled");
+    } else {
+        CleanupGPUCulling();
+        m_gpuCullingEnabled = false;
+        LOG_INFO("LODInstancedRenderer: GPU culling disabled");
+    }
+}
+
+bool LODInstancedRenderer::IsGPUCullingAvailable() const {
+    return m_supportsComputeShader;
+}
+
+void LODInstancedRenderer::InitGPUCulling() {
+    if (!m_supportsComputeShader) {
+        LOG_WARNING("LODInstancedRenderer: Cannot initialize GPU culling - Compute Shader not supported");
+        return;
+    }
+    
+    GL_THREAD_CHECK();
+    
+    // 加载Compute Shader
+    m_cullingComputeShader = CreateRef<Shader>();
+    if (!m_cullingComputeShader->LoadComputeShaderFromFile("shaders/instance_culling.comp")) {
+        LOG_ERROR("LODInstancedRenderer: Failed to load GPU culling compute shader");
+        m_cullingComputeShader.reset();
+        return;
+    }
+    
+    // 创建SSBO
+    glGenBuffers(1, &m_allInstancesSSBO);
+    glGenBuffers(1, &m_instanceRadiiSSBO);
+    glGenBuffers(1, &m_visibleIndicesSSBO);
+    glGenBuffers(1, &m_counterSSBO);
+    glGenBuffers(1, &m_lodCountersSSBO);
+    
+    // 初始容量：10000个实例
+    m_gpuCullingMaxInstances = 10000;
+    
+    // 初始化计数器缓冲区
+    struct CounterData {
+        uint32_t visibleCount = 0;
+        uint32_t lod0Offset = 0;
+        uint32_t lod1Offset = 0;
+        uint32_t lod2Offset = 0;
+        uint32_t lod3Offset = 0;
+    } counterInit;
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_counterSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(CounterData), &counterInit, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    
+    // 初始化LOD计数器缓冲区
+    struct LODCounterData {
+        uint32_t lod0Count = 0;
+        uint32_t lod1Count = 0;
+        uint32_t lod2Count = 0;
+        uint32_t lod3Count = 0;
+    } lodCounterInit;
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_lodCountersSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(LODCounterData), &lodCounterInit, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    
+    LOG_INFO("LODInstancedRenderer: GPU culling initialized");
+}
+
+void LODInstancedRenderer::CleanupGPUCulling() {
+    GL_THREAD_CHECK();
+    
+    m_cullingComputeShader.reset();
+    
+    if (m_allInstancesSSBO != 0) {
+        glDeleteBuffers(1, &m_allInstancesSSBO);
+        m_allInstancesSSBO = 0;
+    }
+    if (m_instanceRadiiSSBO != 0) {
+        glDeleteBuffers(1, &m_instanceRadiiSSBO);
+        m_instanceRadiiSSBO = 0;
+    }
+    if (m_visibleIndicesSSBO != 0) {
+        glDeleteBuffers(1, &m_visibleIndicesSSBO);
+        m_visibleIndicesSSBO = 0;
+    }
+    if (m_counterSSBO != 0) {
+        glDeleteBuffers(1, &m_counterSSBO);
+        m_counterSSBO = 0;
+    }
+    if (m_lodCountersSSBO != 0) {
+        glDeleteBuffers(1, &m_lodCountersSSBO);
+        m_lodCountersSSBO = 0;
+    }
+    
+    m_gpuCullingMaxInstances = 0;
+}
+
+LODInstancedRenderer::GPUCullingResult LODInstancedRenderer::PerformGPUCulling(
+    const Camera* camera,
+    const std::vector<Matrix4>& allInstances,
+    const std::vector<float>& instanceRadii,
+    const std::vector<float>& lodDistances
+) {
+    GPUCullingResult result;
+    
+    if (!m_gpuCullingEnabled || !m_cullingComputeShader || !camera || allInstances.empty()) {
+        return result;
+    }
+    
+    GL_THREAD_CHECK();
+    
+    size_t instanceCount = allInstances.size();
+    
+    // 检查是否需要扩容
+    if (instanceCount > m_gpuCullingMaxInstances) {
+        // 扩容到实例数的1.5倍，避免频繁扩容
+        m_gpuCullingMaxInstances = static_cast<size_t>(instanceCount * 1.5f);
+        
+        // 重新创建SSBO
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_allInstancesSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 
+                     m_gpuCullingMaxInstances * sizeof(Matrix4), 
+                     nullptr, GL_DYNAMIC_DRAW);
+        
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_instanceRadiiSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 
+                     m_gpuCullingMaxInstances * sizeof(float), 
+                     nullptr, GL_DYNAMIC_DRAW);
+        
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_visibleIndicesSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 
+                     m_gpuCullingMaxInstances * sizeof(uint32_t), 
+                     nullptr, GL_DYNAMIC_DRAW);
+        
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+    
+    // 1. 上传所有实例矩阵到SSBO
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_allInstancesSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 
+                    instanceCount * sizeof(Matrix4), 
+                    allInstances.data());
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_allInstancesSSBO);
+    
+    // 2. 上传实例包围球半径（如果没有提供，使用默认值）
+    std::vector<float> radii(instanceCount, 1.0f);
+    if (!instanceRadii.empty() && instanceRadii.size() == instanceCount) {
+        radii = instanceRadii;
+    }
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_instanceRadiiSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 
+                    instanceCount * sizeof(float), 
+                    radii.data());
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, m_instanceRadiiSSBO);
+    
+    // 3. 重置计数器并设置LOD偏移
+    // 注意：LOD偏移需要预先计算，但这里我们先设为0，然后在读取结果时再计算
+    struct CounterData {
+        uint32_t visibleCount = 0;
+        uint32_t lod0Offset = 0;  // 将在读取结果后计算
+        uint32_t lod1Offset = 0;
+        uint32_t lod2Offset = 0;
+        uint32_t lod3Offset = 0;
+    } counterInit;
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_counterSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(CounterData), &counterInit);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_counterSSBO);
+    
+    struct LODCounterData {
+        uint32_t lod0Count = 0;
+        uint32_t lod1Count = 0;
+        uint32_t lod2Count = 0;
+        uint32_t lod3Count = 0;
+    } lodCounterInit;
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_lodCountersSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(LODCounterData), &lodCounterInit);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, m_lodCountersSSBO);
+    
+    // 4. 绑定可见实例索引SSBO
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_visibleIndicesSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_visibleIndicesSSBO);
+    
+    // 5. 设置Compute Shader uniforms
+    m_cullingComputeShader->Use();
+    
+    if (auto uniformMgr = m_cullingComputeShader->GetUniformManager()) {
+        Matrix4 viewProj = camera->GetViewProjectionMatrix();
+        uniformMgr->SetMatrix4("uViewProj", viewProj);
+        
+        Vector3 cameraPos = camera->GetTransform().GetPosition();
+        uniformMgr->SetVector3("uCameraPos", cameraPos);
+        
+        // 获取视锥体平面
+        const Frustum& frustum = camera->GetFrustum();
+        Vector4 frustumPlanes[6];
+        for (int i = 0; i < 6; ++i) {
+            // 平面方程：normal.x * x + normal.y * y + normal.z * z - distance = 0
+            // 转换为：normal.x * x + normal.y * y + normal.z * z + (-distance) = 0
+            frustumPlanes[i] = Vector4(
+                frustum.planes[i].normal.x(),
+                frustum.planes[i].normal.y(),
+                frustum.planes[i].normal.z(),
+                -frustum.planes[i].distance
+            );
+        }
+        uniformMgr->SetVector4Array("uFrustumPlanes", frustumPlanes, 6);
+        
+        // LOD距离阈值
+        if (lodDistances.size() >= 4) {
+            uniformMgr->SetFloatArray("uLODDistances", lodDistances.data(), 4);
+        } else {
+            // 使用默认值
+            float defaultDistances[4] = {50.0f, 150.0f, 500.0f, 1000.0f};
+            uniformMgr->SetFloatArray("uLODDistances", defaultDistances, 4);
+        }
+        
+        uniformMgr->SetFloat("uDefaultRadius", 1.0f);
+    }
+    
+    // 6. 执行Compute Shader
+    uint32_t numGroups = static_cast<uint32_t>((instanceCount + 255) / 256);
+    glDispatchCompute(numGroups, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    
+    // 7. 读取结果
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_counterSSBO);
+    CounterData* counterData = static_cast<CounterData*>(
+        glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY)
+    );
+    
+    if (counterData) {
+        result.visibleCount = counterData->visibleCount;
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    }
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_lodCountersSSBO);
+    LODCounterData* lodCounterData = static_cast<LODCounterData*>(
+        glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY)
+    );
+    
+    if (lodCounterData) {
+        result.lod0Count = lodCounterData->lod0Count;
+        result.lod1Count = lodCounterData->lod1Count;
+        result.lod2Count = lodCounterData->lod2Count;
+        result.lod3Count = lodCounterData->lod3Count;
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        
+        // 计算LOD偏移（按顺序排列：LOD0, LOD1, LOD2, LOD3）
+        result.lod0Offset = 0;
+        result.lod1Offset = result.lod0Count;
+        result.lod2Offset = result.lod1Offset + result.lod1Count;
+        result.lod3Offset = result.lod2Offset + result.lod2Count;
+    }
+    
+    // 读取可见实例索引
+    if (result.visibleCount > 0) {
+        result.visibleIndices.resize(result.visibleCount);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_visibleIndicesSSBO);
+        uint32_t* indices = static_cast<uint32_t*>(
+            glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY)
+        );
+        
+        if (indices) {
+            std::memcpy(result.visibleIndices.data(), indices, 
+                       result.visibleCount * sizeof(uint32_t));
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        }
+    }
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    m_cullingComputeShader->Unuse();
+    
+    return result;
 }
 
 } // namespace Render
