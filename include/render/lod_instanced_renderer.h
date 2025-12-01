@@ -8,10 +8,12 @@
 #include "render/renderer.h"
 #include "render/render_state.h"
 #include <vector>
+#include <deque>
 #include <map>
 #include <string>
 #include <functional>
 #include <algorithm>
+#include <chrono>
 
 namespace Render {
 
@@ -217,6 +219,18 @@ public:
         size_t lod2Instances = 0;    ///< LOD2 实例数
         size_t lod3Instances = 0;    ///< LOD3 实例数
         size_t culledCount = 0;      ///< 剔除数量
+        
+        // ✅ 新增性能指标
+        size_t vboUploadCount = 0;        ///< VBO上传次数
+        size_t bytesUploaded = 0;         ///< 总上传字节数
+        float uploadTimeMs = 0.0f;       ///< 上传耗时(ms)
+        size_t pendingCount = 0;          ///< 待处理实例数
+        float sortTimeMs = 0.0f;         ///< 排序耗时(ms)
+        float renderTimeMs = 0.0f;       ///< 渲染耗时(ms)
+        
+        // ✅ 内存统计
+        size_t totalAllocatedMemory = 0;  ///< 总分配内存(bytes)
+        size_t peakInstanceCount = 0;     ///< 峰值实例数
     };
     
     /**
@@ -238,6 +252,53 @@ public:
      */
     [[nodiscard]] size_t GetGroupCount() const {
         return m_groups.size();
+    }
+
+    /**
+     * @brief 设置每帧最大处理实例数（分批处理）
+     * @param maxInstancesPerFrame 每帧最大处理实例数（默认100）
+     * 
+     * 用于控制分批处理的大小，避免一次性处理大量实例导致卡死
+     * 建议值：
+     * - 简单场景（<100实例）：100
+     * - 中等场景（100-1000实例）：50-100
+     * - 复杂场景（1000-5000实例）：20-50
+     * - 超复杂场景（>5000实例）：10-20
+     */
+    void SetMaxInstancesPerFrame(size_t maxInstancesPerFrame) {
+        m_maxInstancesPerFrame = maxInstancesPerFrame;
+    }
+
+    /**
+     * @brief 获取每帧最大处理实例数
+     * @return 每帧最大处理实例数
+     */
+    [[nodiscard]] size_t GetMaxInstancesPerFrame() const {
+        return m_maxInstancesPerFrame;
+    }
+
+    /**
+     * @brief 获取当前待处理的实例数量
+     * @return 待处理的实例数量
+     */
+    [[nodiscard]] size_t GetPendingInstanceCount() const {
+        return m_pendingInstances.size();
+    }
+
+    /**
+     * @brief 设置预估实例数量（用于内存预分配）
+     * @param count 预估的总实例数
+     */
+    void SetEstimatedInstanceCount(size_t count) {
+        m_estimatedInstanceCount = count;
+    }
+    
+    /**
+     * @brief 设置预估组数量
+     * @param count 预估的组数量
+     */
+    void SetEstimatedGroupCount(size_t count) {
+        m_estimatedGroupCount = count;
     }
 
 private:
@@ -355,7 +416,9 @@ private:
         GLuint matrixVBO = 0;      // 矩阵 VBO (location 6-9)
         GLuint colorVBO = 0;       // 颜色 VBO (location 10)
         GLuint paramsVBO = 0;      // 自定义参数 VBO (location 11)
-        size_t capacity = 0;        // 当前容量
+        size_t capacity = 0;        // 矩阵容量
+        size_t colorCapacity = 0;  // ✅ 新增：颜色容量
+        size_t paramsCapacity = 0; // ✅ 新增：参数容量
     };
     std::map<Ref<Mesh>, InstanceVBOs> m_instanceVBOs;
     
@@ -385,6 +448,48 @@ private:
         size_t instanceCount,
         RenderState* renderState = nullptr
     );
+
+    /**
+     * @brief 将待处理实例添加到实际渲染组
+     * 
+     * 内部方法，用于将队列中的实例添加到实际渲染组
+     * 
+     * @param entity 实体 ID
+     * @param mesh 网格
+     * @param material 材质
+     * @param instanceData 实例数据
+     * @param lodLevel LOD 级别
+     */
+    void AddInstanceToGroup(
+        ECS::EntityID entity,
+        Ref<Mesh> mesh,
+        Ref<Material> material,
+        const InstanceData& instanceData,
+        LODLevel lodLevel
+    );
+
+    /**
+     * @brief 待处理的实例（分批处理队列）
+     */
+    struct PendingInstance {
+        ECS::EntityID entity;
+        Ref<Mesh> mesh;
+        Ref<Material> material;
+        InstanceData instanceData;
+        LODLevel lodLevel;
+    };
+
+    // 分批处理队列
+    std::deque<PendingInstance> m_pendingInstances;  ///< ✅ 改为deque：待处理的实例队列
+    size_t m_maxInstancesPerFrame = 100;              ///< 每帧最大处理实例数（默认100）
+    size_t m_currentFrameProcessed = 0;                ///< 当前帧已处理的实例数（用于统计）
+    
+    // ✅ 内存预分配
+    size_t m_estimatedInstanceCount = 1000;  ///< 默认预估1000个实例
+    size_t m_estimatedGroupCount = 50;       ///< 默认预估50个组
+    
+    // ✅ 持久统计数据
+    mutable Stats m_stats;
 };
 
 } // namespace Render

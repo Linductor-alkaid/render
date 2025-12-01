@@ -269,6 +269,33 @@ public:
      */
     [[nodiscard]] bool IsLODFrustumCullingEnabled() const { return m_lodFrustumCullingEnabled; }
     
+    /**
+     * @brief 设置LOD实例化渲染的分批处理参数
+     * 
+     * 控制每帧处理的实例数量，避免一次性处理大量实例导致卡死。
+     * 建议值：简单场景100，中等50-100，复杂20-50，超复杂10-20
+     * 
+     * @param maxInstancesPerFrame 每帧最大处理实例数（默认100）
+     */
+    void SetLODInstancingBatchSize(size_t maxInstancesPerFrame) {
+        m_lodRenderer.SetMaxInstancesPerFrame(maxInstancesPerFrame);
+    }
+    
+    /**
+     * @brief 获取当前分批处理大小
+     * @return 每帧最大处理实例数
+     */
+    [[nodiscard]] size_t GetLODInstancingBatchSize() const {
+        return m_lodRenderer.GetMaxInstancesPerFrame();
+    }
+    
+    /**
+     * @brief 获取当前待处理的实例数量
+     */
+    [[nodiscard]] size_t GetPendingInstanceCount() const {
+        return m_lodRenderer.GetPendingInstanceCount();
+    }
+    
     void OnCreate(World* world) override;
     void OnDestroy() override;
     
@@ -340,6 +367,33 @@ public:
     };
 
     [[nodiscard]] const RenderStats& GetStats() const { return m_stats; }
+
+    /**
+     * @brief 设置LOD实例化渲染的分批处理参数
+     * 
+     * 控制每帧处理的实例数量，避免一次性处理大量实例导致卡死。
+     * 建议值：简单场景100，中等50-100，复杂20-50，超复杂10-20
+     * 
+     * @param maxInstancesPerFrame 每帧最大处理实例数（默认100）
+     */
+    void SetLODInstancingBatchSize(size_t maxInstancesPerFrame) {
+        m_lodRenderer.SetMaxInstancesPerFrame(maxInstancesPerFrame);
+    }
+    
+    /**
+     * @brief 获取当前分批处理大小
+     * @return 每帧最大处理实例数
+     */
+    [[nodiscard]] size_t GetLODInstancingBatchSize() const {
+        return m_lodRenderer.GetMaxInstancesPerFrame();
+    }
+    
+    /**
+     * @brief 获取当前待处理的实例数量
+     */
+    [[nodiscard]] size_t GetPendingInstanceCount() const {
+        return m_lodRenderer.GetPendingInstanceCount();
+    }
 
     void OnCreate(World* world) override;
     void OnDestroy() override;

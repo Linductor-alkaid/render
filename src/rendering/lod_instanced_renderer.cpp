@@ -10,8 +10,24 @@
 #include <glad/glad.h>
 #include <algorithm>
 #include <cstring>
+#include <chrono>
 
 namespace Render {
+
+// ==================== 性能计时辅助类 ====================
+class ScopedTimer {
+public:
+    ScopedTimer(float& outTime) : m_outTime(outTime) {
+        m_start = std::chrono::high_resolution_clock::now();
+    }
+    ~ScopedTimer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        m_outTime += std::chrono::duration<float, std::milli>(end - m_start).count();
+    }
+private:
+    float& m_outTime;
+    std::chrono::high_resolution_clock::time_point m_start;
+};
 
 // ==================== LODInstancedRenderer 实现 ====================
 
@@ -41,30 +57,16 @@ void LODInstancedRenderer::AddInstance(
         return;
     }
     
-    // 生成材质排序键
-    MaterialSortKey sortKey = GenerateSortKey(material, mesh);
+    // ✅ 分批处理：将实例添加到待处理队列，而不是直接添加到组
+    // 这样可以避免一次性处理大量实例导致的卡死问题
+    PendingInstance pending;
+    pending.entity = entity;
+    pending.mesh = mesh;
+    pending.material = material;
+    pending.instanceData = instanceData;
+    pending.lodLevel = lodLevel;
     
-    // 创建分组键
-    GroupKey key;
-    key.mesh = mesh;
-    key.material = material;
-    key.lodLevel = lodLevel;
-    key.sortKey = sortKey;
-    
-    // 查找或创建组
-    auto& group = m_groups[key];
-    
-    if (group.instances.empty()) {
-        // 初始化组
-        group.mesh = mesh;
-        group.material = material;
-        group.lodLevel = lodLevel;
-        group.sortKey = sortKey;
-    }
-    
-    // 添加实例数据
-    group.instances.push_back(instanceData);
-    group.entities.push_back(entity);
+    m_pendingInstances.push_back(pending);
 }
 
 void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderState) {
@@ -72,7 +74,55 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
         return;
     }
     
-    if (m_groups.empty()) {
+    // ✅ 重置每帧统计
+    m_stats.vboUploadCount = 0;
+    m_stats.bytesUploaded = 0;
+    m_stats.uploadTimeMs = 0.0f;
+    m_stats.sortTimeMs = 0.0f;
+    m_stats.renderTimeMs = 0.0f;
+    
+    ScopedTimer totalTimer(m_stats.renderTimeMs);
+    
+    // ✅ 分批处理机制：每帧只处理一定数量的实例
+    // 重置当前帧处理计数
+    m_currentFrameProcessed = 0;
+    
+    // ✅ 清空上一帧的组（因为已经渲染过了）
+    // 注意：这里只清空组的内容，不删除组本身，因为组是按key索引的
+    // 如果下一帧有相同key的实例，会复用同一个组
+    for (auto& [key, group] : m_groups) {
+        group.Clear();
+    }
+    
+    // ✅ deque的size()是O(1)
+    size_t processCount = std::min(m_maxInstancesPerFrame, m_pendingInstances.size());
+    
+    // 将待处理的实例添加到实际渲染组
+    for (size_t i = 0; i < processCount; ++i) {
+        const auto& pending = m_pendingInstances[i];  // deque支持随机访问
+        
+        // 添加到实际渲染组
+        AddInstanceToGroup(
+            pending.entity,
+            pending.mesh,
+            pending.material,
+            pending.instanceData,
+            pending.lodLevel
+        );
+        
+        m_currentFrameProcessed++;
+    }
+    
+    // ✅ deque的erase from begin效率更高
+    if (processCount > 0) {
+        m_pendingInstances.erase(
+            m_pendingInstances.begin(),
+            m_pendingInstances.begin() + processCount
+        );
+    }
+    
+    // 如果当前帧没有处理任何实例，且没有待处理的实例，直接返回
+    if (m_groups.empty() && m_pendingInstances.empty()) {
         return;
     }
     
@@ -86,17 +136,26 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
         }
     }
     
-    // 按排序键排序
-    MaterialSortKeyLess less;
-    std::sort(sortedGroups.begin(), sortedGroups.end(),
-        [&less](const LODInstancedGroup* a, const LODInstancedGroup* b) {
-            // 先按排序键排序
-            if (less(a->sortKey, b->sortKey) || less(b->sortKey, a->sortKey)) {
-                return less(a->sortKey, b->sortKey);
-            }
-            // 再按 LOD 级别排序
-            return static_cast<int>(a->lodLevel) < static_cast<int>(b->lodLevel);
-        });
+    // 如果没有可渲染的组，直接返回
+    if (sortedGroups.empty()) {
+        return;
+    }
+    
+    // 排序
+    {
+        ScopedTimer sortTimer(m_stats.sortTimeMs);
+        
+        MaterialSortKeyLess less;
+        std::sort(sortedGroups.begin(), sortedGroups.end(),
+            [&less](const LODInstancedGroup* a, const LODInstancedGroup* b) {
+                // 先按排序键排序
+                if (less(a->sortKey, b->sortKey) || less(b->sortKey, a->sortKey)) {
+                    return less(a->sortKey, b->sortKey);
+                }
+                // 再按 LOD 级别排序
+                return static_cast<int>(a->lodLevel) < static_cast<int>(b->lodLevel);
+            });
+    }
     
     // 渲染每个组
     for (auto* group : sortedGroups) {
@@ -107,16 +166,28 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
 void LODInstancedRenderer::Clear() {
     ClearInstanceVBOs();
     m_groups.clear();
+    m_pendingInstances.clear();  // ✅ 清空待处理队列
+    m_currentFrameProcessed = 0;
 }
 
 LODInstancedRenderer::Stats LODInstancedRenderer::GetStats() const {
-    Stats stats;
+    Stats stats = m_stats;  // 复制持久数据
+    
     stats.groupCount = m_groups.size();
+    stats.pendingCount = m_pendingInstances.size();
+    stats.totalInstances = 0;
+    stats.drawCalls = 0;
+    
+    stats.lod0Instances = 0;
+    stats.lod1Instances = 0;
+    stats.lod2Instances = 0;
+    stats.lod3Instances = 0;
+    stats.culledCount = 0;
     
     for (const auto& [key, group] : m_groups) {
         size_t instanceCount = group.GetInstanceCount();
         stats.totalInstances += instanceCount;
-        stats.drawCalls++;  // 每个组一次 Draw Call
+        stats.drawCalls++;
         
         // 按 LOD 级别统计
         switch (group.lodLevel) {
@@ -138,6 +209,19 @@ LODInstancedRenderer::Stats LODInstancedRenderer::GetStats() const {
         }
     }
     
+    // ✅ 更新峰值
+    if (stats.totalInstances > stats.peakInstanceCount) {
+        stats.peakInstanceCount = stats.totalInstances;
+    }
+    
+    // ✅ 计算内存使用
+    stats.totalAllocatedMemory = 0;
+    for (const auto& [key, group] : m_groups) {
+        stats.totalAllocatedMemory += 
+            group.instances.capacity() * sizeof(InstanceData) +
+            group.entities.capacity() * sizeof(ECS::EntityID);
+    }
+    
     return stats;
 }
 
@@ -154,6 +238,53 @@ size_t LODInstancedRenderer::GetInstanceCount(LODLevel lodLevel) const {
 }
 
 // ==================== 私有方法实现 ====================
+
+void LODInstancedRenderer::AddInstanceToGroup(
+    ECS::EntityID entity,
+    Ref<Mesh> mesh,
+    Ref<Material> material,
+    const InstanceData& instanceData,
+    LODLevel lodLevel
+) {
+    if (!mesh || !material) {
+        return;
+    }
+    
+    // 生成材质排序键
+    MaterialSortKey sortKey = GenerateSortKey(material, mesh);
+    
+    // 创建分组键
+    GroupKey key;
+    key.mesh = mesh;
+    key.material = material;
+    key.lodLevel = lodLevel;
+    key.sortKey = sortKey;
+    
+    // 查找或创建组
+    auto& group = m_groups[key];
+    
+    if (group.instances.empty()) {
+        // 初始化组
+        group.mesh = mesh;
+        group.material = material;
+        group.lodLevel = lodLevel;
+        group.sortKey = sortKey;
+        
+        // ✅ 根据预估数量预分配内存
+        size_t estimatedInstancesPerGroup = m_estimatedInstanceCount / 
+            std::max(m_estimatedGroupCount, size_t(1));
+        
+        // 至少预留16个，避免太小的预分配
+        estimatedInstancesPerGroup = std::max(estimatedInstancesPerGroup, size_t(16));
+        
+        group.instances.reserve(estimatedInstancesPerGroup);
+        group.entities.reserve(estimatedInstancesPerGroup);
+    }
+    
+    // 添加实例数据
+    group.instances.push_back(instanceData);
+    group.entities.push_back(entity);
+}
 
 MaterialSortKey LODInstancedRenderer::GenerateSortKey(Ref<Material> material, Ref<Mesh> mesh) const {
     // 使用 MaterialSortKey 系统构建排序键
@@ -214,8 +345,11 @@ void LODInstancedRenderer::RenderGroup(
         // 这里可以添加额外的状态设置（如果需要）
     }
     
-    // 上传实例数据到 GPU
-    UploadInstanceData(group->instances, group->mesh);
+    // 上传实例数据到 GPU（带计时）
+    {
+        ScopedTimer uploadTimer(m_stats.uploadTimeMs);
+        UploadInstanceData(group->instances, group->mesh);
+    }
     
     // 获取网格的 VAO
     uint32_t vao = group->mesh->GetVertexArrayID();
@@ -297,42 +431,44 @@ void LODInstancedRenderer::UploadInstanceMatrices(
     
     GL_THREAD_CHECK();
     
-    // 获取或创建实例化 VBO
+    // ✅ 编译时断言：确保Matrix4内存布局符合预期
+    static_assert(sizeof(Matrix4) == 16 * sizeof(float), 
+                  "Matrix4 must be 16 floats (64 bytes)");
+    // 注意：Eigen矩阵的对齐要求取决于SIMD指令集（SSE=16字节，AVX=32字节，AVX512=64字节）
+    // 但OpenGL缓冲区上传不需要严格对齐，只要数据连续即可
+    
     auto& instanceVBOs = GetOrCreateInstanceVBOs(mesh, matrices.size());
     
-    // 准备矩阵数据（按列上传，每个矩阵 4 列）
-    // GLSL的mat4(vec4, vec4, vec4, vec4)构造函数将4个vec4参数作为列向量
-    // Eigen矩阵是列主序存储的，可以直接按列上传
-    std::vector<float> matrixData;
-    matrixData.reserve(matrices.size() * 16);  // 每个矩阵 16 个 float
-    
-    for (const auto& matrix : matrices) {
-        // Eigen 矩阵是列主序存储的，GLSL mat4构造函数也期望列向量
-        // 直接按列上传：每一列作为一个vec4
-        for (int col = 0; col < 4; ++col) {
-            for (int row = 0; row < 4; ++row) {
-                matrixData.push_back(matrix(row, col));
-            }
-        }
-    }
-    
-    // 创建或更新 VBO
     if (instanceVBOs.matrixVBO == 0) {
         glGenBuffers(1, &instanceVBOs.matrixVBO);
     }
     
-    // ✅ 注意：这里直接使用 OpenGL API，因为 RenderState 主要用于运行时状态管理
-    // VBO 的创建和更新通常在准备阶段完成，不需要通过 RenderState
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.matrixVBO);
-    glBufferData(GL_ARRAY_BUFFER, 
-                 matrixData.size() * sizeof(float),
-                 matrixData.data(),
-                 GL_DYNAMIC_DRAW);
+    
+    size_t requiredSize = matrices.size() * sizeof(Matrix4);
+    
+    // ✅ 策略1：如果大小不变，使用孤儿化 + glBufferSubData
+    if (instanceVBOs.capacity == matrices.size() && instanceVBOs.matrixVBO != 0) {
+        // 孤儿化：传入nullptr让驱动分配新缓冲区
+        glBufferData(GL_ARRAY_BUFFER, requiredSize, nullptr, GL_STREAM_DRAW);
+        
+        // 立即填充数据（使用新缓冲区，无同步）
+        // ✅ 零复制：直接上传矩阵数据
+        // Eigen默认是列主序(ColMajor)，与GLSL mat4一致
+        glBufferSubData(GL_ARRAY_BUFFER, 0, requiredSize, matrices.data());
+    }
+    // ✅ 策略2：如果大小变化，直接重新分配
+    else {
+        // ✅ 零复制：直接上传矩阵数据
+        glBufferData(GL_ARRAY_BUFFER, requiredSize, matrices.data(), GL_STREAM_DRAW);
+        instanceVBOs.capacity = matrices.size();
+    }
+    
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     
-    instanceVBOs.capacity = matrices.size();
-    
-    // LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceMatrices - %zu matrices", matrices.size());
+    // ✅ 统计上传字节数
+    m_stats.bytesUploaded += requiredSize;
+    m_stats.vboUploadCount++;
 }
 
 void LODInstancedRenderer::UploadInstanceColors(
@@ -345,22 +481,29 @@ void LODInstancedRenderer::UploadInstanceColors(
     
     GL_THREAD_CHECK();
     
-    // 获取或创建实例化 VBO
     auto& instanceVBOs = GetOrCreateInstanceVBOs(mesh, colors.size());
     
-    // 创建或更新 VBO
     if (instanceVBOs.colorVBO == 0) {
         glGenBuffers(1, &instanceVBOs.colorVBO);
     }
     
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.colorVBO);
-    glBufferData(GL_ARRAY_BUFFER,
-                 colors.size() * sizeof(Vector4),
-                 colors.data(),
-                 GL_DYNAMIC_DRAW);
+    
+    size_t requiredSize = colors.size() * sizeof(Vector4);
+    
+    // ✅ 孤儿化优化
+    if (instanceVBOs.colorCapacity == colors.size() && instanceVBOs.colorVBO != 0) {
+        glBufferData(GL_ARRAY_BUFFER, requiredSize, nullptr, GL_STREAM_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, requiredSize, colors.data());
+    } else {
+        glBufferData(GL_ARRAY_BUFFER, requiredSize, colors.data(), GL_STREAM_DRAW);
+        instanceVBOs.colorCapacity = colors.size();
+    }
+    
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     
-    // LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceColors - %zu colors", colors.size());
+    m_stats.bytesUploaded += requiredSize;
+    m_stats.vboUploadCount++;
 }
 
 void LODInstancedRenderer::UploadInstanceCustomParams(
@@ -373,22 +516,29 @@ void LODInstancedRenderer::UploadInstanceCustomParams(
     
     GL_THREAD_CHECK();
     
-    // 获取或创建实例化 VBO
     auto& instanceVBOs = GetOrCreateInstanceVBOs(mesh, customParams.size());
     
-    // 创建或更新 VBO
     if (instanceVBOs.paramsVBO == 0) {
         glGenBuffers(1, &instanceVBOs.paramsVBO);
     }
     
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.paramsVBO);
-    glBufferData(GL_ARRAY_BUFFER,
-                 customParams.size() * sizeof(Vector4),
-                 customParams.data(),
-                 GL_DYNAMIC_DRAW);
+    
+    size_t requiredSize = customParams.size() * sizeof(Vector4);
+    
+    // ✅ 孤儿化优化
+    if (instanceVBOs.paramsCapacity == customParams.size() && instanceVBOs.paramsVBO != 0) {
+        glBufferData(GL_ARRAY_BUFFER, requiredSize, nullptr, GL_STREAM_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, requiredSize, customParams.data());
+    } else {
+        glBufferData(GL_ARRAY_BUFFER, requiredSize, customParams.data(), GL_STREAM_DRAW);
+        instanceVBOs.paramsCapacity = customParams.size();
+    }
+    
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     
-    // LOG_DEBUG_F("LODInstancedRenderer: UploadInstanceCustomParams - %zu params", customParams.size());
+    m_stats.bytesUploaded += requiredSize;
+    m_stats.vboUploadCount++;
 }
 
 LODInstancedRenderer::InstanceVBOs& LODInstancedRenderer::GetOrCreateInstanceVBOs(
@@ -430,6 +580,8 @@ void LODInstancedRenderer::ClearInstanceVBOs() {
             vbos.paramsVBO = 0;
         }
         vbos.capacity = 0;
+        vbos.colorCapacity = 0;
+        vbos.paramsCapacity = 0;
     }
     
     m_instanceVBOs.clear();

@@ -63,6 +63,7 @@ set(EXAMPLES
     59_lod_instanced_rendering_test
     60_ui_framework_showcase
     61_ui_menu_example
+    62_lod_batch_processing_test
 )
 
 # 批量创建示例程序
