@@ -171,8 +171,9 @@ class LODInstancedRenderer {
 public:
     /**
      * @brief 构造函数
+     * 检测OpenGL版本，初始化持久映射支持
      */
-    LODInstancedRenderer() = default;
+    LODInstancedRenderer();
     
     /**
      * @brief 析构函数
@@ -447,6 +448,18 @@ private:
         size_t capacity = 0;        // 矩阵容量
         size_t colorCapacity = 0;  // ✅ 新增：颜色容量
         size_t paramsCapacity = 0; // ✅ 新增：参数容量
+        
+        // ✅ 缓存的实例化VAO
+        GLuint instancedVAO = 0;
+        bool attributesSetup = false;
+        
+        // ✅ 持久映射指针
+        void* matrixMappedPtr = nullptr;
+        void* colorMappedPtr = nullptr;
+        void* paramsMappedPtr = nullptr;
+        
+        // ✅ 是否使用持久映射
+        bool usePersistentMapping = false;
     };
     std::map<Ref<Mesh>, InstanceVBOs> m_instanceVBOs;
     
@@ -476,6 +489,32 @@ private:
         size_t instanceCount,
         RenderState* renderState = nullptr
     );
+    
+    /**
+     * @brief 获取或创建实例化VAO
+     * 
+     * 创建一个包含基础顶点属性和实例化属性的VAO，并缓存起来避免重复设置
+     * 
+     * @param mesh 网格
+     * @param instanceVBOs 实例化VBO
+     * @return 实例化VAO ID，失败返回0
+     */
+    GLuint GetOrCreateInstancedVAO(Ref<Mesh> mesh, InstanceVBOs& instanceVBOs);
+    
+    /**
+     * @brief 创建持久映射的VBO（OpenGL 4.4+）
+     * 
+     * @param vbos VBO结构
+     * @param capacity 容量（实例数量）
+     */
+    void CreatePersistentMappedVBOs(InstanceVBOs& vbos, size_t capacity);
+    
+    /**
+     * @brief 销毁持久映射的VBO
+     * 
+     * @param vbos VBO结构
+     */
+    void DestroyPersistentMappedVBOs(InstanceVBOs& vbos);
 
     /**
      * @brief 将待处理实例添加到实际渲染组
@@ -518,6 +557,9 @@ private:
     
     // ✅ 持久统计数据
     mutable Stats m_stats;
+    
+    // ✅ 是否支持持久映射（OpenGL 4.4+）
+    bool m_supportsPersistentMapping = false;
 };
 
 } // namespace Render

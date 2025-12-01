@@ -31,6 +31,27 @@ private:
 
 // ==================== LODInstancedRenderer 实现 ====================
 
+LODInstancedRenderer::LODInstancedRenderer() {
+    // ✅ 检查是否支持持久映射（OpenGL 4.4+）
+    GL_THREAD_CHECK();
+    
+    int major = 0, minor = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    glGetIntegerv(GL_MINOR_VERSION, &minor);
+    
+    // 检查OpenGL版本是否 >= 4.4
+    m_supportsPersistentMapping = (major > 4) || (major == 4 && minor >= 4);
+    
+    if (m_supportsPersistentMapping) {
+        LOG_INFO("LODInstancedRenderer: Persistent buffer mapping enabled (OpenGL " + 
+                 std::to_string(major) + "." + std::to_string(minor) + ")");
+    } else {
+        LOG_INFO("LODInstancedRenderer: Persistent buffer mapping not available (OpenGL " + 
+                 std::to_string(major) + "." + std::to_string(minor) + 
+                 "), using traditional approach");
+    }
+}
+
 LODInstancedRenderer::~LODInstancedRenderer() {
     ClearInstanceVBOs();
 }
@@ -358,10 +379,14 @@ void LODInstancedRenderer::RenderGroup(
         group->MarkUploaded();
     }
     
-    // 获取网格的 VAO
-    uint32_t vao = group->mesh->GetVertexArrayID();
+    size_t instanceCount = group->instances.size();
+    auto& instanceVBOs = GetOrCreateInstanceVBOs(group->mesh, instanceCount);
+    
+    // ✅ 获取或创建实例化VAO
+    GLuint vao = GetOrCreateInstancedVAO(group->mesh, instanceVBOs);
+    
     if (vao == 0) {
-        LOG_WARNING("LODInstancedRenderer: Mesh VAO is invalid");
+        LOG_WARNING("LODInstancedRenderer: Failed to create instanced VAO");
         return;
     }
     
@@ -372,10 +397,7 @@ void LODInstancedRenderer::RenderGroup(
         glBindVertexArray(vao);
     }
     
-    // 设置实例化属性（需要在 VAO 绑定的情况下设置）
-    size_t instanceCount = group->instances.size();
-    auto& instanceVBOs = GetOrCreateInstanceVBOs(group->mesh, instanceCount);
-    SetupInstanceAttributes(vao, instanceVBOs, instanceCount, renderState);
+    // ✅ 不再需要每次设置属性（已缓存在VAO中）
     
     // 实例化绘制
     group->mesh->DrawInstanced(static_cast<uint32_t>(instanceCount));
@@ -446,13 +468,30 @@ void LODInstancedRenderer::UploadInstanceMatrices(
     
     auto& instanceVBOs = GetOrCreateInstanceVBOs(mesh, matrices.size());
     
+    size_t requiredSize = matrices.size() * sizeof(Matrix4);
+    
+    // ✅ 使用持久映射（如果支持且已启用）
+    if (m_supportsPersistentMapping && instanceVBOs.usePersistentMapping) {
+        if (instanceVBOs.matrixMappedPtr != nullptr) {
+            // 直接写入映射内存（零拷贝，最快）
+            std::memcpy(instanceVBOs.matrixMappedPtr, matrices.data(), requiredSize);
+            
+            // 刷新映射范围（GL_MAP_COHERENT_BIT通常不需要，但保险起见）
+            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.matrixVBO);
+            glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, requiredSize);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            
+            m_stats.bytesUploaded += requiredSize;
+            return;
+        }
+    }
+    
+    // ✅ 降级到传统方式（孤儿化）
     if (instanceVBOs.matrixVBO == 0) {
         glGenBuffers(1, &instanceVBOs.matrixVBO);
     }
     
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.matrixVBO);
-    
-    size_t requiredSize = matrices.size() * sizeof(Matrix4);
     
     // ✅ 策略1：如果大小不变，使用孤儿化 + glBufferSubData
     if (instanceVBOs.capacity == matrices.size() && instanceVBOs.matrixVBO != 0) {
@@ -490,13 +529,29 @@ void LODInstancedRenderer::UploadInstanceColors(
     
     auto& instanceVBOs = GetOrCreateInstanceVBOs(mesh, colors.size());
     
+    size_t requiredSize = colors.size() * sizeof(Vector4);
+    
+    // ✅ 使用持久映射（如果支持且已启用）
+    if (m_supportsPersistentMapping && instanceVBOs.usePersistentMapping) {
+        if (instanceVBOs.colorMappedPtr != nullptr) {
+            // 直接写入映射内存
+            std::memcpy(instanceVBOs.colorMappedPtr, colors.data(), requiredSize);
+            
+            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.colorVBO);
+            glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, requiredSize);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            
+            m_stats.bytesUploaded += requiredSize;
+            return;
+        }
+    }
+    
+    // ✅ 降级到传统方式
     if (instanceVBOs.colorVBO == 0) {
         glGenBuffers(1, &instanceVBOs.colorVBO);
     }
     
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.colorVBO);
-    
-    size_t requiredSize = colors.size() * sizeof(Vector4);
     
     // ✅ 孤儿化优化
     if (instanceVBOs.colorCapacity == colors.size() && instanceVBOs.colorVBO != 0) {
@@ -525,13 +580,29 @@ void LODInstancedRenderer::UploadInstanceCustomParams(
     
     auto& instanceVBOs = GetOrCreateInstanceVBOs(mesh, customParams.size());
     
+    size_t requiredSize = customParams.size() * sizeof(Vector4);
+    
+    // ✅ 使用持久映射（如果支持且已启用）
+    if (m_supportsPersistentMapping && instanceVBOs.usePersistentMapping) {
+        if (instanceVBOs.paramsMappedPtr != nullptr) {
+            // 直接写入映射内存
+            std::memcpy(instanceVBOs.paramsMappedPtr, customParams.data(), requiredSize);
+            
+            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.paramsVBO);
+            glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, requiredSize);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            
+            m_stats.bytesUploaded += requiredSize;
+            return;
+        }
+    }
+    
+    // ✅ 降级到传统方式
     if (instanceVBOs.paramsVBO == 0) {
         glGenBuffers(1, &instanceVBOs.paramsVBO);
     }
     
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.paramsVBO);
-    
-    size_t requiredSize = customParams.size() * sizeof(Vector4);
     
     // ✅ 孤儿化优化
     if (instanceVBOs.paramsCapacity == customParams.size() && instanceVBOs.paramsVBO != 0) {
@@ -557,38 +628,221 @@ LODInstancedRenderer::InstanceVBOs& LODInstancedRenderer::GetOrCreateInstanceVBO
         // 创建新的 VBO 结构
         InstanceVBOs vbos;
         vbos.capacity = requiredCapacity;
+        vbos.usePersistentMapping = m_supportsPersistentMapping;
+        
+        // ✅ 如果支持持久映射，创建持久映射缓冲区
+        if (m_supportsPersistentMapping) {
+            CreatePersistentMappedVBOs(vbos, requiredCapacity);
+        }
+        
         m_instanceVBOs[mesh] = vbos;
         return m_instanceVBOs[mesh];
     }
     
     // 如果容量不足，需要重新分配
     if (it->second.capacity < requiredCapacity) {
-        it->second.capacity = requiredCapacity;
-        // VBO 会在上传时重新创建
+        if (it->second.usePersistentMapping) {
+            // ✅ 需要重新创建持久映射缓冲区
+            DestroyPersistentMappedVBOs(it->second);
+            CreatePersistentMappedVBOs(it->second, requiredCapacity);
+        } else {
+            // 传统方式：只更新容量，VBO会在上传时重新创建
+            it->second.capacity = requiredCapacity;
+            it->second.colorCapacity = requiredCapacity;
+            it->second.paramsCapacity = requiredCapacity;
+        }
     }
     
     return it->second;
+}
+
+GLuint LODInstancedRenderer::GetOrCreateInstancedVAO(
+    Ref<Mesh> mesh,
+    InstanceVBOs& instanceVBOs
+) {
+    GL_THREAD_CHECK();
+    
+    // 获取基础VAO
+    GLuint baseVAO = mesh->GetVertexArrayID();
+    if (baseVAO == 0) {
+        LOG_WARNING("LODInstancedRenderer: Base mesh VAO is invalid");
+        return 0;
+    }
+    
+    // ✅ 检查基础VAO是否改变（如果Mesh重新上传了）
+    bool baseVAOChanged = (instanceVBOs.instancedVAO != 0 && instanceVBOs.instancedVAO != baseVAO);
+    
+    // 如果已经设置且基础VAO未改变，直接返回
+    if (!baseVAOChanged && instanceVBOs.instancedVAO != 0 && instanceVBOs.attributesSetup) {
+        return instanceVBOs.instancedVAO;
+    }
+    
+    // ✅ 方案：直接使用基础VAO，在其上设置实例化属性
+    // 注意：实例化属性（location 6-11）与基础属性（location 0-5）不冲突
+    // 实例化属性设置保存在基础VAO中，但这不会影响Mesh的正常使用
+    
+    // 更新基础VAO引用
+    instanceVBOs.instancedVAO = baseVAO;
+    
+    // 如果基础VAO改变，需要重新设置属性
+    if (baseVAOChanged) {
+        instanceVBOs.attributesSetup = false;
+    }
+    
+    // 如果属性尚未设置，现在设置
+    if (!instanceVBOs.attributesSetup) {
+        glBindVertexArray(baseVAO);
+        
+        // 设置实例矩阵属性（location 6-9）
+        if (instanceVBOs.matrixVBO != 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.matrixVBO);
+            for (int i = 0; i < 4; ++i) {
+                GLuint location = 6 + i;
+                glEnableVertexAttribArray(location);
+                glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE,
+                                      sizeof(float) * 16,
+                                      (void*)(sizeof(float) * 4 * i));
+                glVertexAttribDivisor(location, 1);
+            }
+        }
+        
+        // 设置实例颜色属性（location 10）
+        if (instanceVBOs.colorVBO != 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.colorVBO);
+            glEnableVertexAttribArray(10);
+            glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, sizeof(Vector4), 0);
+            glVertexAttribDivisor(10, 1);
+        }
+        
+        // 设置自定义参数属性（location 11）
+        if (instanceVBOs.paramsVBO != 0) {
+            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.paramsVBO);
+            glEnableVertexAttribArray(11);
+            glVertexAttribPointer(11, 4, GL_FLOAT, GL_FALSE, sizeof(Vector4), 0);
+            glVertexAttribDivisor(11, 1);
+        }
+        
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        
+        instanceVBOs.attributesSetup = true;
+    }
+    
+    return instanceVBOs.instancedVAO;
+}
+
+void LODInstancedRenderer::CreatePersistentMappedVBOs(
+    InstanceVBOs& vbos,
+    size_t capacity
+) {
+    GL_THREAD_CHECK();
+    
+    // ✅ 使用持久映射标志
+    GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+    GLbitfield storageFlags = flags | GL_DYNAMIC_STORAGE_BIT;
+    
+    // 创建矩阵VBO
+    if (vbos.matrixVBO == 0) {
+        glGenBuffers(1, &vbos.matrixVBO);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, vbos.matrixVBO);
+    glBufferStorage(GL_ARRAY_BUFFER, capacity * sizeof(Matrix4), nullptr, storageFlags);
+    vbos.matrixMappedPtr = glMapBufferRange(GL_ARRAY_BUFFER, 0, 
+                                             capacity * sizeof(Matrix4), flags);
+    
+    // 创建颜色VBO
+    if (vbos.colorVBO == 0) {
+        glGenBuffers(1, &vbos.colorVBO);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, vbos.colorVBO);
+    glBufferStorage(GL_ARRAY_BUFFER, capacity * sizeof(Vector4), nullptr, storageFlags);
+    vbos.colorMappedPtr = glMapBufferRange(GL_ARRAY_BUFFER, 0, 
+                                            capacity * sizeof(Vector4), flags);
+    
+    // 创建参数VBO
+    if (vbos.paramsVBO == 0) {
+        glGenBuffers(1, &vbos.paramsVBO);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, vbos.paramsVBO);
+    glBufferStorage(GL_ARRAY_BUFFER, capacity * sizeof(Vector4), nullptr, storageFlags);
+    vbos.paramsMappedPtr = glMapBufferRange(GL_ARRAY_BUFFER, 0, 
+                                             capacity * sizeof(Vector4), flags);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    
+    vbos.capacity = capacity;
+    vbos.colorCapacity = capacity;
+    vbos.paramsCapacity = capacity;
+    vbos.usePersistentMapping = true;
+    
+    // LOG_DEBUG_F("Created persistent mapped VBOs for %zu instances", capacity);
+}
+
+void LODInstancedRenderer::DestroyPersistentMappedVBOs(InstanceVBOs& vbos) {
+    GL_THREAD_CHECK();
+    
+    if (vbos.matrixVBO != 0) {
+        if (vbos.matrixMappedPtr != nullptr) {
+            glBindBuffer(GL_ARRAY_BUFFER, vbos.matrixVBO);
+            glUnmapBuffer(GL_ARRAY_BUFFER);
+            vbos.matrixMappedPtr = nullptr;
+        }
+        glDeleteBuffers(1, &vbos.matrixVBO);
+        vbos.matrixVBO = 0;
+    }
+    
+    if (vbos.colorVBO != 0) {
+        if (vbos.colorMappedPtr != nullptr) {
+            glBindBuffer(GL_ARRAY_BUFFER, vbos.colorVBO);
+            glUnmapBuffer(GL_ARRAY_BUFFER);
+            vbos.colorMappedPtr = nullptr;
+        }
+        glDeleteBuffers(1, &vbos.colorVBO);
+        vbos.colorVBO = 0;
+    }
+    
+    if (vbos.paramsVBO != 0) {
+        if (vbos.paramsMappedPtr != nullptr) {
+            glBindBuffer(GL_ARRAY_BUFFER, vbos.paramsVBO);
+            glUnmapBuffer(GL_ARRAY_BUFFER);
+            vbos.paramsMappedPtr = nullptr;
+        }
+        glDeleteBuffers(1, &vbos.paramsVBO);
+        vbos.paramsVBO = 0;
+    }
+    
+    vbos.usePersistentMapping = false;
 }
 
 void LODInstancedRenderer::ClearInstanceVBOs() {
     GL_THREAD_CHECK();
     
     for (auto& [mesh, vbos] : m_instanceVBOs) {
-        if (vbos.matrixVBO != 0) {
-            glDeleteBuffers(1, &vbos.matrixVBO);
-            vbos.matrixVBO = 0;
+        // ✅ 根据是否使用持久映射选择清理方式
+        if (vbos.usePersistentMapping) {
+            DestroyPersistentMappedVBOs(vbos);
+        } else {
+            // 传统清理方式
+            if (vbos.matrixVBO != 0) {
+                glDeleteBuffers(1, &vbos.matrixVBO);
+                vbos.matrixVBO = 0;
+            }
+            if (vbos.colorVBO != 0) {
+                glDeleteBuffers(1, &vbos.colorVBO);
+                vbos.colorVBO = 0;
+            }
+            if (vbos.paramsVBO != 0) {
+                glDeleteBuffers(1, &vbos.paramsVBO);
+                vbos.paramsVBO = 0;
+            }
         }
-        if (vbos.colorVBO != 0) {
-            glDeleteBuffers(1, &vbos.colorVBO);
-            vbos.colorVBO = 0;
-        }
-        if (vbos.paramsVBO != 0) {
-            glDeleteBuffers(1, &vbos.paramsVBO);
-            vbos.paramsVBO = 0;
-        }
+        
+        // ✅ 注意：不删除instancedVAO，因为它就是基础VAO（属于Mesh）
         vbos.capacity = 0;
         vbos.colorCapacity = 0;
         vbos.paramsCapacity = 0;
+        vbos.instancedVAO = 0;
+        vbos.attributesSetup = false;
     }
     
     m_instanceVBOs.clear();
