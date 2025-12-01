@@ -284,6 +284,9 @@ void LODInstancedRenderer::AddInstanceToGroup(
     // 添加实例数据
     group.instances.push_back(instanceData);
     group.entities.push_back(entity);
+    
+    // ✅ 标记组为脏
+    group.MarkDirty();
 }
 
 MaterialSortKey LODInstancedRenderer::GenerateSortKey(Ref<Material> material, Ref<Mesh> mesh) const {
@@ -345,10 +348,14 @@ void LODInstancedRenderer::RenderGroup(
         // 这里可以添加额外的状态设置（如果需要）
     }
     
-    // 上传实例数据到 GPU（带计时）
-    {
+    // ✅ 仅在需要时上传数据
+    if (group->NeedsUpload()) {
         ScopedTimer uploadTimer(m_stats.uploadTimeMs);
+        
         UploadInstanceData(group->instances, group->mesh);
+        
+        // ✅ 标记为已上传
+        group->MarkUploaded();
     }
     
     // 获取网格的 VAO

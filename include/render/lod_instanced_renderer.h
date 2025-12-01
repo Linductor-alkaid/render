@@ -89,6 +89,10 @@ struct LODInstancedGroup {
     std::vector<InstanceData> instances;  ///< 所有实例的数据
     std::vector<ECS::EntityID> entities;  ///< 对应的实体 ID（用于调试）
     
+    // ✅ 脏标记系统
+    bool isDirty = true;           ///< 数据是否已改变
+    size_t lastUploadedCount = 0;  ///< 上次上传的实例数（用于检测数量变化）
+    
     /**
      * @brief 获取实例数量
      * @return 实例数量
@@ -111,6 +115,30 @@ struct LODInstancedGroup {
     void Clear() {
         instances.clear();
         entities.clear();
+        isDirty = true;  // ✅ 清空后标记为脏
+    }
+    
+    /**
+     * @brief 标记为脏（在添加实例后调用）
+     */
+    void MarkDirty() {
+        isDirty = true;
+    }
+    
+    /**
+     * @brief 检查是否需要上传
+     * @return 如果需要上传返回 true
+     */
+    [[nodiscard]] bool NeedsUpload() const {
+        return isDirty || (lastUploadedCount != instances.size());
+    }
+    
+    /**
+     * @brief 标记为已上传
+     */
+    void MarkUploaded() {
+        isDirty = false;
+        lastUploadedCount = instances.size();
     }
 };
 
