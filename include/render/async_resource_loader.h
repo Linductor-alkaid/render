@@ -16,6 +16,7 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <chrono>
 
 namespace Render {
 
@@ -45,6 +46,20 @@ enum class LoadStatus {
 };
 
 /**
+ * @brief 加载错误类型
+ */
+enum class LoadErrorType {
+    None,           // 无错误
+    FileNotFound,   // 文件未找到
+    ParseError,     // 解析错误
+    OutOfMemory,    // 内存不足
+    GPUUploadFailed,// GPU上传失败
+    InvalidFormat,  // 无效格式
+    NetworkTimeout, // 网络超时
+    Cancelled       // 已取消
+};
+
+/**
  * @brief 加载结果（模板）
  */
 template<typename T>
@@ -53,6 +68,7 @@ struct LoadResult {
     std::string name;
     LoadStatus status;
     std::string errorMessage;
+    LoadErrorType errorType = LoadErrorType::None; // 错误类型
     
     bool IsSuccess() const { 
         return status == LoadStatus::Completed && resource != nullptr; 
@@ -76,11 +92,48 @@ struct LoadTaskBase {
     AsyncResourceType type;                     // 资源类型
     std::atomic<LoadStatus> status{LoadStatus::Pending};
     std::string errorMessage;
+    LoadErrorType errorType = LoadErrorType::None; // 错误类型
     float priority = 0.0f;                      // 优先级（越高越优先）
+    std::atomic<bool> cancelled{false};         // 是否已取消
+    std::chrono::steady_clock::time_point submitTime; // 提交时间（用于相同优先级排序）
+    
+    // 重试相关
+    size_t retryCount = 0;                      // 当前重试次数
+    size_t maxRetries = 0;                      // 最大重试次数（0表示不重试）
+    std::chrono::milliseconds retryDelay{1000}; // 重试延迟
     
     virtual ~LoadTaskBase() = default;
     virtual void ExecuteLoad() = 0;              // 工作线程：加载数据
     virtual void ExecuteUpload() = 0;            // 主线程：GPU上传
+    
+    /**
+     * @brief 取消任务
+     */
+    void Cancel() {
+        cancelled = true;
+        status = LoadStatus::Failed;
+        errorType = LoadErrorType::Cancelled;
+        if (errorMessage.empty()) {
+            errorMessage = "Task cancelled by user";
+        }
+    }
+    
+    /**
+     * @brief 检查任务是否已取消
+     */
+    bool IsCancelled() const {
+        return cancelled.load();
+    }
+    
+    /**
+     * @brief 检查是否应该重试
+     */
+    bool ShouldRetry() const {
+        return retryCount < maxRetries && 
+               status == LoadStatus::Failed &&
+               errorType != LoadErrorType::Cancelled &&
+               errorType != LoadErrorType::FileNotFound; // 文件不存在不重试
+    }
 };
 
 /**
@@ -101,10 +154,18 @@ struct MeshLoadTask : public LoadTaskBase {
         try {
             if (loadFunc) {
                 result = loadFunc();
+                if (!result) {
+                    status = LoadStatus::Failed;
+                    errorType = LoadErrorType::ParseError;
+                    if (errorMessage.empty()) {
+                        errorMessage = "Mesh load function returned null";
+                    }
+                }
             }
         } catch (const std::exception& e) {
             errorMessage = e.what();
             status = LoadStatus::Failed;
+            errorType = LoadErrorType::ParseError;
         }
     }
     
@@ -116,6 +177,7 @@ struct MeshLoadTask : public LoadTaskBase {
         } catch (const std::exception& e) {
             errorMessage = "Upload failed: " + std::string(e.what());
             status = LoadStatus::Failed;
+            errorType = LoadErrorType::GPUUploadFailed;
         }
     }
 };
@@ -141,6 +203,7 @@ struct TextureLoadTask : public LoadTaskBase {
                 stagingData = loadFunc();
                 if (!stagingData) {
                     status = LoadStatus::Failed;
+                    errorType = LoadErrorType::ParseError;
                     if (errorMessage.empty()) {
                         errorMessage = "Texture staging data is empty";
                     }
@@ -149,6 +212,7 @@ struct TextureLoadTask : public LoadTaskBase {
         } catch (const std::exception& e) {
             errorMessage = e.what();
             status = LoadStatus::Failed;
+            errorType = LoadErrorType::ParseError;
         }
     }
     
@@ -164,6 +228,7 @@ struct TextureLoadTask : public LoadTaskBase {
 
             if (!stagingData) {
                 status = LoadStatus::Failed;
+                errorType = LoadErrorType::GPUUploadFailed;
                 if (errorMessage.empty()) {
                     errorMessage = "Upload failed: staging data missing";
                 }
@@ -175,6 +240,7 @@ struct TextureLoadTask : public LoadTaskBase {
             result = uploadFunc(std::move(data));
             if (!result) {
                 status = LoadStatus::Failed;
+                errorType = LoadErrorType::GPUUploadFailed;
                 if (errorMessage.empty()) {
                     errorMessage = "Upload failed: texture creation returned null";
                 }
@@ -182,6 +248,7 @@ struct TextureLoadTask : public LoadTaskBase {
         } catch (const std::exception& e) {
             errorMessage = "Upload failed: " + std::string(e.what());
             status = LoadStatus::Failed;
+            errorType = LoadErrorType::GPUUploadFailed;
         }
     }
 };
@@ -205,13 +272,21 @@ struct ModelLoadTask : public LoadTaskBase {
         try {
             if (loadFunc) {
                 result = loadFunc();
+                if (!result.model) {
+                    status = LoadStatus::Failed;
+                    errorType = LoadErrorType::ParseError;
+                    if (errorMessage.empty()) {
+                        errorMessage = "Model load function returned null";
+                    }
+                }
             }
         } catch (const std::exception& e) {
             errorMessage = e.what();
             status = LoadStatus::Failed;
+            errorType = LoadErrorType::ParseError;
         }
     }
-
+    
     void ExecuteUpload() override {
         try {
             if (uploadFunc) {
@@ -220,6 +295,7 @@ struct ModelLoadTask : public LoadTaskBase {
         } catch (const std::exception& e) {
             errorMessage = "Upload failed: " + std::string(e.what());
             status = LoadStatus::Failed;
+            errorType = LoadErrorType::GPUUploadFailed;
         }
     }
 };
@@ -374,8 +450,25 @@ private:
     // 工作线程函数
     void WorkerThreadFunc();
     
-    // 任务队列
-    std::queue<std::shared_ptr<LoadTaskBase>> m_pendingTasks;   // 待处理任务
+    // 任务比较器（用于优先级队列）
+    struct TaskComparator {
+        bool operator()(const std::shared_ptr<LoadTaskBase>& a,
+                       const std::shared_ptr<LoadTaskBase>& b) const {
+            // 高优先级排在前面
+            if (a->priority != b->priority) {
+                return a->priority < b->priority;
+            }
+            // 相同优先级，先提交的先执行
+            return a->submitTime > b->submitTime;
+        }
+    };
+    
+    // 任务队列（使用优先级队列）
+    std::priority_queue<
+        std::shared_ptr<LoadTaskBase>,
+        std::vector<std::shared_ptr<LoadTaskBase>>,
+        TaskComparator
+    > m_pendingTasks;   // 待处理任务（按优先级排序）
     std::queue<std::shared_ptr<LoadTaskBase>> m_completedTasks; // 已完成任务（等待上传）
     
     // 线程同步

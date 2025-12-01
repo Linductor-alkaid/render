@@ -70,11 +70,13 @@ void AsyncResourceLoader::Shutdown() {
     Logger::GetInstance().Info("关闭异步资源加载器");
     Logger::GetInstance().Info("========================================");
     
-    // 通知所有工作线程退出
+    // 1. 设置关闭标志
     m_running = false;
+    
+    // 2. 唤醒所有等待线程
     m_taskAvailable.notify_all();
     
-    // 等待所有线程完成
+    // 3. 等待所有线程完成当前任务并退出
     Logger::GetInstance().Info("等待工作线程退出...");
     for (size_t i = 0; i < m_workers.size(); ++i) {
         if (m_workers[i].joinable()) {
@@ -84,10 +86,10 @@ void AsyncResourceLoader::Shutdown() {
     }
     m_workers.clear();
     
-    // ✅ 清空所有待处理的任务队列
+    // 4. 安全清理剩余任务(此时已无线程访问)
     ClearAllPendingTasks();
     
-    // 打印最终统计
+    // 5. 打印统计
     PrintStatistics();
     
     Logger::GetInstance().Info("========================================");
@@ -99,7 +101,7 @@ void AsyncResourceLoader::ClearAllPendingTasks() {
     size_t pendingCleared = 0;
     size_t completedCleared = 0;
     
-    // 清空待处理队列
+    // 清空待处理队列（优先级队列）
     {
         std::lock_guard<std::mutex> lock(m_pendingMutex);
         pendingCleared = m_pendingTasks.size();
@@ -146,12 +148,19 @@ void AsyncResourceLoader::WorkerThreadFunc() {
             }
             
             if (!m_pendingTasks.empty()) {
-                task = m_pendingTasks.front();
+                task = m_pendingTasks.top();  // 优先级队列使用 top()
                 m_pendingTasks.pop();
             }
         }
         
         if (!task) {
+            continue;
+        }
+        
+        // 检查任务是否已取消
+        if (task->IsCancelled()) {
+            Logger::GetInstance().Info("[Thread:" + std::to_string(threadIdHash) + 
+                                       "] 跳过已取消的任务: " + task->name);
             continue;
         }
         
@@ -173,6 +182,13 @@ void AsyncResourceLoader::WorkerThreadFunc() {
             
             m_loadingCount--;
             
+            // 再次检查是否已取消（加载过程中可能被取消）
+            if (task->IsCancelled()) {
+                Logger::GetInstance().Info("[Thread:" + std::to_string(threadIdHash) + 
+                                           "] 任务在加载过程中被取消: " + task->name);
+                continue;
+            }
+            
             if (task->status != LoadStatus::Failed) {
                 task->status = LoadStatus::Loaded;  // 等待GPU上传
                 
@@ -187,6 +203,34 @@ void AsyncResourceLoader::WorkerThreadFunc() {
                     m_completedTasks.push(task);
                 }
             } else {
+                // 检查是否需要重试
+                if (task->ShouldRetry()) {
+                    task->retryCount++;
+                    
+                    Logger::GetInstance().Warning("========================================");
+                    Logger::GetInstance().Warning("[Thread:" + std::to_string(threadIdHash) + 
+                                                 "] 任务失败，重试 " + 
+                                                 std::to_string(task->retryCount) + "/" + 
+                                                 std::to_string(task->maxRetries) + 
+                                                 ": " + task->name);
+                    Logger::GetInstance().Warning("========================================");
+                    
+                    // 延迟后重新入队
+                    std::this_thread::sleep_for(task->retryDelay);
+                    
+                    // 重置状态
+                    task->status = LoadStatus::Pending;
+                    task->errorMessage.clear();
+                    task->errorType = LoadErrorType::None;
+                    
+                    {
+                        std::lock_guard<std::mutex> lock(m_pendingMutex);
+                        m_pendingTasks.push(task);
+                    }
+                    m_taskAvailable.notify_one();
+                    continue;
+                }
+                
                 Logger::GetInstance().Error("========================================");
                 Logger::GetInstance().Error("[Thread:" + std::to_string(threadIdHash) + 
                                            "] 加载失败: " + task->name + 
@@ -202,8 +246,32 @@ void AsyncResourceLoader::WorkerThreadFunc() {
             Logger::GetInstance().Error("========================================");
             task->status = LoadStatus::Failed;
             task->errorMessage = e.what();
+            task->errorType = LoadErrorType::ParseError;
             m_failedTasks++;
             m_loadingCount--;
+            
+            // 检查是否需要重试
+            if (task->ShouldRetry()) {
+                task->retryCount++;
+                
+                Logger::GetInstance().Warning("[Thread:" + std::to_string(threadIdHash) + 
+                                             "] 异常后重试 " + 
+                                             std::to_string(task->retryCount) + "/" + 
+                                             std::to_string(task->maxRetries) + 
+                                             ": " + task->name);
+                
+                std::this_thread::sleep_for(task->retryDelay);
+                
+                task->status = LoadStatus::Pending;
+                task->errorMessage.clear();
+                task->errorType = LoadErrorType::None;
+                
+                {
+                    std::lock_guard<std::mutex> lock(m_pendingMutex);
+                    m_pendingTasks.push(task);
+                }
+                m_taskAvailable.notify_one();
+            }
         }
     }
     
@@ -227,6 +295,8 @@ std::shared_ptr<MeshLoadTask> AsyncResourceLoader::LoadMeshAsync(
     task->type = AsyncResourceType::Mesh;
     task->priority = priority;
     task->callback = callback;
+    task->submitTime = std::chrono::steady_clock::now(); // 记录提交时间
+    task->maxRetries = 3; // 默认最多重试3次
     
     // 定义加载函数（在工作线程执行）
     task->loadFunc = [filepath]() -> Ref<Mesh> {
@@ -312,6 +382,8 @@ std::shared_ptr<TextureLoadTask> AsyncResourceLoader::LoadTextureAsync(
     task->type = AsyncResourceType::Texture;
     task->priority = priority;
     task->callback = callback;
+    task->submitTime = std::chrono::steady_clock::now(); // 记录提交时间
+    task->maxRetries = 3; // 默认最多重试3次
     
     // 定义加载函数（工作线程）
     task->loadFunc = [filepath, generateMipmap]() -> std::unique_ptr<TextureLoader::TextureStagingData> {
@@ -380,6 +452,8 @@ std::shared_ptr<ModelLoadTask> AsyncResourceLoader::LoadModelAsync(
     task->requestedOptions = options;
     task->filepath = filepath;
     task->overrideName = name;
+    task->submitTime = std::chrono::steady_clock::now(); // 记录提交时间
+    task->maxRetries = 3; // 默认最多重试3次
 
     ModelLoadOptions workerOptions = options;
     workerOptions.autoUpload = false;
@@ -527,11 +601,23 @@ size_t AsyncResourceLoader::ProcessCompletedTasks(size_t maxTasks) {
             break;
         }
         
+        // 检查任务是否已取消
+        if (task->IsCancelled()) {
+            Logger::GetInstance().Info("跳过已取消的任务: " + task->name);
+            continue;
+        }
+        
         try {
             task->status = LoadStatus::Uploading;
             
             // 执行GPU上传（主线程）
             task->ExecuteUpload();
+            
+            // 再次检查是否已取消
+            if (task->IsCancelled()) {
+                Logger::GetInstance().Info("任务在上传过程中被取消: " + task->name);
+                continue;
+            }
             
             if (task->status != LoadStatus::Failed) {
                 task->status = LoadStatus::Completed;
@@ -553,6 +639,7 @@ size_t AsyncResourceLoader::ProcessCompletedTasks(size_t maxTasks) {
                     result.name = meshTask->name;
                     result.status = task->status;
                     result.errorMessage = task->errorMessage;
+                    result.errorType = task->errorType;
                     meshTask->callback(result);
                 }
             } else if (auto texTask = std::dynamic_pointer_cast<TextureLoadTask>(task)) {
@@ -562,6 +649,7 @@ size_t AsyncResourceLoader::ProcessCompletedTasks(size_t maxTasks) {
                     result.name = texTask->name;
                     result.status = task->status;
                     result.errorMessage = task->errorMessage;
+                    result.errorType = task->errorType;
                     texTask->callback(result);
                 }
             } else if (auto modelTask = std::dynamic_pointer_cast<ModelLoadTask>(task)) {
@@ -573,6 +661,7 @@ size_t AsyncResourceLoader::ProcessCompletedTasks(size_t maxTasks) {
                         : modelTask->result.modelName;
                     result.status = task->status;
                     result.errorMessage = task->errorMessage;
+                    result.errorType = task->errorType;
                     result.meshResourceNames = modelTask->result.meshResourceNames;
                     result.materialResourceNames = modelTask->result.materialResourceNames;
                     modelTask->callback(result);
