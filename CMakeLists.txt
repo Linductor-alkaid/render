@@ -249,6 +249,8 @@ set(RENDER_SOURCES
     src/rendering/material.cpp
     src/rendering/material_sort_key.cpp
     src/rendering/material_state_cache.cpp
+    src/rendering/resource_memory_tracker.cpp
+    src/rendering/gpu_buffer_pool.cpp
     src/rendering/lighting/light.cpp
     src/rendering/lighting/light_manager.cpp
     src/rendering/framebuffer.cpp
@@ -401,6 +403,9 @@ set(RENDER_HEADERS
     include/render/material.h
     include/render/material_sort_key.h
     include/render/material_state_cache.h
+    include/render/object_pool.h
+    include/render/resource_memory_tracker.h
+    include/render/gpu_buffer_pool.h
     include/render/lighting/light.h
     include/render/lighting/light_manager.h
     include/render/framebuffer.h

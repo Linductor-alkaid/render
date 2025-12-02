@@ -2,6 +2,7 @@
 #include "render/logger.h"
 #include "render/error.h"
 #include "render/geometry_preset.h"
+#include "render/resource_memory_tracker.h"
 #include <algorithm>
 #include <fstream>
 
@@ -45,6 +46,9 @@ bool ResourceManager::RegisterTexture(const std::string& name, Ref<Texture> text
     
     m_textures[name] = ResourceEntry<Texture>(texture, m_currentFrame);
     
+    // 注册到内存追踪器
+    ResourceMemoryTracker::GetInstance().RegisterTexture(texture.get());
+    
     // 在依赖跟踪器中注册资源
     m_dependencyTracker.RegisterResource(name, ResourceType::Texture);
     
@@ -69,6 +73,9 @@ bool ResourceManager::RemoveTexture(const std::string& name) {
     
     auto it = m_textures.find(name);
     if (it != m_textures.end()) {
+        // 从内存追踪器注销
+        ResourceMemoryTracker::GetInstance().UnregisterTexture(it->second.resource.get());
+        
         m_textures.erase(it);
         
         // 从依赖跟踪器中注销资源
@@ -107,6 +114,9 @@ bool ResourceManager::RegisterMesh(const std::string& name, Ref<Mesh> mesh) {
     
     m_meshes[name] = ResourceEntry<Mesh>(mesh, m_currentFrame);
     
+    // 注册到内存追踪器
+    ResourceMemoryTracker::GetInstance().RegisterMesh(mesh.get());
+    
     // 在依赖跟踪器中注册资源
     m_dependencyTracker.RegisterResource(name, ResourceType::Mesh);
     
@@ -131,6 +141,9 @@ bool ResourceManager::RemoveMesh(const std::string& name) {
     
     auto it = m_meshes.find(name);
     if (it != m_meshes.end()) {
+        // 从内存追踪器注销
+        ResourceMemoryTracker::GetInstance().UnregisterMesh(it->second.resource.get());
+        
         m_meshes.erase(it);
         
         // 从依赖跟踪器中注销资源
@@ -285,6 +298,9 @@ bool ResourceManager::RegisterShader(const std::string& name, Ref<Shader> shader
     
     m_shaders[name] = ResourceEntry<Shader>(shader, m_currentFrame);
     
+    // 注册到内存追踪器
+    ResourceMemoryTracker::GetInstance().RegisterShader(shader.get());
+    
     // 在依赖跟踪器中注册资源
     m_dependencyTracker.RegisterResource(name, ResourceType::Shader);
     
@@ -309,6 +325,9 @@ bool ResourceManager::RemoveShader(const std::string& name) {
     
     auto it = m_shaders.find(name);
     if (it != m_shaders.end()) {
+        // 从内存追踪器注销
+        ResourceMemoryTracker::GetInstance().UnregisterShader(it->second.resource.get());
+        
         m_shaders.erase(it);
         
         // 从依赖跟踪器中注销资源

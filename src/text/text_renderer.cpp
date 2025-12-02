@@ -6,11 +6,15 @@
 namespace Render {
 
 TextRenderer::TextRenderer(Renderer* renderer)
-    : m_renderer(renderer) {
+    : m_renderer(renderer)
+    , m_renderablePool(32, 512) {  // 初始容量 32，最大容量 512
 }
 
 void TextRenderer::Begin() {
     m_instances.clear();
+    // 归还上一批次的所有 renderables 到对象池
+    m_renderablePool.Reset();
+    m_activeRenderables.clear();
 }
 
 void TextRenderer::Draw(const TextPtr& text,
@@ -50,21 +54,15 @@ void TextRenderer::End() {
     TextRenderable::SetViewProjection(Matrix4::Identity(),
                                       MathUtils::Orthographic(0.0f, width, height, 0.0f, -1.0f, 1.0f));
 
-    if (m_renderables.size() < m_instances.size()) {
-        size_t oldSize = m_renderables.size();
-        m_renderables.resize(m_instances.size());
-        for (size_t i = oldSize; i < m_renderables.size(); ++i) {
-            m_renderables[i] = std::make_unique<TextRenderable>();
+    for (const auto& instance : m_instances) {
+        // 从对象池获取 TextRenderable
+        TextRenderable* renderable = m_renderablePool.Acquire();
+        if (!renderable) {
+            // 池已满，跳过此文本（或者可以记录警告）
+            continue;
         }
-    }
-
-    for (size_t i = 0; i < m_instances.size(); ++i) {
-        const auto& instance = m_instances[i];
-        auto& renderablePtr = m_renderables[i];
-        if (!renderablePtr) {
-            renderablePtr = std::make_unique<TextRenderable>();
-        }
-        TextRenderable* renderable = renderablePtr.get();
+        
+        m_activeRenderables.push_back(renderable);
         renderable->ClearDepthHint();
 
         auto transform = renderable->GetTransform();

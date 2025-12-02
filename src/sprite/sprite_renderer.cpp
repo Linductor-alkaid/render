@@ -2,15 +2,20 @@
 #include "render/render_state.h"
 #include "render/transform.h"
 #include "render/math_utils.h"
+#include "render/render_layer.h"
 
 namespace Render {
 
 SpriteRenderer::SpriteRenderer(Renderer* renderer)
-    : m_renderer(renderer) {
+    : m_renderer(renderer)
+    , m_renderablePool(32, 512) {  // 初始容量 32，最大容量 512
 }
 
 void SpriteRenderer::Begin() {
     m_instances.clear();
+    // 归还上一批次的所有 renderables 到对象池
+    m_renderablePool.Reset();
+    m_activeRenderables.clear();
 }
 
 void SpriteRenderer::Draw(const Sprite& sprite, const Vector3& position, float rotation, const Vector2& scale) {
@@ -42,18 +47,30 @@ void SpriteRenderer::End() {
         const Sprite& sprite = instance.sprite;
         const SpriteFrame& frame = sprite.GetFrame();
 
-        m_renderable.SetTexture(sprite.GetTexture());
-        m_renderable.SetSourceRect(frame.uv);
-        m_renderable.SetSize(Vector2(frame.size.x() * instance.scale.x(), frame.size.y() * instance.scale.y()));
-        m_renderable.SetTintColor(sprite.GetTint());
+        // 从对象池获取 SpriteRenderable
+        SpriteRenderable* renderable = m_renderablePool.Acquire();
+        if (!renderable) {
+            // 池已满，跳过此 sprite（或者可以记录警告）
+            continue;
+        }
+        
+        m_activeRenderables.push_back(renderable);
+
+        renderable->SetTexture(sprite.GetTexture());
+        renderable->SetSourceRect(frame.uv);
+        renderable->SetSize(Vector2(frame.size.x() * instance.scale.x(), frame.size.y() * instance.scale.y()));
+        renderable->SetTintColor(sprite.GetTint());
 
         auto transform = std::make_shared<Transform>();
         transform->SetPosition(instance.position);
         transform->SetScale(Vector3(instance.scale.x(), instance.scale.y(), 1.0f));
         transform->SetRotation(MathUtils::FromEulerDegrees(0.0f, 0.0f, instance.rotation));
-        m_renderable.SetTransform(transform);
+        renderable->SetTransform(transform);
+        
+        renderable->SetVisible(true);
+        renderable->SetLayerID(Layers::UI::Default.value);
 
-        m_renderable.Render(renderState.get());
+        renderable->Render(renderState.get());
     }
 }
 
