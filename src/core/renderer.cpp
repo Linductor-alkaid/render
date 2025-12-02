@@ -127,7 +127,7 @@ uint32_t EncodeOptionalEnum(const std::optional<Enum>& value) {
     return static_cast<uint32_t>(static_cast<Underlying>(value.value())) + 1u;
 }
 
-MaterialSortKey BuildMeshRenderableSortKey(MeshRenderable* meshRenderable) {
+MaterialSortKey BuildMeshRenderableSortKey(MeshRenderable* meshRenderable, std::optional<DepthFunc> layerDepthFunc = std::nullopt) {
     MaterialSortKey key{};
     if (!meshRenderable) {
         return key;
@@ -145,11 +145,11 @@ MaterialSortKey BuildMeshRenderableSortKey(MeshRenderable* meshRenderable) {
         pipelineFlags |= MaterialPipelineFlags_ReceiveShadow;
     }
 
-    key = BuildMaterialSortKey(material.get(), overrideHash, pipelineFlags);
+    key = BuildMaterialSortKey(material.get(), overrideHash, pipelineFlags, layerDepthFunc);
     return key;
 }
 
-MaterialSortKey BuildModelRenderableSortKey(ModelRenderable* modelRenderable) {
+MaterialSortKey BuildModelRenderableSortKey(ModelRenderable* modelRenderable, std::optional<DepthFunc> layerDepthFunc = std::nullopt) {
     MaterialSortKey key{};
     if (!modelRenderable) {
         return key;
@@ -206,7 +206,7 @@ MaterialSortKey BuildModelRenderableSortKey(ModelRenderable* modelRenderable) {
         }
     });
 
-    key = BuildMaterialSortKey(primaryMaterial, overrideHash, pipelineFlags);
+    key = BuildMaterialSortKey(primaryMaterial, overrideHash, pipelineFlags, layerDepthFunc);
     key.materialID = overrideHash;
     if (anyBlend) {
         key.blendMode = resolvedBlend;
@@ -217,7 +217,7 @@ MaterialSortKey BuildModelRenderableSortKey(ModelRenderable* modelRenderable) {
     return key;
 }
 
-MaterialSortKey BuildSpriteRenderableSortKey(SpriteRenderable* spriteRenderable) {
+MaterialSortKey BuildSpriteRenderableSortKey(SpriteRenderable* spriteRenderable, std::optional<DepthFunc> layerDepthFunc = std::nullopt) {
     MaterialSortKey key{};
     if (!spriteRenderable) {
         return key;
@@ -237,7 +237,7 @@ MaterialSortKey BuildSpriteRenderableSortKey(SpriteRenderable* spriteRenderable)
         pipelineFlags |= MaterialPipelineFlags_ScreenSpace;
     }
 
-    key = BuildMaterialSortKey(nullptr, overrideHash, pipelineFlags);
+    key = BuildMaterialSortKey(nullptr, overrideHash, pipelineFlags, layerDepthFunc);
     key.blendMode = BlendMode::Alpha;
     key.cullFace = CullFace::None;
     key.depthTest = false;
@@ -256,7 +256,7 @@ MaterialSortKey BuildSpriteRenderableSortKey(SpriteRenderable* spriteRenderable)
     return key;
 }
 
-MaterialSortKey BuildTextRenderableSortKey(TextRenderable* textRenderable) {
+MaterialSortKey BuildTextRenderableSortKey(TextRenderable* textRenderable, std::optional<DepthFunc> layerDepthFunc = std::nullopt) {
     MaterialSortKey key{};
     if (!textRenderable) {
         return key;
@@ -278,7 +278,7 @@ MaterialSortKey BuildTextRenderableSortKey(TextRenderable* textRenderable) {
 
     uint32_t pipelineFlags = MaterialPipelineFlags_ScreenSpace;
 
-    key = BuildMaterialSortKey(nullptr, overrideHash, pipelineFlags);
+    key = BuildMaterialSortKey(nullptr, overrideHash, pipelineFlags, layerDepthFunc);
     key.blendMode = BlendMode::Alpha;
     key.cullFace = CullFace::None;
     key.depthTest = false;
@@ -291,7 +291,7 @@ MaterialSortKey BuildTextRenderableSortKey(TextRenderable* textRenderable) {
     return key;
 }
 
-void EnsureMaterialSortKey(Renderable* renderable) {
+void EnsureMaterialSortKey(Renderable* renderable, std::optional<DepthFunc> layerDepthFunc = std::nullopt) {
     if (!renderable) {
         return;
     }
@@ -306,25 +306,25 @@ void EnsureMaterialSortKey(Renderable* renderable) {
     switch (renderable->GetType()) {
         case RenderableType::Mesh: {
             auto* meshRenderable = static_cast<MeshRenderable*>(renderable);
-            key = BuildMeshRenderableSortKey(meshRenderable);
+            key = BuildMeshRenderableSortKey(meshRenderable, layerDepthFunc);
             computed = true;
             break;
         }
         case RenderableType::Model: {
             auto* modelRenderable = static_cast<ModelRenderable*>(renderable);
-            key = BuildModelRenderableSortKey(modelRenderable);
+            key = BuildModelRenderableSortKey(modelRenderable, layerDepthFunc);
             computed = true;
             break;
         }
         case RenderableType::Sprite: {
             auto* spriteRenderable = static_cast<SpriteRenderable*>(renderable);
-            key = BuildSpriteRenderableSortKey(spriteRenderable);
+            key = BuildSpriteRenderableSortKey(spriteRenderable, layerDepthFunc);
             computed = true;
             break;
         }
         case RenderableType::Text: {
             auto* textRenderable = static_cast<TextRenderable*>(renderable);
-            key = BuildTextRenderableSortKey(textRenderable);
+            key = BuildTextRenderableSortKey(textRenderable, layerDepthFunc);
             computed = true;
             break;
         }
@@ -767,8 +767,6 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
         return;
     }
     
-    EnsureMaterialSortKey(renderable);
-
     RenderLayerId requestedLayer(renderable->GetLayerID());
     auto descriptorOpt = m_layerRegistry.GetDescriptor(requestedLayer);
 
@@ -803,6 +801,17 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
     if (stateOpt.has_value() && !stateOpt->enabled) {
         return;
     }
+
+    // 获取层级状态中的 depthFunc 覆盖值（如果有）
+    std::optional<DepthFunc> layerDepthFunc;
+    if (stateOpt.has_value() && stateOpt->overrides.depthFunc.has_value()) {
+        layerDepthFunc = stateOpt->overrides.depthFunc;
+    } else if (descriptor.defaultState.depthFunc.has_value()) {
+        layerDepthFunc = descriptor.defaultState.depthFunc;
+    }
+    
+    // 使用层级的 depthFunc 确保材质排序键
+    EnsureMaterialSortKey(renderable, layerDepthFunc);
 
     std::lock_guard<std::mutex> lock(m_mutex);
 

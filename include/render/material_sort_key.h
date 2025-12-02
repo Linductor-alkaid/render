@@ -3,6 +3,7 @@
 #include "render/render_state.h"
 #include <cstdint>
 #include <cstddef>
+#include <optional>
 
 namespace Render {
 
@@ -28,6 +29,7 @@ struct MaterialSortKey {
     CullFace cullFace = CullFace::Back;
     bool depthTest = true;
     bool depthWrite = true;
+    DepthFunc depthFunc = DepthFunc::Less;  // 新增：深度测试函数
     uint32_t overrideHash = 0;
     uint32_t pipelineFlags = 0;
 
@@ -42,10 +44,12 @@ struct MaterialSortKey {
  * @param material 材质指针（允许为 nullptr）
  * @param overrideHash 材质覆盖哈希值（不同覆盖应生成不同键）
  * @param pipelineFlags 额外的管线标记位（如阴影、实例化等）
+ * @param depthFuncOverride 深度函数覆盖（从层级状态获取，如果有）
  */
 MaterialSortKey BuildMaterialSortKey(const Material* material,
                                      uint32_t overrideHash = 0,
-                                     uint32_t pipelineFlags = 0) noexcept;
+                                     uint32_t pipelineFlags = 0,
+                                     std::optional<DepthFunc> depthFuncOverride = std::nullopt) noexcept;
 
 struct MaterialSortKeyHasher {
     std::size_t operator()(const MaterialSortKey& key) const noexcept;

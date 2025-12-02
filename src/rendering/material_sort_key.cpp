@@ -12,18 +12,21 @@ bool MaterialSortKey::operator==(const MaterialSortKey& other) const noexcept {
            cullFace == other.cullFace &&
            depthTest == other.depthTest &&
            depthWrite == other.depthWrite &&
+           depthFunc == other.depthFunc &&
            overrideHash == other.overrideHash &&
            pipelineFlags == other.pipelineFlags;
 }
 
 MaterialSortKey BuildMaterialSortKey(const Material* material,
                                      uint32_t overrideHash,
-                                     uint32_t pipelineFlags) noexcept {
+                                     uint32_t pipelineFlags,
+                                     std::optional<DepthFunc> depthFuncOverride) noexcept {
     MaterialSortKey key{};
 
     if (!material) {
         key.overrideHash = overrideHash;
         key.pipelineFlags = pipelineFlags;
+        key.depthFunc = depthFuncOverride.value_or(DepthFunc::Less);
         return key;
     }
 
@@ -37,6 +40,9 @@ MaterialSortKey BuildMaterialSortKey(const Material* material,
     key.cullFace = material->GetCullFace();
     key.depthTest = material->GetDepthTest();
     key.depthWrite = material->GetDepthWrite();
+    // 优先使用层级覆盖的 depthFunc，否则使用默认值 Less
+    // 注意：Material 类暂时不支持 GetDepthFunc()，所以这里只能使用覆盖值或默认值
+    key.depthFunc = depthFuncOverride.value_or(DepthFunc::Less);
     key.overrideHash = overrideHash;
     key.pipelineFlags = pipelineFlags;
 
@@ -49,7 +55,9 @@ std::size_t MaterialSortKeyHasher::operator()(const MaterialSortKey& key) const 
         (static_cast<uint64_t>(key.overrideHash) << 32) | key.pipelineFlags,
         static_cast<uint64_t>(static_cast<uint32_t>(key.blendMode)) << 32 |
         static_cast<uint32_t>(key.cullFace),
-        static_cast<uint64_t>(key.depthTest) << 1 | static_cast<uint64_t>(key.depthWrite)
+        (static_cast<uint64_t>(key.depthTest) << 2) |
+        (static_cast<uint64_t>(key.depthWrite) << 1) |
+        static_cast<uint64_t>(static_cast<uint32_t>(key.depthFunc))
     };
 
     std::size_t seed = 0xcbf29ce484222325ULL;
@@ -70,6 +78,7 @@ bool MaterialSortKeyLess::operator()(const MaterialSortKey& lhs, const MaterialS
                     lhs.cullFace,
                     lhs.depthTest,
                     lhs.depthWrite,
+                    lhs.depthFunc,
                     lhs.overrideHash,
                     lhs.pipelineFlags) <
            std::tie(rhs.materialID,
@@ -78,6 +87,7 @@ bool MaterialSortKeyLess::operator()(const MaterialSortKey& lhs, const MaterialS
                     rhs.cullFace,
                     rhs.depthTest,
                     rhs.depthWrite,
+                    rhs.depthFunc,
                     rhs.overrideHash,
                     rhs.pipelineFlags);
 }
