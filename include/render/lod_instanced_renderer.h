@@ -537,12 +537,14 @@ private:
      * @brief 获取或创建实例化VAO
      * 
      * 创建一个包含基础顶点属性和实例化属性的VAO，并缓存起来避免重复设置
+     * 从着色器查询实例化属性的location，支持不同着色器的location定义
      * 
      * @param mesh 网格
+     * @param material 材质（用于查询着色器中实例化属性的location）
      * @param instanceVBOs 实例化VBO
      * @return 实例化VAO ID，失败返回0
      */
-    GLuint GetOrCreateInstancedVAO(Ref<Mesh> mesh, InstanceVBOs& instanceVBOs);
+    GLuint GetOrCreateInstancedVAO(Ref<Mesh> mesh, Ref<Material> material, InstanceVBOs& instanceVBOs);
     
     /**
      * @brief 创建持久映射的VBO（OpenGL 4.4+）

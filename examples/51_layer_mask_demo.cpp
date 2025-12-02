@@ -70,6 +70,8 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    // renderer->SetLODInstancingEnabled(false);
+
     AsyncResourceLoader::GetInstance().Initialize(1);
 
     World world;

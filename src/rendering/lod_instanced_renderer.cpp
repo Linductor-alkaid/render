@@ -13,6 +13,7 @@
 #include <glad/glad.h>
 #include <algorithm>
 #include <cstring>
+#include <cstddef>
 #include <chrono>
 
 namespace Render {
@@ -428,66 +429,89 @@ void LODInstancedRenderer::RenderGroup(
     
     GL_THREAD_CHECK();
     
-    // ✅ 使用 MaterialStateCache 避免重复绑定材质
+    // 使用MaterialStateCache避免重复绑定材质
     auto& stateCache = MaterialStateCache::Get();
     if (stateCache.ShouldBind(group->material.get(), renderState)) {
         group->material->Bind(renderState);
         stateCache.OnBind(group->material.get(), renderState);
     }
     
-    // ✅ 设置实例化标志（告诉着色器使用实例数据）
+    // 设置实例化标志
     if (auto shader = group->material->GetShader()) {
         if (auto uniformMgr = shader->GetUniformManager()) {
             uniformMgr->SetBool("uHasInstanceData", true);
-            // ✅ 设置 uModel 为单位矩阵，因为实例矩阵已经是完整的世界变换矩阵
             uniformMgr->SetMatrix4("uModel", Matrix4::Identity());
         }
     }
     
-    // ✅ 应用材质相关的渲染状态（通过 RenderState）
-    if (renderState) {
-        // Material::Bind 已经通过 RenderState 应用了混合模式、深度测试等
-        // 这里可以添加额外的状态设置（如果需要）
-    }
-    
-    // ✅ 仅在需要时上传数据
+    // 仅在需要时上传数据
     if (group->NeedsUpload()) {
         ScopedTimer uploadTimer(m_stats.uploadTimeMs);
-        
         UploadInstanceData(group->instances, group->mesh);
-        
-        // ✅ 标记为已上传
         group->MarkUploaded();
     }
     
     size_t instanceCount = group->instances.size();
     auto& instanceVBOs = GetOrCreateInstanceVBOs(group->mesh, instanceCount);
     
-    // ✅ 获取或创建实例化VAO
-    GLuint vao = GetOrCreateInstancedVAO(group->mesh, instanceVBOs);
+    // 获取或创建实例化VAO（传入material以查询着色器中的实例化属性location）
+    GLuint vao = GetOrCreateInstancedVAO(group->mesh, group->material, instanceVBOs);
     
     if (vao == 0) {
         LOG_WARNING("LODInstancedRenderer: Failed to create instanced VAO");
         return;
     }
     
-    // ✅ 使用 RenderState 绑定 VAO（如果提供）
+    // 绑定VAO
     if (renderState) {
         renderState->BindVertexArray(vao);
     } else {
         glBindVertexArray(vao);
     }
     
-    // ✅ 不再需要每次设置属性（已缓存在VAO中）
+    // ✅ 直接使用OpenGL绘制，而不是通过Mesh::DrawInstanced
+    // 因为DrawInstanced会绑定Mesh自己的VAO，覆盖我们绑定的实例化VAO
+    size_t indexCount = group->mesh->GetIndexCount();
+    if (indexCount > 0) {
+        // 使用索引绘制实例
+        glDrawElementsInstanced(GL_TRIANGLES, 
+                                static_cast<GLsizei>(indexCount), 
+                                GL_UNSIGNED_INT, 
+                                0, 
+                                static_cast<GLsizei>(instanceCount));
+    } else {
+        // 直接绘制顶点实例
+        size_t vertexCount = group->mesh->GetVertexCount();
+        glDrawArraysInstanced(GL_TRIANGLES, 
+                              0, 
+                              static_cast<GLsizei>(vertexCount), 
+                              static_cast<GLsizei>(instanceCount));
+    }
     
-    // 实例化绘制
-    group->mesh->DrawInstanced(static_cast<uint32_t>(instanceCount));
+    // ✅ 关键修复：在解绑VAO之前，确保禁用所有实例化属性（location 6-11）
+    // 这样可以确保即使后续代码错误地使用了基础VAO，也不会受到实例化属性的影响
+    // 注意：虽然VAO解绑后属性状态会被保存，但为了安全起见，我们显式禁用
+    // 实际上，由于我们使用的是独立的实例化VAO，这一步主要是防御性编程
     
-    // ✅ 使用 RenderState 解绑 VAO（如果提供）
+    // 解绑VAO
     if (renderState) {
         renderState->BindVertexArray(0);
     } else {
         glBindVertexArray(0);
+    }
+    
+    // ✅ 完全清理OpenGL状态，确保不会影响后续渲染
+    // 解绑所有缓冲区
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    
+    // ✅ 额外保护：确保实例化属性（location 6-11）在全局状态中被禁用
+    // 虽然VAO解绑后这些属性状态会被保存到VAO中，但为了确保基础VAO不受影响，
+    // 我们在解绑后显式禁用这些属性（如果当前没有绑定VAO，这些调用会被忽略，但更安全）
+    // 注意：实际上，由于我们使用的是独立的实例化VAO，这一步主要是防御性编程
+    // 如果当前没有绑定VAO，glDisableVertexAttribArray会被忽略，不会影响任何VAO
+    for (int i = 6; i <= 11; ++i) {
+        glDisableVertexAttribArray(i);
     }
 }
 
@@ -739,6 +763,7 @@ LODInstancedRenderer::InstanceVBOs& LODInstancedRenderer::GetOrCreateInstanceVBO
 
 GLuint LODInstancedRenderer::GetOrCreateInstancedVAO(
     Ref<Mesh> mesh,
+    Ref<Material> material,
     InstanceVBOs& instanceVBOs
 ) {
     GL_THREAD_CHECK();
@@ -750,67 +775,225 @@ GLuint LODInstancedRenderer::GetOrCreateInstancedVAO(
         return 0;
     }
     
-    // ✅ 检查基础VAO是否改变（如果Mesh重新上传了）
-    bool baseVAOChanged = (instanceVBOs.instancedVAO != 0 && instanceVBOs.instancedVAO != baseVAO);
+    // ✅ 从着色器查询实例化属性的location
+    // 支持不同着色器的location定义（如basic.vert使用4-7，material_phong.vert使用6-9）
+    GLint instanceMatrixLocations[4] = {-1, -1, -1, -1};
+    GLint instanceColorLocation = -1;
+    GLint instanceParamsLocation = -1;
     
-    // 如果已经设置且基础VAO未改变，直接返回
-    if (!baseVAOChanged && instanceVBOs.instancedVAO != 0 && instanceVBOs.attributesSetup) {
-        return instanceVBOs.instancedVAO;
+    if (material && material->GetShader()) {
+        auto shader = material->GetShader();
+        if (shader->IsValid()) {
+            GLuint programID = shader->GetProgramID();
+            
+            // 查询实例化矩阵的location（尝试多种可能的名称）
+            const char* instanceRowNames[4] = {
+                "aInstanceRow0", "aInstanceRow1", "aInstanceRow2", "aInstanceRow3"
+            };
+            for (int i = 0; i < 4; ++i) {
+                instanceMatrixLocations[i] = glGetAttribLocation(programID, instanceRowNames[i]);
+            }
+            
+            // 查询实例化颜色和参数的location
+            instanceColorLocation = glGetAttribLocation(programID, "aInstanceColor");
+            instanceParamsLocation = glGetAttribLocation(programID, "aInstanceParams");
+        }
     }
     
-    // ✅ 方案：直接使用基础VAO，在其上设置实例化属性
-    // 注意：实例化属性（location 6-11）与基础属性（location 0-5）不冲突
-    // 实例化属性设置保存在基础VAO中，但这不会影响Mesh的正常使用
+    // ✅ 如果查询失败，回退到硬编码的location（向后兼容）
+    // 默认使用location 6-9作为实例化矩阵（与material_phong.vert匹配）
+    bool useFallback = false;
+    for (int i = 0; i < 4; ++i) {
+        if (instanceMatrixLocations[i] == -1) {
+            useFallback = true;
+            break;
+        }
+    }
     
-    // 更新基础VAO引用
-    instanceVBOs.instancedVAO = baseVAO;
+    if (useFallback) {
+        // 回退到硬编码的location 6-9
+        for (int i = 0; i < 4; ++i) {
+            instanceMatrixLocations[i] = 6 + i;
+        }
+        if (instanceColorLocation == -1) {
+            instanceColorLocation = 10;
+        }
+        if (instanceParamsLocation == -1) {
+            instanceParamsLocation = 11;
+        }
+    }
     
-    // 如果基础VAO改变，需要重新设置属性
-    if (baseVAOChanged) {
+    // ✅ 如果instancedVAO为0，创建新的独立VAO
+    // 注意：我们需要为每个不同的location组合创建不同的VAO
+    // 这里简化处理，假设同一mesh+material组合的location是固定的
+    if (instanceVBOs.instancedVAO == 0) {
+        glGenVertexArrays(1, &instanceVBOs.instancedVAO);
         instanceVBOs.attributesSetup = false;
     }
     
-    // 如果属性尚未设置，现在设置
-    if (!instanceVBOs.attributesSetup) {
-        glBindVertexArray(baseVAO);
+    // 如果属性已经设置，直接返回
+    if (instanceVBOs.attributesSetup) {
+        return instanceVBOs.instancedVAO;
+    }
+    
+    // ✅ 保存当前OpenGL状态（VAO、VBO、EBO）
+    GLint currentVAO = 0;
+    GLint currentArrayBuffer = 0;
+    GLint currentElementArrayBuffer = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &currentVAO);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &currentArrayBuffer);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &currentElementArrayBuffer);
+    
+    // ✅ 步骤1：查询基础VAO的配置（只读操作，不修改状态）
+    glBindVertexArray(baseVAO);
+    
+    // 查询EBO（必须在绑定VAO后查询）
+    GLint meshEBO = 0;
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &meshEBO);
+    
+    // 查询并保存所有启用的顶点属性配置（location 0-5）
+    struct VertexAttribConfig {
+        GLint enabled;
+        GLint size;
+        GLint type;
+        GLint normalized;
+        GLint stride;
+        GLvoid* pointer;
+        GLint bufferBinding;
+        GLint divisor;  // ✅ 新增：保存divisor状态
+    };
+    
+    VertexAttribConfig attribConfigs[6] = {};
+    
+    for (int i = 0; i < 6; ++i) {
+        glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &attribConfigs[i].enabled);
         
-        // 设置实例矩阵属性（location 6-9）
-        if (instanceVBOs.matrixVBO != 0) {
-            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.matrixVBO);
-            for (int i = 0; i < 4; ++i) {
-                GLuint location = 6 + i;
+        if (attribConfigs[i].enabled) {
+            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_SIZE, &attribConfigs[i].size);
+            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_TYPE, &attribConfigs[i].type);
+            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &attribConfigs[i].normalized);
+            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &attribConfigs[i].stride);
+            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &attribConfigs[i].bufferBinding);
+            glGetVertexAttribPointerv(i, GL_VERTEX_ATTRIB_ARRAY_POINTER, &attribConfigs[i].pointer);
+            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_DIVISOR, &attribConfigs[i].divisor);  // ✅ 保存divisor
+        }
+    }
+    
+    // ✅ 关键修复：立即恢复基础VAO绑定，确保不会影响基础VAO状态
+    // 在查询完成后立即恢复，避免任何潜在的状态污染
+    if (currentVAO != 0) {
+        glBindVertexArray(static_cast<GLuint>(currentVAO));
+    } else {
+        glBindVertexArray(0);
+    }
+    
+    // ✅ 步骤2：绑定新的实例化VAO并应用配置
+    glBindVertexArray(instanceVBOs.instancedVAO);
+    
+    // 复制基础顶点属性配置（location 0-5）
+    for (int i = 0; i < 6; ++i) {
+        if (attribConfigs[i].enabled) {
+            // 绑定相应的VBO
+            glBindBuffer(GL_ARRAY_BUFFER, attribConfigs[i].bufferBinding);
+            
+            // 设置属性指针
+            glEnableVertexAttribArray(i);
+            glVertexAttribPointer(
+                i,
+                attribConfigs[i].size,
+                attribConfigs[i].type,
+                attribConfigs[i].normalized,
+                attribConfigs[i].stride,
+                attribConfigs[i].pointer
+            );
+            
+            // ✅ 确保基础属性的divisor为0（非实例化）
+            // 即使基础VAO的divisor可能不是0，我们也强制设置为0，确保实例化VAO的独立性
+            glVertexAttribDivisor(i, 0);
+        } else {
+            // ✅ 确保未启用的属性在实例化VAO中也被禁用
+            glDisableVertexAttribArray(i);
+        }
+    }
+    
+    // 绑定索引缓冲区
+    if (meshEBO != 0) {
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, meshEBO);
+    }
+    
+    // ✅ 步骤3：设置实例化属性（使用从着色器查询到的location）
+    // 注意：确保实例化属性在基础VAO中是禁用的
+    
+    // 实例化矩阵（使用查询到的location）
+    if (instanceVBOs.matrixVBO != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.matrixVBO);
+        for (int i = 0; i < 4; ++i) {
+            GLuint location = static_cast<GLuint>(instanceMatrixLocations[i]);
+            if (instanceMatrixLocations[i] != -1) {
                 glEnableVertexAttribArray(location);
                 glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE,
                                       sizeof(float) * 16,
                                       (void*)(sizeof(float) * 4 * i));
-                glVertexAttribDivisor(location, 1);
+                glVertexAttribDivisor(location, 1);  // ✅ 关键：设置为实例化属性
             }
         }
-        
-        // 设置实例颜色属性（location 10）
-        if (instanceVBOs.colorVBO != 0) {
-            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.colorVBO);
-            glEnableVertexAttribArray(10);
-            glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, sizeof(Vector4), 0);
-            glVertexAttribDivisor(10, 1);
+    } else {
+        // ✅ 如果矩阵VBO不存在，确保这些属性被禁用
+        for (int i = 0; i < 4; ++i) {
+            GLuint location = static_cast<GLuint>(instanceMatrixLocations[i]);
+            if (instanceMatrixLocations[i] != -1) {
+                glDisableVertexAttribArray(location);
+            }
         }
-        
-        // 设置自定义参数属性（location 11）
-        if (instanceVBOs.paramsVBO != 0) {
-            glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.paramsVBO);
-            glEnableVertexAttribArray(11);
-            glVertexAttribPointer(11, 4, GL_FLOAT, GL_FALSE, sizeof(Vector4), 0);
-            glVertexAttribDivisor(11, 1);
-        }
-        
-        glBindVertexArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        
-        instanceVBOs.attributesSetup = true;
     }
+    
+    // 实例化颜色（使用查询到的location）
+    if (instanceVBOs.colorVBO != 0 && instanceColorLocation != -1) {
+        glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.colorVBO);
+        glEnableVertexAttribArray(static_cast<GLuint>(instanceColorLocation));
+        glVertexAttribPointer(static_cast<GLuint>(instanceColorLocation), 4, GL_FLOAT, GL_FALSE, sizeof(Vector4), 0);
+        glVertexAttribDivisor(static_cast<GLuint>(instanceColorLocation), 1);
+    } else if (instanceColorLocation != -1) {
+        glDisableVertexAttribArray(static_cast<GLuint>(instanceColorLocation));
+    }
+    
+    // 自定义参数（使用查询到的location）
+    if (instanceVBOs.paramsVBO != 0 && instanceParamsLocation != -1) {
+        glBindBuffer(GL_ARRAY_BUFFER, instanceVBOs.paramsVBO);
+        glEnableVertexAttribArray(static_cast<GLuint>(instanceParamsLocation));
+        glVertexAttribPointer(static_cast<GLuint>(instanceParamsLocation), 4, GL_FLOAT, GL_FALSE, sizeof(Vector4), 0);
+        glVertexAttribDivisor(static_cast<GLuint>(instanceParamsLocation), 1);
+    } else if (instanceParamsLocation != -1) {
+        glDisableVertexAttribArray(static_cast<GLuint>(instanceParamsLocation));
+    }
+    
+    // ✅ 步骤4：完全恢复之前的OpenGL状态
+    // 恢复VAO绑定
+    if (currentVAO != 0) {
+        glBindVertexArray(static_cast<GLuint>(currentVAO));
+    } else {
+        glBindVertexArray(0);
+    }
+    
+    // 恢复VBO绑定
+    if (currentArrayBuffer != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(currentArrayBuffer));
+    } else {
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    
+    // 恢复EBO绑定（注意：EBO绑定是VAO的一部分，但为了安全起见，我们也恢复它）
+    if (currentElementArrayBuffer != 0) {
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(currentElementArrayBuffer));
+    } else {
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    }
+    
+    instanceVBOs.attributesSetup = true;
     
     return instanceVBOs.instancedVAO;
 }
+
 
 void LODInstancedRenderer::CreatePersistentMappedVBOs(
     InstanceVBOs& vbos,
@@ -899,7 +1082,7 @@ void LODInstancedRenderer::ClearInstanceVBOs() {
     GL_THREAD_CHECK();
     
     for (auto& [mesh, vbos] : m_instanceVBOs) {
-        // ✅ 根据是否使用持久映射选择清理方式
+        // 根据是否使用持久映射选择清理方式
         if (vbos.usePersistentMapping) {
             DestroyPersistentMappedVBOs(vbos);
         } else {
@@ -918,17 +1101,20 @@ void LODInstancedRenderer::ClearInstanceVBOs() {
             }
         }
         
-        // ✅ 注意：不删除instancedVAO，因为它就是基础VAO（属于Mesh）
+        // ✅ 删除独立创建的实例化VAO
+        if (vbos.instancedVAO != 0) {
+            glDeleteVertexArrays(1, &vbos.instancedVAO);
+            vbos.instancedVAO = 0;
+        }
+        
         vbos.capacity = 0;
         vbos.colorCapacity = 0;
         vbos.paramsCapacity = 0;
-        vbos.instancedVAO = 0;
         vbos.attributesSetup = false;
     }
     
     m_instanceVBOs.clear();
 }
-
 void LODInstancedRenderer::SetupInstanceAttributes(
     uint32_t vao,
     const InstanceVBOs& instanceVBOs,

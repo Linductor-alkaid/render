@@ -374,6 +374,12 @@ void Mesh::Draw(DrawMode mode) const {
     GL_THREAD_CHECK();
     glBindVertexArray(m_VAO);
     
+    // ✅ 确保禁用实例化属性（location 6-11），避免LOD渲染器修改VAO后影响普通渲染
+    // LOD渲染器会在VAO上启用这些属性，但普通渲染不应该使用它们
+    for (int i = 6; i <= 11; ++i) {
+        glDisableVertexAttribArray(i);
+    }
+    
     GLenum glMode = ConvertDrawMode(mode);
     
     if (!m_Indices.empty()) {

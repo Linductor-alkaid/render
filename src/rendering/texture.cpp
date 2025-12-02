@@ -139,6 +139,20 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
         m_height = height;
         m_format = format;
 
+        // ✅ 在绑定纹理前，清理OpenGL状态以避免冲突
+        // 确保没有VAO绑定（VAO可能影响纹理操作）
+        GLint currentVAO = 0;
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &currentVAO);
+        if (currentVAO != 0) {
+            glBindVertexArray(0);
+        }
+        
+        // 确保激活正确的纹理单元
+        glActiveTexture(GL_TEXTURE0);
+        
+        // 清除之前的OpenGL错误
+        glGetError();
+
         // 生成纹理
         glGenTextures(1, &m_textureID);
         if (m_textureID == 0) {
@@ -160,6 +174,10 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
             glBindTexture(GL_TEXTURE_2D, 0);
             glDeleteTextures(1, &m_textureID);
             m_textureID = 0;
+            // ✅ 恢复之前的VAO（如果需要）
+            if (currentVAO != 0) {
+                glBindVertexArray(currentVAO);
+            }
             SDL_DestroySurface(surface);
             return false;
         }
@@ -185,6 +203,11 @@ bool Texture::LoadFromFile(const std::string& filepath, bool generateMipmap) {
         }
 
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        // ✅ 恢复之前的VAO（如果需要）
+        if (currentVAO != 0) {
+            glBindVertexArray(currentVAO);
+        }
 
         Logger::GetInstance().Debug("从文件创建纹理: " + std::to_string(width) + "x" + 
                      std::to_string(height) + ", ID: " + std::to_string(m_textureID) + 
@@ -248,7 +271,7 @@ bool Texture::CreateFromData(const void* data, int width, int height,
                                    std::to_string(width) + "x" + std::to_string(height)));
     }
     
-    std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::mutex> lock(m_mutex);
 
     try {
         // 释放旧纹理（内部方法，无需再加锁）
@@ -264,6 +287,20 @@ bool Texture::CreateFromData(const void* data, int width, int height,
         m_width = width;
         m_height = height;
         m_format = format;
+
+        // ✅ 在绑定纹理前，清理OpenGL状态以避免冲突
+        // 确保没有VAO绑定（VAO可能影响纹理操作）
+        GLint currentVAO = 0;
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &currentVAO);
+        if (currentVAO != 0) {
+            glBindVertexArray(0);
+        }
+        
+        // 确保激活正确的纹理单元
+        glActiveTexture(GL_TEXTURE0);
+        
+        // 清除之前的OpenGL错误
+        glGetError();
 
         // 生成纹理
         glGenTextures(1, &m_textureID);
@@ -310,6 +347,11 @@ bool Texture::CreateFromData(const void* data, int width, int height,
         }
 
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        // ✅ 恢复之前的VAO（如果需要）
+        if (currentVAO != 0) {
+            glBindVertexArray(currentVAO);
+        }
 
         Logger::GetInstance().Debug("从数据创建纹理: " + std::to_string(width) + "x" + 
                      std::to_string(height) + ", ID: " + std::to_string(m_textureID) + 
