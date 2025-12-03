@@ -10,6 +10,7 @@
 #include "render/camera.h"
 #include "render/types.h"
 #include "render/lod_instanced_renderer.h"  // LOD 实例化渲染器
+#include "render/object_pool.h"
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -373,7 +374,8 @@ private:
     Renderer* m_renderer;                       ///< 渲染器指针
     CameraSystem* m_cameraSystem = nullptr;     ///< 缓存的相机系统（避免递归锁）
     RenderStats m_stats;                        ///< 渲染统计信息
-    std::vector<MeshRenderable> m_renderables;  ///< Renderable 对象池（避免每帧创建销毁）
+    ObjectPool<MeshRenderable> m_renderablePool;  ///< MeshRenderable 对象池（真正的对象池）
+    std::vector<MeshRenderable*> m_activeRenderables;  ///< 当前帧活跃的 renderables
     
     // LOD 实例化渲染（阶段2.2 + 阶段2.3）
     LODInstancedRenderer m_lodRenderer;         ///< LOD 实例化渲染器
@@ -456,7 +458,8 @@ private:
     Renderer* m_renderer = nullptr;
     CameraSystem* m_cameraSystem = nullptr;
     RenderStats m_stats;
-    std::vector<ModelRenderable> m_renderables;
+    ObjectPool<ModelRenderable> m_renderablePool;  ///< ModelRenderable 对象池
+    std::vector<ModelRenderable*> m_activeRenderables;  ///< 当前帧活跃的 renderables
     
     // LOD 实例化渲染（阶段2.2 + 阶段2.3）
     LODInstancedRenderer m_lodRenderer;         ///< LOD 实例化渲染器

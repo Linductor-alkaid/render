@@ -1571,8 +1571,9 @@ void MeshRenderSystem::SubmitRenderables() {
             throw RENDER_WARNING(ErrorCode::NotInitialized, "MeshRenderSystem: Renderer is not initialized");
         }
         
-        // 清空上一帧的 Renderable 对象
-        m_renderables.clear();
+        // 归还上一帧的所有 Renderable 对象到对象池
+        m_renderablePool.Reset();
+        m_activeRenderables.clear();
         
         // 查询所有具有 TransformComponent 和 MeshRenderComponent 的实体
         auto entities = m_world->Query<TransformComponent, MeshRenderComponent>();
@@ -1939,22 +1940,26 @@ void MeshRenderSystem::SubmitRenderables() {
                 // 4. 这样更符合 ECS 架构设计（每个实例是一个实体）
             }
             
-            // 创建 MeshRenderable 并添加到对象池
+            // 从对象池获取 MeshRenderable
             // ✅ 添加断言检查
             RENDER_ASSERT(renderMesh != nullptr, "Mesh is null");
             RENDER_ASSERT(renderMaterial != nullptr, "Material is null");
             RENDER_ASSERT(transform.transform != nullptr, "Transform is null");
             
-            MeshRenderable renderable;
-            renderable.ClearDepthHint();
-            renderable.SetMesh(renderMesh);  // 使用 LOD 网格
-            renderable.SetMaterial(renderMaterial);  // 使用 LOD 材质
-            renderable.SetTransform(transform.transform);
-            renderable.SetVisible(meshComp.visible);
-            renderable.SetLayerID(meshComp.layerID);
-            renderable.SetRenderPriority(meshComp.renderPriority);
-            renderable.SetCastShadows(meshComp.castShadows);
-            renderable.SetReceiveShadows(meshComp.receiveShadows);
+            // 从对象池获取 MeshRenderable
+            MeshRenderable* renderable = m_renderablePool.Acquire();
+            if (!renderable) {
+                continue;  // 池已满，跳过此实体
+            }
+            renderable->ClearDepthHint();
+            renderable->SetMesh(renderMesh);  // 使用 LOD 网格
+            renderable->SetMaterial(renderMaterial);  // 使用 LOD 材质
+            renderable->SetTransform(transform.transform);
+            renderable->SetVisible(meshComp.visible);
+            renderable->SetLayerID(meshComp.layerID);
+            renderable->SetRenderPriority(meshComp.renderPriority);
+            renderable->SetCastShadows(meshComp.castShadows);
+            renderable->SetReceiveShadows(meshComp.receiveShadows);
             
             // ==================== ✅ MaterialOverride 处理 ====================
             // 将ECS组件的MaterialOverride传递给MeshRenderable
@@ -1988,7 +1993,7 @@ void MeshRenderSystem::SubmitRenderables() {
             
             // 如果有任何覆盖，设置到Renderable
             if (renderableOverride.HasAnyOverride()) {
-                renderable.SetMaterialOverride(renderableOverride);
+                renderable->SetMaterialOverride(renderableOverride);
             }
 
             const uint32_t overrideHash = ComputeMaterialOverrideHash(renderableOverride);
@@ -2003,7 +2008,7 @@ void MeshRenderSystem::SubmitRenderables() {
                 pipelineFlags |= MaterialPipelineFlags_Instanced;
             }
 
-            renderable.SetMaterialSortKey(
+            renderable->SetMaterialSortKey(
                 BuildMaterialSortKey(renderMaterial.get(), overrideHash, pipelineFlags)  // 使用 LOD 材质
             );
 
@@ -2015,9 +2020,9 @@ void MeshRenderSystem::SubmitRenderables() {
             if (!transparentHint && meshComp.materialOverride.opacity.has_value()) {
                 transparentHint = meshComp.materialOverride.opacity.value() < 1.0f;
             }
-            renderable.SetTransparentHint(transparentHint);
+            renderable->SetTransparentHint(transparentHint);
             
-            m_renderables.push_back(std::move(renderable));
+            m_activeRenderables.push_back(renderable);
             
             m_stats.visibleMeshes++;
         }
@@ -2030,12 +2035,12 @@ void MeshRenderSystem::SubmitRenderables() {
         // ✅ 重用上面查询的entities变量以便检查MaterialOverride
         // entities 已在函数开始处定义（第803行）
         
-        for (size_t i = 0; i < m_renderables.size(); i++) {
-            auto& renderable = m_renderables[i];
-            bool isTransparent = renderable.GetTransparentHint();
+        for (size_t i = 0; i < m_activeRenderables.size(); i++) {
+            auto* renderable = m_activeRenderables[i];
+            bool isTransparent = renderable->GetTransparentHint();
 
             if (!isTransparent) {
-                auto material = renderable.GetMaterial();
+                auto material = renderable->GetMaterial();
                 
                 if (material && material->IsValid()) {
                     auto blendMode = material->GetBlendMode();
@@ -2051,7 +2056,7 @@ void MeshRenderSystem::SubmitRenderables() {
                         }
                     }
                 }
-                renderable.SetTransparentHint(isTransparent);
+                renderable->SetTransparentHint(isTransparent);
             }
 
             if (isTransparent) {
@@ -2063,7 +2068,7 @@ void MeshRenderSystem::SubmitRenderables() {
         
         // 提交不透明物体（顺序无关）
         for (size_t idx : opaqueIndices) {
-            m_renderer->SubmitRenderable(&m_renderables[idx]);
+            m_renderer->SubmitRenderable(m_activeRenderables[idx]);
             m_stats.drawCalls++;
         }
         
@@ -2074,29 +2079,29 @@ void MeshRenderSystem::SubmitRenderables() {
                 Vector3 cameraPos = camera->GetPosition();
 
                 for (size_t idx : transparentIndices) {
-                    auto& renderable = m_renderables[idx];
-                    auto transformPtr = renderable.GetTransform();
+                    auto* renderable = m_activeRenderables[idx];
+                    auto transformPtr = renderable->GetTransform();
                     Vector3 pos = transformPtr ? transformPtr->GetPosition() : Vector3::Zero();
                     float dist = (pos - cameraPos).squaredNorm();
-                    renderable.SetDepthHint(dist);
+                    renderable->SetDepthHint(dist);
                 }
                 
                 std::sort(transparentIndices.begin(), transparentIndices.end(),
                     [&](size_t a, size_t b) {
-                        auto& renderableA = m_renderables[a];
-                        auto& renderableB = m_renderables[b];
+                        auto* renderableA = m_activeRenderables[a];
+                        auto* renderableB = m_activeRenderables[b];
                         
                         // 获取物体世界位置（从变换矩阵）
-                        auto transformA = renderableA.GetTransform();
-                        auto transformB = renderableB.GetTransform();
+                        auto transformA = renderableA->GetTransform();
+                        auto transformB = renderableB->GetTransform();
                         
                         Vector3 posA = transformA ? transformA->GetPosition() : Vector3::Zero();
                         Vector3 posB = transformB ? transformB->GetPosition() : Vector3::Zero();
                         
                         // 计算到相机的距离
-                        float distA = renderableA.HasDepthHint() ? renderableA.GetDepthHint()
-                                                                 : (posA - cameraPos).squaredNorm();
-                        float distB = renderableB.HasDepthHint() ? renderableB.GetDepthHint()
+                        float distA = renderableA->HasDepthHint() ? renderableA->GetDepthHint()
+                                                                  : (posA - cameraPos).squaredNorm();
+                        float distB = renderableB->HasDepthHint() ? renderableB->GetDepthHint()
                                                                  : (posB - cameraPos).squaredNorm();
                         
                         // 从远到近排序
@@ -2110,7 +2115,7 @@ void MeshRenderSystem::SubmitRenderables() {
         
         // 提交透明物体（从远到近）
         for (size_t idx : transparentIndices) {
-            m_renderer->SubmitRenderable(&m_renderables[idx]);
+            m_renderer->SubmitRenderable(m_activeRenderables[idx]);
             m_stats.drawCalls++;
         }
     
@@ -2340,7 +2345,8 @@ void ModelRenderSystem::SubmitRenderables() {
             throw RENDER_WARNING(ErrorCode::NotInitialized, "ModelRenderSystem: Renderer is not initialized");
         }
 
-        m_renderables.clear();
+        m_renderablePool.Reset();
+        m_activeRenderables.clear();
 
         auto entities = m_world->Query<TransformComponent, ModelComponent>();
         if (entities.empty()) {
@@ -2774,27 +2780,31 @@ void ModelRenderSystem::SubmitRenderables() {
                 continue;
             }
 
-            ModelRenderable renderable;
-            renderable.SetTransform(transformComp.transform);
-            renderable.SetModel(renderModel);  // 使用 LOD 模型
-            renderable.SetVisible(modelComp.visible);
-            renderable.SetLayerID(modelComp.layerID);
-            renderable.SetRenderPriority(modelComp.renderPriority);
-            renderable.SetCastShadows(modelComp.castShadows);
-            renderable.SetReceiveShadows(modelComp.receiveShadows);
-            renderable.ClearDepthHint();
-            renderable.MarkMaterialSortKeyDirty();
+            // 从对象池获取 ModelRenderable
+            ModelRenderable* renderable = m_renderablePool.Acquire();
+            if (!renderable) {
+                continue;  // 池已满，跳过此实体
+            }
+            
+            renderable->SetTransform(transformComp.transform);
+            renderable->SetModel(renderModel);  // 使用 LOD 模型
+            renderable->SetVisible(modelComp.visible);
+            renderable->SetLayerID(modelComp.layerID);
+            renderable->SetRenderPriority(modelComp.renderPriority);
+            renderable->SetCastShadows(modelComp.castShadows);
+            renderable->SetReceiveShadows(modelComp.receiveShadows);
+            renderable->ClearDepthHint();
+            renderable->MarkMaterialSortKeyDirty();
 
             if (camera) {
                 float depth = (worldCenter - cameraPos).squaredNorm();
-                renderable.SetDepthHint(depth);
+                renderable->SetDepthHint(depth);
             }
 
-            size_t index = m_renderables.size();
-            m_renderables.push_back(std::move(renderable));
+            size_t index = m_activeRenderables.size();
+            m_activeRenderables.push_back(renderable);
 
-            auto& stored = m_renderables.back();
-            if (stored.GetTransparentHint()) {
+            if (renderable->GetTransparentHint()) {
                 transparentIndices.push_back(index);
             } else {
                 opaqueIndices.push_back(index);
@@ -2805,7 +2815,7 @@ void ModelRenderSystem::SubmitRenderables() {
         }
 
         for (size_t idx : opaqueIndices) {
-            m_renderer->SubmitRenderable(&m_renderables[idx]);
+            m_renderer->SubmitRenderable(m_activeRenderables[idx]);
             m_stats.submittedRenderables++;
         }
 
@@ -2813,23 +2823,23 @@ void ModelRenderSystem::SubmitRenderables() {
             if (camera) {
                 std::sort(transparentIndices.begin(), transparentIndices.end(),
                     [&](size_t a, size_t b) {
-                        const auto& renderableA = m_renderables[a];
-                        const auto& renderableB = m_renderables[b];
+                        const auto& renderableA = m_activeRenderables[a];
+                        const auto& renderableB = m_activeRenderables[b];
 
-                        float distA = renderableA.HasDepthHint()
-                            ? renderableA.GetDepthHint()
-                            : (renderableA.GetTransform() ? (renderableA.GetTransform()->GetPosition() - cameraPos).squaredNorm() : 0.0f);
+                        float distA = renderableA->HasDepthHint()
+                            ? renderableA->GetDepthHint()
+                            : (renderableA->GetTransform() ? (renderableA->GetTransform()->GetPosition() - cameraPos).squaredNorm() : 0.0f);
 
-                        float distB = renderableB.HasDepthHint()
-                            ? renderableB.GetDepthHint()
-                            : (renderableB.GetTransform() ? (renderableB.GetTransform()->GetPosition() - cameraPos).squaredNorm() : 0.0f);
+                        float distB = renderableB->HasDepthHint()
+                            ? renderableB->GetDepthHint()
+                            : (renderableB->GetTransform() ? (renderableB->GetTransform()->GetPosition() - cameraPos).squaredNorm() : 0.0f);
 
                         return distA > distB;
                     });
             }
 
             for (size_t idx : transparentIndices) {
-                m_renderer->SubmitRenderable(&m_renderables[idx]);
+                m_renderer->SubmitRenderable(m_activeRenderables[idx]);
                 m_stats.submittedRenderables++;
             }
         }
