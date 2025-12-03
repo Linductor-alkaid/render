@@ -6,6 +6,7 @@
 #include "render/renderer.h"
 #include "render/shader.h"
 #include "render/math_utils.h"
+#include "render/gpu_buffer_pool.h"
 #include <glad/glad.h>
 #include <algorithm>
 #include <cmath>
@@ -21,16 +22,15 @@ constexpr float kEpsilon = 1e-6f;
 SpriteBatcher::SpriteBatcher() = default;
 
 SpriteBatcher::~SpriteBatcher() {
-    if (m_instanceBuffer != 0) {
-        GL_THREAD_CHECK();
-        glDeleteBuffers(1, &m_instanceBuffer);
-        m_instanceBuffer = 0;
-    }
+    // SpriteBatcher 现在在每次 DrawBatch 后立即归还缓冲
+    // 不再长期持有 m_instanceBuffer
+    // 保留此字段以保持兼容性，但不再使用
 }
 
 void SpriteBatcher::Clear() {
     m_entries.clear();
     m_batches.clear();
+    // m_instanceBuffer 不再使用，每次 DrawBatch 后立即归还
 }
 
 uint32_t SpriteBatcher::HashMatrix(const Matrix4& matrix) {
@@ -265,25 +265,36 @@ void SpriteBatcher::DrawBatch(size_t index, RenderState* renderState) {
 
     batch.texture->Bind(0);
 
-    if (m_instanceBuffer == 0) {
-        GL_THREAD_CHECK();
-        glGenBuffers(1, &m_instanceBuffer);
+    // 从 GPU 缓冲池获取实例缓冲（每次绘制都可能不同大小）
+    auto& bufferPool = GPUBufferPool::GetInstance();
+    BufferDescriptor instDesc;
+    instDesc.size = batch.instances.size() * sizeof(InstancePayload);
+    instDesc.target = BufferTarget::ArrayBuffer;
+    instDesc.usage = GL_STREAM_DRAW;  // 每帧都更新，使用 STREAM
+    
+    GLuint instanceBuffer = bufferPool.AcquireBuffer(instDesc);
+    if (instanceBuffer == 0) {
+        Logger::GetInstance().Warning("[SpriteBatcher] Failed to acquire instance buffer from pool");
+        shader->Unuse();
+        batch.texture->Unbind();
+        return;
     }
 
     const GLuint vao = quadMesh->GetVertexArrayID();
     if (vao == 0) {
         Logger::GetInstance().Warning("[SpriteBatcher] Invalid quad mesh VAO");
         shader->Unuse();
+        bufferPool.ReleaseBuffer(instanceBuffer);
         return;
     }
 
     GL_THREAD_CHECK();
     glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_instanceBuffer);
+    glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
     glBufferData(GL_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(batch.instances.size() * sizeof(InstancePayload)),
+                 static_cast<GLsizeiptr>(instDesc.size),
                  batch.instances.data(),
-                 GL_DYNAMIC_DRAW);
+                 GL_STREAM_DRAW);
 
     constexpr GLuint baseLocation = 4;
     const GLsizei stride = sizeof(InstancePayload);
@@ -317,6 +328,9 @@ void SpriteBatcher::DrawBatch(size_t index, RenderState* renderState) {
     }
 
     shader->Unuse();
+    
+    // 立即归还实例缓冲到缓冲池
+    bufferPool.ReleaseBuffer(instanceBuffer);
 }
 
 bool SpriteBatcher::GetBatchInfo(size_t index, SpriteBatchInfo& outInfo) const {

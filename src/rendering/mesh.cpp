@@ -241,7 +241,8 @@ void Mesh::Upload() {
         }
         glBindVertexArray(vao);
         
-        // 创建并填充VBO
+        // 创建并填充VBO（回退到传统方式）
+        // 注意：Mesh 的缓冲是长期持有的，不适合使用缓冲池
         glGenBuffers(1, &vbo);
         if (vbo == 0) {
             throw std::runtime_error("Failed to generate VBO");
@@ -252,7 +253,7 @@ void Mesh::Upload() {
                      vertices_copy.data(), 
                      GL_STATIC_DRAW);
         
-        // 创建并填充EBO
+        // 创建并填充EBO（回退到传统方式）
         if (!indices_copy.empty()) {
             glGenBuffers(1, &ebo);
             if (ebo == 0) {
