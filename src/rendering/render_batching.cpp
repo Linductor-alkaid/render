@@ -8,6 +8,7 @@
 #include "render/sprite/sprite_batcher.h"
 #include "render/shader.h"
 #include "render/gl_thread_checker.h"
+#include "render/gpu_buffer_pool.h"
 #include <glad/glad.h>
 #include <cmath>
 #include <cstring>
@@ -87,8 +88,9 @@ void RenderBatch::ReleaseGpuResources() {
     m_instancePayloads.clear();
     m_instanceCount = 0;
     if (m_instanceBuffer != 0) {
-        GL_THREAD_CHECK();
-        glDeleteBuffers(1, &m_instanceBuffer);
+        // 归还实例缓冲到缓冲池
+        auto& bufferPool = GPUBufferPool::GetInstance();
+        bufferPool.ReleaseBuffer(m_instanceBuffer);
         m_instanceBuffer = 0;
     }
     m_gpuResourcesReady = false;
@@ -168,9 +170,24 @@ void RenderBatch::UploadResources(ResourceManager* resourceManager, BatchingMode
         m_cachedTriangleCount = static_cast<uint32_t>(m_sourceMesh->GetIndexCount() / 3);
         m_drawVertexCount = static_cast<uint32_t>(m_sourceMesh->GetVertexCount());
 
+        // 从 GPU 缓冲池获取实例缓冲
+        auto& bufferPool = GPUBufferPool::GetInstance();
+        
+        // 如果已有缓冲，先归还
+        if (m_instanceBuffer != 0) {
+            bufferPool.ReleaseBuffer(m_instanceBuffer);
+            m_instanceBuffer = 0;
+        }
+        
+        BufferDescriptor instDesc;
+        instDesc.size = m_instancePayloads.size() * sizeof(InstancePayload);
+        instDesc.target = BufferTarget::ArrayBuffer;
+        instDesc.usage = GL_STREAM_DRAW;  // 批处理每帧更新
+        
+        m_instanceBuffer = bufferPool.AcquireBuffer(instDesc);
         if (m_instanceBuffer == 0) {
-            GL_THREAD_CHECK();
-            glGenBuffers(1, &m_instanceBuffer);
+            m_gpuResourcesReady = false;
+            return;
         }
 
         uint32_t vao = m_sourceMesh->GetVertexArrayID();
@@ -183,9 +200,9 @@ void RenderBatch::UploadResources(ResourceManager* resourceManager, BatchingMode
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, m_instanceBuffer);
         glBufferData(GL_ARRAY_BUFFER,
-                     m_instancePayloads.size() * sizeof(InstancePayload),
+                     instDesc.size,
                      m_instancePayloads.data(),
-                     GL_DYNAMIC_DRAW);
+                     GL_STREAM_DRAW);
 
         constexpr GLuint baseLocation = 4;
         const GLsizei stride = sizeof(InstancePayload);

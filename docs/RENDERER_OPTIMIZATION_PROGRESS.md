@@ -217,6 +217,32 @@
 
 ---
 
+#### 10. RenderBatch 集成 GPU 缓冲池（完整实现）
+
+**状态**: ✅ 已完成
+
+**完成内容**:
+- ✅ 修改 `UploadResources()` 使用缓冲池获取实例缓冲
+- ✅ 修改 `ReleaseGpuResources()` 归还缓冲而不是删除
+- ✅ 上传前先归还旧缓冲（支持大小变化）
+- ✅ 使用 `GL_STREAM_DRAW`（批处理每帧更新）
+- ✅ 错误处理正确
+
+**文件修改**:
+- `src/rendering/render_batching.cpp` - 集成 GPU 缓冲池
+
+**优化效果**:
+- ✅ 批处理实例缓冲复用
+- ✅ 减少 glGenBuffers/glDeleteBuffers 调用
+- ✅ 多个批次可共享缓冲
+
+**关键设计**:
+- 临时缓冲：上传资源时获取，释放资源时归还
+- 动态大小：根据实例数量动态请求
+- 流式模式：使用 `GL_STREAM_DRAW` 符合批处理特性
+
+---
+
 #### 5. GPU 缓冲池扩展功能（完整实现）
 
 **状态**: ✅ 已完成
@@ -456,16 +482,34 @@
 
 ### 实现统计
 
-- **新增代码**: 约 2000+ 行
-- **修改文件**: 15+ 个
+- **新增代码**: 约 2500+ 行
+- **修改文件**: 18+ 个
 - **新增系统**: 3 个（对象池/内存追踪/GPU缓冲池）
-- **集成点**: 7 个（Renderer/ECS/ResourceManager）
+- **集成点**: 10 个
+  - SpriteRenderer/TextRenderer（对象池）
+  - MeshRenderSystem/ModelRenderSystem（对象池）
+  - ResourceManager（内存追踪）
+  - SpriteBatcher（GPU 缓冲池）
+  - RenderBatch（GPU 缓冲池）
+  - GPU 缓冲池扩展功能（内存限制/预热）
+
+### 架构决策总结
+
+**成功模式**：
+- ✅ 临时对象 → ObjectPool（SpriteRenderer/TextRenderer/ECS系统）
+- ✅ 临时缓冲 → GPUBufferPool（SpriteBatcher/RenderBatch）
+- ✅ 资源追踪 → 自动集成到 ResourceManager
+
+**避免的陷阱**：
+- ❌ 持久缓冲不使用缓冲池（Mesh VBO/EBO）
+- ✅ 添加 OpenGL 状态保护（GLBufferBindingGuard）
+- ✅ 每帧/每批次立即归还临时缓冲
 
 ### 后续工作
 
-**阶段 2**: 多线程优化和批处理调优
-**阶段 3**: 性能测试和参数调优
-**阶段 4**: 文档完善和最佳实践
+**阶段 2**: 多线程优化和批处理阈值调优（4-6 周）
+**阶段 3**: 性能测试和基准对比（2-3 周）
+**阶段 4**: 参数调优和最佳实践（2-3 周）
 
 ---
 
