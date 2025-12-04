@@ -246,6 +246,7 @@ set(RENDER_SOURCES
     # Physics
     src/physics/physics_world.cpp
     src/physics/collision/broad_phase.cpp
+    src/physics/collision/collision_detection.cpp
     
     # Rendering
     src/rendering/shader.cpp
