@@ -376,15 +376,15 @@ struct PhysicsMaterial {
 
 - [x] **2.3.3** 实现盒体碰撞检测（SAT 算法简化版）
   - `BoxVsBox` AABB 版本 ✅
-  - OBB 完整 SAT 待后续优化
+  - OBB 完整 SAT ✅
 
 - [x] **2.3.4** 实现胶囊体碰撞检测
   - `CapsuleVsCapsule` ✅
-  - `CapsuleVsBox` 待后续实现
+  - `CapsuleVsBox` ✅
 
-- [ ] **2.3.5** 实现网格碰撞（凸包）- 待后续阶段
-  - GJK 算法 (Gilbert-Johnson-Keerthi)
-  - EPA 算法 (Expanding Polytope Algorithm)
+- [x] **2.3.5** 实现网格碰撞（凸形状）
+  - GJK 算法 (Gilbert-Johnson-Keerthi) ✅
+  - EPA 算法 (Expanding Polytope Algorithm) ✅
 
 - [x] **2.3.6** 创建碰撞检测分发器
   - 根据形状类型自动分发 ✅
@@ -406,8 +406,10 @@ struct PhysicsMaterial {
 
 **验证标准**:
 - ✅ 单元测试覆盖主要形状组合
-- ✅ test_collision_detection.cpp 测试通过 (12/12)
+- ✅ test_collision_detection.cpp 测试通过 (23/23)
+- ✅ test_gjk.cpp 测试通过 (12/12)
 - ✅ 碰撞检测分发器正常工作
+- ✅ GJK/EPA 算法验证通过
 
 ---
 
@@ -1256,12 +1258,19 @@ struct PhysicsMaterial {
 
 ## 📝 变更日志
 
+### Version 1.5.0 (2025-12-04)
+- ✅ 完成 GJK/EPA 算法实现
+- 新增 gjk.h/cpp，支持任意凸形状碰撞
+- ✅ 测试通过：12/12 (test_gjk)
+
 ### Version 1.4.0 (2025-12-04)
 - ✅ 完成阶段 2.3：细检测阶段
 - 新增 contact_manifold.h, collision_detection.h/cpp
 - 实现球体、盒体、胶囊体碰撞检测
+- 实现完整 OBB SAT 算法
+- 实现 CapsuleVsBox 算法
 - 实现碰撞检测分发器
-- ✅ 测试通过：12/12 (test_collision_detection)
+- ✅ 测试通过：23/23 (test_collision_detection)
 
 ### Version 1.3.0 (2025-12-04)
 - ✅ 完成阶段 2.2：粗检测阶段（含八叉树）
