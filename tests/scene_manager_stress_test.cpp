@@ -92,7 +92,7 @@ AppContext CreateTestAppContext() {
     static bool s_loaderInitialized = false;
     if (!s_loaderInitialized) {
         auto& loader = AsyncResourceLoader::GetInstance();
-        loader.Initialize(4);  // 4个工作线程用于压力测试
+        loader.Initialize(); 
         s_loaderInitialized = true;
     }
     ctx.asyncLoader = &AsyncResourceLoader::GetInstance();

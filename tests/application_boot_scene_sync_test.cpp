@@ -83,7 +83,7 @@ int main() {
 
     auto& resourceManager = ResourceManager::GetInstance();
     auto& asyncLoader = AsyncResourceLoader::GetInstance();
-    asyncLoader.Initialize(1);
+    asyncLoader.Initialize();
 
     ApplicationHost host;
     ApplicationHost::Config config;

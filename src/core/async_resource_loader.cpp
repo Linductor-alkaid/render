@@ -5,6 +5,7 @@
 #include "render/logger.h"
 #include "render/gl_thread_checker.h"
 #include "render/error.h"
+#include "render/task_scheduler.h"
 #include <algorithm>
 #include <chrono>
 #include <unordered_set>
@@ -25,36 +26,23 @@ AsyncResourceLoader::~AsyncResourceLoader() {
     Shutdown();
 }
 
-void AsyncResourceLoader::Initialize(size_t numThreads) {
-    if (m_running.load()) {
-        Logger::GetInstance().Warning("AsyncResourceLoader: 已经初始化");
-        return;
-    }
-    
-    // 默认使用CPU核心数
-    if (numThreads == 0) {
-        numThreads = std::thread::hardware_concurrency();
-        if (numThreads == 0) {
-            numThreads = 4;  // 回退值
-        }
-        // 最多使用核心数-1，留一个核心给主线程
-        if (numThreads > 1) {
-            numThreads = numThreads - 1;
-        }
-    }
-    
+void AsyncResourceLoader::Initialize() {
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("初始化异步资源加载器");
     Logger::GetInstance().Info("========================================");
-    Logger::GetInstance().Info("工作线程数: " + std::to_string(numThreads));
     
-    m_running = true;
-    
-    // 创建工作线程池
-    for (size_t i = 0; i < numThreads; ++i) {
-        m_workers.emplace_back(&AsyncResourceLoader::WorkerThreadFunc, this);
-        Logger::GetInstance().Debug("创建工作线程 " + std::to_string(i));
+    // ✅ 检查TaskScheduler是否已初始化
+    if (!TaskScheduler::GetInstance().IsInitialized()) {
+        Logger::GetInstance().Warning(
+            "AsyncResourceLoader: TaskScheduler未初始化，将自动初始化"
+        );
+        TaskScheduler::GetInstance().Initialize();
     }
+    
+    Logger::GetInstance().InfoFormat(
+        "AsyncResourceLoader: 使用TaskScheduler (%zu 个工作线程)",
+        TaskScheduler::GetInstance().GetWorkerCount()
+    );
     
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("异步资源加载器初始化完成");
@@ -62,53 +50,25 @@ void AsyncResourceLoader::Initialize(size_t numThreads) {
 }
 
 void AsyncResourceLoader::Shutdown() {
-    if (!m_running.load()) {
-        return;
-    }
-    
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("关闭异步资源加载器");
     Logger::GetInstance().Info("========================================");
     
-    // 1. 设置关闭标志
-    m_running = false;
-    
-    // 2. 唤醒所有等待线程
-    m_taskAvailable.notify_all();
-    
-    // 3. 等待所有线程完成当前任务并退出
-    Logger::GetInstance().Info("等待工作线程退出...");
-    for (size_t i = 0; i < m_workers.size(); ++i) {
-        if (m_workers[i].joinable()) {
-            m_workers[i].join();
-            Logger::GetInstance().Debug("工作线程 " + std::to_string(i) + " 已退出");
-        }
-    }
-    m_workers.clear();
-    
-    // 4. 安全清理剩余任务(此时已无线程访问)
+    // ✅ 清空完成队列
     ClearAllPendingTasks();
     
-    // 5. 打印统计
+    // ✅ 打印统计
     PrintStatistics();
     
     Logger::GetInstance().Info("========================================");
     Logger::GetInstance().Info("异步资源加载器已关闭");
     Logger::GetInstance().Info("========================================");
+    
+    // ✅ 注意：不再关闭工作线程，因为线程由TaskScheduler管理
 }
 
 void AsyncResourceLoader::ClearAllPendingTasks() {
-    size_t pendingCleared = 0;
     size_t completedCleared = 0;
-    
-    // 清空待处理队列（优先级队列）
-    {
-        std::lock_guard<std::mutex> lock(m_pendingMutex);
-        pendingCleared = m_pendingTasks.size();
-        while (!m_pendingTasks.empty()) {
-            m_pendingTasks.pop();
-        }
-    }
     
     // 清空已完成队列（这些任务的回调将不会被执行）
     {
@@ -119,164 +79,17 @@ void AsyncResourceLoader::ClearAllPendingTasks() {
         }
     }
     
-    if (pendingCleared > 0 || completedCleared > 0) {
-        Logger::GetInstance().InfoFormat("清理任务队列: %zu 个待处理, %zu 个已完成",
-                                         pendingCleared, completedCleared);
+    if (completedCleared > 0) {
+        Logger::GetInstance().InfoFormat(
+            "清理任务队列: %zu 个已完成（待上传）",
+            completedCleared
+        );
     }
+    
+    // ✅ 注意：待处理任务由TaskScheduler管理，这里不再清理
 }
 
-void AsyncResourceLoader::WorkerThreadFunc() {
-    auto threadId = std::this_thread::get_id();
-    size_t threadIdHash = std::hash<std::thread::id>{}(threadId);
-    
-    Logger::GetInstance().Debug("工作线程启动: " + std::to_string(threadIdHash));
-    
-    while (m_running.load()) {
-        std::shared_ptr<LoadTaskBase> task;
-        
-        // 从队列获取任务
-        {
-            std::unique_lock<std::mutex> lock(m_pendingMutex);
-            
-            // 等待任务或退出信号
-            m_taskAvailable.wait(lock, [this]() {
-                return !m_pendingTasks.empty() || !m_running.load();
-            });
-            
-            if (!m_running.load()) {
-                break;  // 退出线程
-            }
-            
-            if (!m_pendingTasks.empty()) {
-                task = m_pendingTasks.top();  // 优先级队列使用 top()
-                m_pendingTasks.pop();
-            }
-        }
-        
-        if (!task) {
-            continue;
-        }
-        
-        // 检查任务是否已取消
-        if (task->IsCancelled()) {
-            Logger::GetInstance().Info("[Thread:" + std::to_string(threadIdHash) + 
-                                       "] 跳过已取消的任务: " + task->name);
-            continue;
-        }
-        
-        // 执行加载任务（锁外执行，避免阻塞）
-        try {
-            Logger::GetInstance().Info("========================================");
-            Logger::GetInstance().Info("[Thread:" + std::to_string(threadIdHash) + 
-                                       "] 开始加载: " + task->name);
-            Logger::GetInstance().Info("========================================");
-            
-            task->status = LoadStatus::Loading;
-            m_loadingCount++;
-            
-            // ⚠️ 确保不在主线程（不应该有OpenGL上下文）
-            // 注意：GL_THREAD_CHECK在非主线程会失败，这里不调用
-            
-            // 执行加载函数（文件I/O和数据解析）
-            task->ExecuteLoad();
-            
-            m_loadingCount--;
-            
-            // 再次检查是否已取消（加载过程中可能被取消）
-            if (task->IsCancelled()) {
-                Logger::GetInstance().Info("[Thread:" + std::to_string(threadIdHash) + 
-                                           "] 任务在加载过程中被取消: " + task->name);
-                continue;
-            }
-            
-            if (task->status != LoadStatus::Failed) {
-                task->status = LoadStatus::Loaded;  // 等待GPU上传
-                
-                Logger::GetInstance().Info("========================================");
-                Logger::GetInstance().Info("[Thread:" + std::to_string(threadIdHash) + 
-                                           "] 加载完成: " + task->name);
-                Logger::GetInstance().Info("========================================");
-                
-                // 移到完成队列（等待主线程处理）
-                {
-                    std::lock_guard<std::mutex> lock(m_completedMutex);
-                    m_completedTasks.push(task);
-                }
-            } else {
-                // 检查是否需要重试
-                if (task->ShouldRetry()) {
-                    task->retryCount++;
-                    
-                    Logger::GetInstance().Warning("========================================");
-                    Logger::GetInstance().Warning("[Thread:" + std::to_string(threadIdHash) + 
-                                                 "] 任务失败，重试 " + 
-                                                 std::to_string(task->retryCount) + "/" + 
-                                                 std::to_string(task->maxRetries) + 
-                                                 ": " + task->name);
-                    Logger::GetInstance().Warning("========================================");
-                    
-                    // 延迟后重新入队
-                    std::this_thread::sleep_for(task->retryDelay);
-                    
-                    // 重置状态
-                    task->status = LoadStatus::Pending;
-                    task->errorMessage.clear();
-                    task->errorType = LoadErrorType::None;
-                    
-                    {
-                        std::lock_guard<std::mutex> lock(m_pendingMutex);
-                        m_pendingTasks.push(task);
-                    }
-                    m_taskAvailable.notify_one();
-                    continue;
-                }
-                
-                Logger::GetInstance().Error("========================================");
-                Logger::GetInstance().Error("[Thread:" + std::to_string(threadIdHash) + 
-                                           "] 加载失败: " + task->name + 
-                                           " - " + task->errorMessage);
-                Logger::GetInstance().Error("========================================");
-                m_failedTasks++;
-            }
-            
-        } catch (const std::exception& e) {
-            Logger::GetInstance().Error("========================================");
-            Logger::GetInstance().Error("[Thread:" + std::to_string(threadIdHash) + 
-                                       "] 异常: " + std::string(e.what()));
-            Logger::GetInstance().Error("========================================");
-            task->status = LoadStatus::Failed;
-            task->errorMessage = e.what();
-            task->errorType = LoadErrorType::ParseError;
-            m_failedTasks++;
-            m_loadingCount--;
-            
-            // 检查是否需要重试
-            if (task->ShouldRetry()) {
-                task->retryCount++;
-                
-                Logger::GetInstance().Warning("[Thread:" + std::to_string(threadIdHash) + 
-                                             "] 异常后重试 " + 
-                                             std::to_string(task->retryCount) + "/" + 
-                                             std::to_string(task->maxRetries) + 
-                                             ": " + task->name);
-                
-                std::this_thread::sleep_for(task->retryDelay);
-                
-                task->status = LoadStatus::Pending;
-                task->errorMessage.clear();
-                task->errorType = LoadErrorType::None;
-                
-                {
-                    std::lock_guard<std::mutex> lock(m_pendingMutex);
-                    m_pendingTasks.push(task);
-                }
-                m_taskAvailable.notify_one();
-            }
-        }
-    }
-    
-    Logger::GetInstance().Debug("工作线程退出: " + std::to_string(threadIdHash));
-}
+// ✅ WorkerThreadFunc已移除，所有任务通过TaskScheduler执行
 
 std::shared_ptr<MeshLoadTask> AsyncResourceLoader::LoadMeshAsync(
     const std::string& filepath,
@@ -284,44 +97,35 @@ std::shared_ptr<MeshLoadTask> AsyncResourceLoader::LoadMeshAsync(
     std::function<void(const MeshLoadResult&)> callback,
     float priority)
 {
-    if (!m_running.load()) {
-        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NotInitialized, 
-                                 "AsyncResourceLoader: 未初始化，请先调用Initialize()"));
-        return nullptr;
-    }
-    
     auto task = std::make_shared<MeshLoadTask>();
     task->name = name.empty() ? filepath : name;
     task->type = AsyncResourceType::Mesh;
     task->priority = priority;
     task->callback = callback;
-    task->submitTime = std::chrono::steady_clock::now(); // 记录提交时间
-    task->maxRetries = 3; // 默认最多重试3次
+    task->submitTime = std::chrono::steady_clock::now();
+    task->maxRetries = 3;
     
     // 定义加载函数（在工作线程执行）
     task->loadFunc = [filepath]() -> Ref<Mesh> {
-        Logger::GetInstance().Info("⭐ 工作线程：开始加载网格数据 " + filepath + " (autoUpload=false)");
+        Logger::GetInstance().Info("⭐ TaskScheduler：开始加载网格数据 " + filepath);
         
-        // ⭐ 关键：autoUpload=false，不在工作线程调用OpenGL
         try {
-            auto meshes = MeshLoader::LoadFromFile(filepath, true, false);  // flipUVs=true, autoUpload=false
+            auto meshes = MeshLoader::LoadFromFile(filepath, true, false);
             if (!meshes.empty()) {
                 auto mesh = meshes[0];
                 
-                // 验证网格未上传
                 if (mesh->IsUploaded()) {
                     Logger::GetInstance().Error("❌ 错误：网格在工作线程被上传了！");
                     return nullptr;
                 }
                 
-                Logger::GetInstance().Info("✅ 工作线程：网格数据加载完成（未上传）");
+                Logger::GetInstance().Info("✅ TaskScheduler：网格数据加载完成（未上传）");
                 return mesh;
             }
         } catch (const std::exception& e) {
-            Logger::GetInstance().Error("工作线程加载异常: " + std::string(e.what()));
+            Logger::GetInstance().Error("TaskScheduler加载异常: " + std::string(e.what()));
         }
         
-        Logger::GetInstance().Warning("工作线程：网格加载失败 " + filepath);
         return nullptr;
     };
     
@@ -338,7 +142,7 @@ std::shared_ptr<MeshLoadTask> AsyncResourceLoader::LoadMeshAsync(
         }
         
         try {
-            GL_THREAD_CHECK();  // 确保在主线程
+            GL_THREAD_CHECK();
             Logger::GetInstance().Info("⭐ 主线程：开始上传网格到GPU: " + filepath);
             mesh->Upload();
             Logger::GetInstance().Info("✅ 主线程：网格上传完成: " + filepath);
@@ -348,18 +152,60 @@ std::shared_ptr<MeshLoadTask> AsyncResourceLoader::LoadMeshAsync(
         }
     };
     
-    // 提交任务到队列
-    {
-        std::lock_guard<std::mutex> lock(m_pendingMutex);
-        m_pendingTasks.push(task);
-        m_totalTasks++;
+    // ✅ 提交任务到TaskScheduler
+    m_totalTasks++;
+    m_loadingCount++;
+    
+    // 转换优先级
+    TaskPriority taskPriority = TaskPriority::Low; // 资源加载默认低优先级
+    if (priority > 0.5f) {
+        taskPriority = TaskPriority::Normal;
+    }
+    if (priority > 0.8f) {
+        taskPriority = TaskPriority::High;
     }
     
-    // 通知工作线程有新任务
-    m_taskAvailable.notify_one();
+    TaskScheduler::GetInstance().SubmitLambda(
+        [this, task]() {
+            // 执行加载
+            try {
+                task->ExecuteLoad();
+                
+                m_loadingCount--;
+                
+                if (task->IsCancelled()) {
+                    return;
+                }
+                
+                if (task->status != LoadStatus::Failed) {
+                    task->status = LoadStatus::Loaded;
+                    
+                    // 移到完成队列
+                    std::lock_guard<std::mutex> lock(m_completedMutex);
+                    m_completedTasks.push(task);
+                } else {
+                    m_failedTasks++;
+                }
+            } catch (const std::exception& e) {
+                Logger::GetInstance().ErrorFormat(
+                    "AsyncResourceLoader: 任务执行异常: %s",
+                    e.what()
+                );
+                task->status = LoadStatus::Failed;
+                task->errorMessage = e.what();
+                m_failedTasks++;
+                m_loadingCount--;
+            }
+        },
+        taskPriority,
+        task->name.c_str()
+    );
     
-    Logger::GetInstance().Info("✅ 提交异步加载任务: " + task->name + 
-                               " (优先级: " + std::to_string(priority) + ")");
+    Logger::GetInstance().InfoFormat(
+        "✅ 提交异步加载任务: %s (优先级: %.2f)",
+        task->name.c_str(),
+        priority
+    );
     
     return task;
 }
@@ -371,23 +217,17 @@ std::shared_ptr<TextureLoadTask> AsyncResourceLoader::LoadTextureAsync(
     std::function<void(const TextureLoadResult&)> callback,
     float priority)
 {
-    if (!m_running.load()) {
-        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NotInitialized, 
-                                 "AsyncResourceLoader: 未初始化"));
-        return nullptr;
-    }
-    
     auto task = std::make_shared<TextureLoadTask>();
     task->name = name.empty() ? filepath : name;
     task->type = AsyncResourceType::Texture;
     task->priority = priority;
     task->callback = callback;
-    task->submitTime = std::chrono::steady_clock::now(); // 记录提交时间
-    task->maxRetries = 3; // 默认最多重试3次
+    task->submitTime = std::chrono::steady_clock::now();
+    task->maxRetries = 3;
     
     // 定义加载函数（工作线程）
     task->loadFunc = [filepath, generateMipmap]() -> std::unique_ptr<TextureLoader::TextureStagingData> {
-        Logger::GetInstance().Debug("工作线程：解码纹理数据 " + filepath);
+        Logger::GetInstance().Debug("TaskScheduler：解码纹理数据 " + filepath);
 
         auto staging = std::make_unique<TextureLoader::TextureStagingData>();
         std::string errorMessage;
@@ -397,7 +237,7 @@ std::shared_ptr<TextureLoadTask> AsyncResourceLoader::LoadTextureAsync(
                 staging.get(),
                 &errorMessage)) {
             if (errorMessage.empty()) {
-                errorMessage = "工作线程：纹理解码失败 " + filepath;
+                errorMessage = "TaskScheduler：纹理解码失败 " + filepath;
             }
             throw std::runtime_error(errorMessage);
         }
@@ -417,14 +257,41 @@ std::shared_ptr<TextureLoadTask> AsyncResourceLoader::LoadTextureAsync(
         return texture;
     };
     
-    // 提交任务
-    {
-        std::lock_guard<std::mutex> lock(m_pendingMutex);
-        m_pendingTasks.push(task);
-        m_totalTasks++;
-    }
+    // ✅ 提交任务到TaskScheduler
+    m_totalTasks++;
+    m_loadingCount++;
     
-    m_taskAvailable.notify_one();
+    TaskPriority taskPriority = TaskPriority::Low;
+    if (priority > 0.5f) taskPriority = TaskPriority::Normal;
+    if (priority > 0.8f) taskPriority = TaskPriority::High;
+    
+    TaskScheduler::GetInstance().SubmitLambda(
+        [this, task]() {
+            try {
+                task->ExecuteLoad();
+                m_loadingCount--;
+                
+                if (!task->IsCancelled() && task->status != LoadStatus::Failed) {
+                    task->status = LoadStatus::Loaded;
+                    std::lock_guard<std::mutex> lock(m_completedMutex);
+                    m_completedTasks.push(task);
+                } else {
+                    m_failedTasks++;
+                }
+            } catch (const std::exception& e) {
+                Logger::GetInstance().ErrorFormat(
+                    "AsyncResourceLoader: 纹理加载异常: %s",
+                    e.what()
+                );
+                task->status = LoadStatus::Failed;
+                task->errorMessage = e.what();
+                m_failedTasks++;
+                m_loadingCount--;
+            }
+        },
+        taskPriority,
+        task->name.c_str()
+    );
     
     Logger::GetInstance().Info("✅ 提交纹理加载任务: " + task->name);
     
@@ -438,12 +305,6 @@ std::shared_ptr<ModelLoadTask> AsyncResourceLoader::LoadModelAsync(
     std::function<void(const ModelLoadResult&)> callback,
     float priority)
 {
-    if (!m_running.load()) {
-        HANDLE_ERROR(RENDER_ERROR(ErrorCode::NotInitialized,
-                                 "AsyncResourceLoader: 未初始化"));
-        return nullptr;
-    }
-
     auto task = std::make_shared<ModelLoadTask>();
     task->name = name.empty() ? filepath : name;
     task->type = AsyncResourceType::Model;
@@ -452,8 +313,8 @@ std::shared_ptr<ModelLoadTask> AsyncResourceLoader::LoadModelAsync(
     task->requestedOptions = options;
     task->filepath = filepath;
     task->overrideName = name;
-    task->submitTime = std::chrono::steady_clock::now(); // 记录提交时间
-    task->maxRetries = 3; // 默认最多重试3次
+    task->submitTime = std::chrono::steady_clock::now();
+    task->maxRetries = 3;
 
     ModelLoadOptions workerOptions = options;
     workerOptions.autoUpload = false;
@@ -463,7 +324,7 @@ std::shared_ptr<ModelLoadTask> AsyncResourceLoader::LoadModelAsync(
     workerOptions.updateDependencyGraph = false;
 
     task->loadFunc = [filepath, overrideName = name, workerOptions]() -> ModelLoadOutput {
-        Logger::GetInstance().Info("⭐ 工作线程：开始解析模型数据 " + filepath);
+        Logger::GetInstance().Info("⭐ TaskScheduler：开始解析模型数据 " + filepath);
         return ModelLoader::LoadFromFile(filepath, overrideName, workerOptions);
     };
 
@@ -559,13 +420,41 @@ std::shared_ptr<ModelLoadTask> AsyncResourceLoader::LoadModelAsync(
         }
     };
 
-    {
-        std::lock_guard<std::mutex> lock(m_pendingMutex);
-        m_pendingTasks.push(task);
-        m_totalTasks++;
-    }
-
-    m_taskAvailable.notify_one();
+    // ✅ 提交任务到TaskScheduler
+    m_totalTasks++;
+    m_loadingCount++;
+    
+    TaskPriority taskPriority = TaskPriority::Low;
+    if (priority > 0.5f) taskPriority = TaskPriority::Normal;
+    if (priority > 0.8f) taskPriority = TaskPriority::High;
+    
+    TaskScheduler::GetInstance().SubmitLambda(
+        [this, task]() {
+            try {
+                task->ExecuteLoad();
+                m_loadingCount--;
+                
+                if (!task->IsCancelled() && task->status != LoadStatus::Failed) {
+                    task->status = LoadStatus::Loaded;
+                    std::lock_guard<std::mutex> lock(m_completedMutex);
+                    m_completedTasks.push(task);
+                } else {
+                    m_failedTasks++;
+                }
+            } catch (const std::exception& e) {
+                Logger::GetInstance().ErrorFormat(
+                    "AsyncResourceLoader: 模型加载异常: %s",
+                    e.what()
+                );
+                task->status = LoadStatus::Failed;
+                task->errorMessage = e.what();
+                m_failedTasks++;
+                m_loadingCount--;
+            }
+        },
+        taskPriority,
+        task->name.c_str()
+    );
 
     Logger::GetInstance().Info("✅ 提交模型加载任务: " + task->name);
 
@@ -683,11 +572,11 @@ bool AsyncResourceLoader::WaitForAll(float timeoutSeconds) {
     auto startTime = std::chrono::steady_clock::now();
     
     while (true) {
-        size_t pending = GetPendingTaskCount();
         size_t waiting = GetWaitingUploadCount();
         size_t loading = m_loadingCount.load();
         
-        if (pending == 0 && waiting == 0 && loading == 0) {
+        // ✅ 注意：不再检查待处理队列，因为由TaskScheduler管理
+        if (waiting == 0 && loading == 0) {
             return true;  // 所有任务完成
         }
         
@@ -709,8 +598,8 @@ bool AsyncResourceLoader::WaitForAll(float timeoutSeconds) {
 }
 
 size_t AsyncResourceLoader::GetPendingTaskCount() const {
-    std::lock_guard<std::mutex> lock(m_pendingMutex);
-    return m_pendingTasks.size();
+    // ✅ 待处理任务由TaskScheduler管理
+    return TaskScheduler::GetInstance().GetPendingTaskCount();
 }
 
 size_t AsyncResourceLoader::GetLoadingTaskCount() const {

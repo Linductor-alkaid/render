@@ -289,7 +289,7 @@ int main(int argc, char* argv[]) {
     // 创建ApplicationHost
     auto& resourceManager = ResourceManager::GetInstance();
     auto& asyncLoader = AsyncResourceLoader::GetInstance();
-    asyncLoader.Initialize(1);
+    asyncLoader.Initialize();
     
     ApplicationHost host;
     ApplicationHost::Config hostConfig{};

@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
 
     // renderer->SetLODInstancingEnabled(false);
 
-    AsyncResourceLoader::GetInstance().Initialize(1);
+    AsyncResourceLoader::GetInstance().Initialize();
 
     World world;
     world.RegisterComponent<TransformComponent>();

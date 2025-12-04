@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
     }
     renderer->SetBatchingMode(BatchingMode::GpuInstancing);
 
-    AsyncResourceLoader::GetInstance().Initialize(1);
+    AsyncResourceLoader::GetInstance().Initialize();
 
     auto world = std::make_shared<World>();
     world->Initialize();

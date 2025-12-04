@@ -288,7 +288,7 @@
  
          auto& resourceManager = ResourceManager::GetInstance();
          auto& asyncLoader = AsyncResourceLoader::GetInstance();
-         asyncLoader.Initialize(4);  // 4个工作线程
+         asyncLoader.Initialize();
  
          ApplicationHost host;
          ApplicationHost::Config hostConfig{};

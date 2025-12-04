@@ -6,14 +6,12 @@
 #include "render/material.h"
 #include "render/model_loader.h"
 #include "render/texture_loader.h"
+#include "render/task_scheduler.h"
 #include <memory>
 #include <string>
 #include <functional>
-#include <future>
 #include <queue>
 #include <mutex>
-#include <condition_variable>
-#include <thread>
 #include <atomic>
 #include <vector>
 #include <chrono>
@@ -330,9 +328,12 @@ public:
     
     /**
      * @brief 初始化异步加载器
-     * @param numThreads 工作线程数（默认为CPU核心数）
+     * 
+     * ⚠️ 注意：AsyncResourceLoader现在使用统一的TaskScheduler
+     * 不再创建独立的工作线程池
+     * 请确保在调用此方法前已初始化TaskScheduler
      */
-    void Initialize(size_t numThreads = 0);
+    void Initialize();
     
     /**
      * @brief 关闭异步加载器（等待所有任务完成）
@@ -348,8 +349,10 @@ public:
     
     /**
      * @brief 是否已初始化
+     * 
+     * ⚠️ 注意：现在依赖TaskScheduler的初始化状态
      */
-    bool IsInitialized() const { return m_running.load(); }
+    bool IsInitialized() const { return TaskScheduler::GetInstance().IsInitialized(); }
     
     // ========================================================================
     // 异步加载接口
@@ -447,44 +450,20 @@ private:
     AsyncResourceLoader(const AsyncResourceLoader&) = delete;
     AsyncResourceLoader& operator=(const AsyncResourceLoader&) = delete;
     
-    // 工作线程函数
-    void WorkerThreadFunc();
+    // 已完成任务队列（等待主线程上传）
+    std::queue<std::shared_ptr<LoadTaskBase>> m_completedTasks;
     
-    // 任务比较器（用于优先级队列）
-    struct TaskComparator {
-        bool operator()(const std::shared_ptr<LoadTaskBase>& a,
-                       const std::shared_ptr<LoadTaskBase>& b) const {
-            // 高优先级排在前面
-            if (a->priority != b->priority) {
-                return a->priority < b->priority;
-            }
-            // 相同优先级，先提交的先执行
-            return a->submitTime > b->submitTime;
-        }
-    };
-    
-    // 任务队列（使用优先级队列）
-    std::priority_queue<
-        std::shared_ptr<LoadTaskBase>,
-        std::vector<std::shared_ptr<LoadTaskBase>>,
-        TaskComparator
-    > m_pendingTasks;   // 待处理任务（按优先级排序）
-    std::queue<std::shared_ptr<LoadTaskBase>> m_completedTasks; // 已完成任务（等待上传）
-    
-    // 线程同步
-    mutable std::mutex m_pendingMutex;
+    // 线程同步（只需保护完成队列）
     mutable std::mutex m_completedMutex;
-    std::condition_variable m_taskAvailable;
-    
-    // 工作线程池
-    std::vector<std::thread> m_workers;
-    std::atomic<bool> m_running{false};
     
     // 统计信息
     std::atomic<size_t> m_totalTasks{0};
     std::atomic<size_t> m_completedCount{0};
     std::atomic<size_t> m_failedTasks{0};
     std::atomic<size_t> m_loadingCount{0};
+    
+    // ✅ 注意：不再维护独立的工作线程池
+    // 所有异步任务都通过TaskScheduler提交
 };
 
 } // namespace Render

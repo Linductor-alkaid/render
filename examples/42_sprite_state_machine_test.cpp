@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    AsyncResourceLoader::GetInstance().Initialize(1);
+    AsyncResourceLoader::GetInstance().Initialize();
 
     auto world = std::make_shared<World>();
     world->Initialize();

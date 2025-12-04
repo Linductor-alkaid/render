@@ -253,7 +253,7 @@ int main(int argc, char* argv[]) {
     auto& resourceManager = ResourceManager::GetInstance();
     auto& shaderCache = ShaderCache::GetInstance();
     auto& asyncLoader = AsyncResourceLoader::GetInstance();
-    asyncLoader.Initialize(4);  // 4 个工作线程
+    asyncLoader.Initialize();
     Logger::GetInstance().Info("✓ 资源管理器初始化成功（4 个工作线程）");
     
     // ============================================================

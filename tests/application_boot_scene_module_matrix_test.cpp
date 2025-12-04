@@ -99,7 +99,7 @@ bool RunScenario(const ScenarioConfig& scenario) {
     if (asyncLoader.IsInitialized()) {
         asyncLoader.Shutdown();
     }
-    asyncLoader.Initialize(1);
+    asyncLoader.Initialize();
 
     ApplicationHost host;
     ApplicationHost::Config config;

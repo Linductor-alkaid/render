@@ -57,7 +57,7 @@ int main() {
     }
 
     auto& asyncLoader = AsyncResourceLoader::GetInstance();
-    asyncLoader.Initialize(1);
+    asyncLoader.Initialize();
 
     const std::string missingPath = BuildMissingFilePath();
     std::cout << "尝试异步加载不存在的模型: " << missingPath << '\n';

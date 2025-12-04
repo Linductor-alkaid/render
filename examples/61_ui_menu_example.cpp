@@ -187,7 +187,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
     auto& resourceManager = ResourceManager::GetInstance();
     auto& asyncLoader = AsyncResourceLoader::GetInstance();
-    asyncLoader.Initialize(1);
+    asyncLoader.Initialize();
 
     // 创建应用主机
     ApplicationHost host;

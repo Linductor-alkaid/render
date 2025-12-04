@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     renderState->SetCullFace(CullFace::None);
     renderState->SetClearColor(Color(0.15f, 0.17f, 0.2f, 1.0f));
 
-    AsyncResourceLoader::GetInstance().Initialize(2);
+    AsyncResourceLoader::GetInstance().Initialize();
 
     auto world = std::make_shared<World>();
     world->Initialize();

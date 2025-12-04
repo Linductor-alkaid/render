@@ -295,7 +295,7 @@ int main(int argc, char* argv[]) {
         
         // ✅ 关键：初始化异步加载器
         auto& asyncLoader = AsyncResourceLoader::GetInstance();
-        asyncLoader.Initialize(4);  // 使用4个工作线程
+        asyncLoader.Initialize(); 
         
         // 加载着色器
         auto& shaderCache = ShaderCache::GetInstance();

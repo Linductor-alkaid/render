@@ -84,7 +84,7 @@ AppContext CreateTestAppContext() {
     static bool s_loaderInitialized = false;
     if (!s_loaderInitialized) {
         auto& loader = AsyncResourceLoader::GetInstance();
-        loader.Initialize(2);  // 2个工作线程
+        loader.Initialize(); 
         s_loaderInitialized = true;
     }
     ctx.asyncLoader = &AsyncResourceLoader::GetInstance();

@@ -100,7 +100,7 @@ int main(int argc, char* argv[]) {
     // 2. 初始化异步资源加载器
     // ============================================================
     auto& asyncLoader = AsyncResourceLoader::GetInstance();
-    asyncLoader.Initialize(4);  // 4个工作线程
+    asyncLoader.Initialize(); 
     Logger::GetInstance().InfoFormat("[ECS Async Test] AsyncResourceLoader initialized");
     
     // ============================================================
