@@ -246,7 +246,7 @@ bool Test_RaycastHit_IsValid() {
     RaycastHit hit1;
     TEST_ASSERT(!hit1.IsValid(), "默认 RaycastHit 应该无效");
     
-    ECS::EntityID entityId;
+    static ECS::EntityID entityId;  // 使用静态变量避免悬空指针
     RaycastHit hit2;
     hit2.entity = &entityId;
     TEST_ASSERT(hit2.IsValid(), "有实体的 RaycastHit 应该有效");
