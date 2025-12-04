@@ -41,13 +41,16 @@ graph TB
         Renderer --> BatchManager[批处理管理器]
         Renderer --> LightManager[光照管理器]
         Renderer --> LODSystem[LOD系统]
+        Renderer --> TaskScheduler[统一任务调度器]
 
         RenderState --> MaterialStateCache[材质状态缓存]
         RenderLayer --> MaterialSortKey[材质排序键]
         BatchManager --> RenderBatch[渲染批次]
+        BatchManager --> TaskScheduler
         LODSystem --> LODSelector[LOD选择器]
         LODSystem --> LODGenerator[LOD生成器]
         LODSystem --> LODInstancedRenderer[LOD实例化渲染器]
+        LODInstancedRenderer --> TaskScheduler
     end
 
     %% 资源管理层
@@ -61,6 +64,8 @@ graph TB
         ResourceManager --> MeshLoader[网格加载器]
         ResourceManager --> ModelLoader[模型加载器]
         ResourceManager --> LODGenerator[LOD生成器]
+        
+        AsyncResourceLoader --> TaskScheduler[统一任务调度器]
     end
 
     %% 渲染对象层
@@ -330,10 +335,12 @@ graph TB
 
     subgraph "Async Loading"
         AsyncLoader[异步加载器]
-        LoadQueue[加载队列]
-        WorkerThread[工作线程]
+        TaskScheduler[统一任务调度器]
         LoadCallback[加载回调]
         LoadProgress[加载进度]
+        
+        AsyncLoader --> TaskScheduler
+        TaskScheduler --> WorkerThreadPool[工作线程池19线程]
     end
 
     subgraph "Resource Dependencies"
@@ -635,7 +642,7 @@ graph TB
         Logger[日志系统]
         FileSystem[文件系统]
         MemoryPool[内存池]
-        ThreadPool[线程池]
+        TaskScheduler[统一任务调度器]
         ConfigSystem[配置系统]
     end
 
@@ -664,8 +671,8 @@ graph TB
     ResourceManager --> FileSystem
     ResourceManager --> MemoryPool
 
-    Renderer --> ThreadPool
-    ResourceManager --> ThreadPool
+    Renderer --> TaskScheduler
+    ResourceManager --> TaskScheduler
     EventBus --> Logger
 
     style AppModule fill:#e1f5fe
@@ -802,6 +809,66 @@ graph TB
     style LODInstancedRenderer fill:#e8f5e8
 ```
 
+## 多线程任务调度架构图
+
+```mermaid
+graph TB
+    subgraph "TaskScheduler - 统一任务调度系统"
+        TaskScheduler[TaskScheduler单例]
+        WorkerThreadPool[工作线程池 - 19线程]
+        TaskQueue[优先级任务队列]
+        TaskHandle[任务句柄]
+        
+        TaskScheduler --> WorkerThreadPool
+        TaskScheduler --> TaskQueue
+        TaskScheduler --> TaskHandle
+    end
+    
+    subgraph "任务优先级"
+        Critical[Critical - 关键任务]
+        High[High - 高优先级]
+        Normal[Normal - 普通任务]
+        Low[Low - 低优先级]
+        Background[Background - 后台任务]
+        
+        TaskQueue --> Critical
+        TaskQueue --> High
+        TaskQueue --> Normal
+        TaskQueue --> Low
+        TaskQueue --> Background
+    end
+    
+    subgraph "任务来源"
+        AsyncResourceLoader[异步资源加载] --> Low
+        BatchManager[批处理分组] --> High
+        LayerSort[层级排序] --> High
+        MaterialSortKey[材质排序键计算] --> High
+        LODPrepare[LOD实例准备] --> High
+    end
+    
+    subgraph "执行流程"
+        Submit[提交任务] --> TaskQueue
+        WorkerThreadPool --> Execute[执行任务]
+        Execute --> Complete[完成通知]
+        Complete --> TaskHandle
+    end
+    
+    subgraph "性能监控"
+        Stats[任务统计]
+        Stats --> TotalTasks[总任务数]
+        Stats --> CompletedTasks[已完成数]
+        Stats --> AvgTaskTime[平均任务时间]
+        Stats --> Utilization[线程利用率]
+    end
+    
+    TaskScheduler --> Stats
+    
+    style TaskScheduler fill:#e1f5fe
+    style WorkerThreadPool fill:#e8f5e8
+    style High fill:#fff3e0
+    style Stats fill:#fce4ec
+```
+
 ## LOD工作流程图
 
 ```mermaid
@@ -882,5 +949,10 @@ RenderEngine 项目采用了现代软件工程的最佳实践，具有以下特�
 3. **内存安全**: 智能指针和RAII模式，避免内存泄漏
 4. **线程安全**: 多线程环境下的安全设计
 5. **可扩展性**: 插件式架构，易于添加新功能
+6. **统一任务调度**: TaskScheduler统一管理所有并行任务
+   - 异步资源加载
+   - 批处理分组
+   - 渲染队列排序
+   - LOD实例准备
 
-这个项目结构为实时渲染应用提供了坚实的基础，适合作为学习现代渲染引擎架构的参考，也可以直接用于实际项目开发。
+这个项目结构为实时渲染应用提供了坚实的基础，采用了现代多线程优化架构，适合作为学习现代渲染引擎架构的参考，也可以直接用于实际项目开发。

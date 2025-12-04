@@ -912,6 +912,12 @@ void Renderer::FlushRenderQueue() {
         }
     }
     
+    // 构建layerID到depthFunc的映射，用于材质排序键计算
+    std::unordered_map<uint32_t, std::optional<DepthFunc>> layerDepthFuncMap;
+    for (const auto& record : layerRecords) {
+        layerDepthFuncMap[record.descriptor.id.value] = record.state.overrides.depthFunc;
+    }
+    
     // 如果有大量dirty的排序键，并行计算
     const size_t minDirtyForParallel = 100;
     if (!dirtyRenderables.empty() && 
@@ -927,9 +933,15 @@ void Renderer::FlushRenderQueue() {
             const size_t endIdx = std::min(i + itemsPerTask, dirtyRenderables.size());
             
             auto handle = TaskScheduler::GetInstance().SubmitLambda(
-                [this, &dirtyRenderables, i, endIdx]() {
+                [this, &dirtyRenderables, &layerDepthFuncMap, i, endIdx]() {
                     for (size_t j = i; j < endIdx; ++j) {
-                        EnsureMaterialSortKey(dirtyRenderables[j]);
+                        auto* renderable = dirtyRenderables[j];
+                        std::optional<DepthFunc> layerDepthFunc = std::nullopt;
+                        auto it = layerDepthFuncMap.find(renderable->GetLayerID());
+                        if (it != layerDepthFuncMap.end()) {
+                            layerDepthFunc = it->second;
+                        }
+                        EnsureMaterialSortKey(renderable, layerDepthFunc);
                     }
                 },
                 TaskPriority::High,
@@ -943,7 +955,12 @@ void Renderer::FlushRenderQueue() {
     } else {
         // 少量dirty或TaskScheduler未初始化，串行计算
         for (auto* renderable : dirtyRenderables) {
-            EnsureMaterialSortKey(renderable);
+            std::optional<DepthFunc> layerDepthFunc = std::nullopt;
+            auto it = layerDepthFuncMap.find(renderable->GetLayerID());
+            if (it != layerDepthFuncMap.end()) {
+                layerDepthFunc = it->second;
+            }
+            EnsureMaterialSortKey(renderable, layerDepthFunc);
         }
     }
 

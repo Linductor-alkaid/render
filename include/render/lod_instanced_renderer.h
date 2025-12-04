@@ -14,11 +14,9 @@
 #include <functional>
 #include <algorithm>
 #include <chrono>
-#include <thread>
 #include <mutex>
 #include <atomic>
-#include <condition_variable>
-#include <queue>
+#include "render/task_scheduler.h"
 
 namespace Render {
 
@@ -340,12 +338,9 @@ public:
      * 注意：多线程优化需要非常小心的同步设计，建议先实现前面的优化，
      * 确认性能瓶颈后再考虑。多线程主要用于处理大量实例的场景。
      */
-    void EnableMultithreading(int numThreads = -1);
-    
-    /**
-     * @brief 禁用多线程
-     */
-    void DisableMultithreading();
+    // ✅ 多线程功能现在由TaskScheduler统一管理
+    // EnableMultithreading和DisableMultithreading已移除
+    // LOD准备任务将自动通过TaskScheduler并行处理
     
     /**
      * @brief 启用GPU剔除（阶段3.3）
@@ -606,26 +601,21 @@ private:
     // ✅ 是否支持持久映射（OpenGL 4.4+）
     bool m_supportsPersistentMapping = false;
     
-    // ✅ 多线程相关
-    bool m_multithreadingEnabled = false;
-    std::vector<std::thread> m_workerThreads;
-    std::atomic<bool> m_shouldStop{false};
-    
-    // 任务队列
-    struct PrepareTask {
-        std::vector<PendingInstance> instances;
-        std::map<GroupKey, LODInstancedGroup>* targetGroups;
-    };
-    
-    std::mutex m_taskMutex;
-    std::condition_variable m_taskCV;
-    std::queue<PrepareTask> m_tasks;
+    // ✅ 简化多线程支持：使用TaskScheduler统一管理
+    // 不再维护独立的工作线程池
     
     // ✅ 用于保护构建缓冲区的互斥锁（多线程访问时需要）
     std::mutex m_buildBufferMutex;
     
-    void WorkerThreadFunction();
-    void ProcessPrepareTask(const PrepareTask& task);
+    /**
+     * @brief 处理实例准备任务（工作线程调用）
+     * @param instances 待处理的实例列表
+     * @param targetGroups 目标分组映射
+     */
+    void ProcessInstanceBatch(
+        const std::vector<PendingInstance>& instances,
+        std::map<GroupKey, LODInstancedGroup>* targetGroups
+    );
     
     // ✅ 阶段3.3：GPU剔除相关
     bool m_gpuCullingEnabled = false;

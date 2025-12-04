@@ -305,14 +305,17 @@ public:
      * 确认性能瓶颈后再考虑。多线程主要用于处理大量实例的场景。
      */
     void EnableLODMultithreading(int numThreads = -1) {
-        m_lodRenderer.EnableMultithreading(numThreads);
+        // ✅ 不再需要手动启用多线程
+        // LOD渲染器现在自动使用TaskScheduler进行并行处理
+        (void)numThreads;  // 避免未使用参数警告
     }
     
     /**
      * @brief 禁用多线程数据准备（阶段3.2）
      */
     void DisableLODMultithreading() {
-        m_lodRenderer.DisableMultithreading();
+        // ✅ 不再需要手动禁用多线程
+        // TaskScheduler由全局管理
     }
     
     /**

@@ -70,7 +70,7 @@ LODInstancedRenderer::LODInstancedRenderer() {
 }
 
 LODInstancedRenderer::~LODInstancedRenderer() {
-    DisableMultithreading();
+    // ✅ 不再需要DisableMultithreading()，TaskScheduler由全局管理
     CleanupGPUCulling();
     ClearInstanceVBOs();
 }
@@ -131,40 +131,41 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
     // ✅ 处理待处理队列，添加到构建缓冲区
     size_t processCount = std::min(m_maxInstancesPerFrame, m_pendingInstances.size());
     
-    if (m_multithreadingEnabled && processCount > 100) {
-        // ✅ 多线程模式：将任务分发给工作线程
-        // 将待处理实例分批，创建任务
-        const size_t batchSize = std::max(size_t(100), processCount / (m_workerThreads.size() + 1));
+    // ✅ 使用TaskScheduler进行并行处理
+    const size_t minInstancesForParallel = 100;
+    
+    if (processCount >= minInstancesForParallel && TaskScheduler::GetInstance().IsInitialized()) {
+        // ✅ 并行模式：使用TaskScheduler
+        const size_t numThreads = TaskScheduler::GetInstance().GetWorkerCount();
+        const size_t batchSize = std::max(size_t(50), processCount / numThreads);
         
-        std::vector<PendingInstance> batch;
-        batch.reserve(batchSize);
+        std::vector<std::shared_ptr<TaskHandle>> taskHandles;
+        taskHandles.reserve((processCount + batchSize - 1) / batchSize);
         
-        for (size_t i = 0; i < processCount; ++i) {
-            batch.push_back(m_pendingInstances[i]);
+        for (size_t i = 0; i < processCount; i += batchSize) {
+            const size_t endIdx = std::min(i + batchSize, processCount);
             
-            if (batch.size() >= batchSize || i == processCount - 1) {
-                PrepareTask task;
-                task.instances = std::move(batch);
-                task.targetGroups = &m_groups[m_currentBuildBuffer];
-                
-                {
-                    std::lock_guard<std::mutex> lock(m_taskMutex);
-                    m_tasks.push(std::move(task));
-                }
-                m_taskCV.notify_one();
-                
-                batch.clear();
-                batch.reserve(batchSize);
+            // 复制当前批次的实例
+            std::vector<PendingInstance> batch;
+            batch.reserve(endIdx - i);
+            for (size_t j = i; j < endIdx; ++j) {
+                batch.push_back(m_pendingInstances[j]);
             }
+            
+            // 提交并行任务
+            auto handle = TaskScheduler::GetInstance().SubmitLambda(
+                [this, batch = std::move(batch)]() {
+                    ProcessInstanceBatch(batch, &m_groups[m_currentBuildBuffer]);
+                },
+                TaskPriority::High,
+                "LODPrepare"
+            );
+            
+            taskHandles.push_back(handle);
         }
         
-        // 等待所有任务完成
-        {
-            std::unique_lock<std::mutex> lock(m_taskMutex);
-            m_taskCV.wait(lock, [this] {
-                return m_tasks.empty();
-            });
-        }
+        // ✅ 等待所有任务完成
+        TaskScheduler::GetInstance().WaitForAll(taskHandles);
         
         m_currentFrameProcessed += processCount;
         
@@ -175,7 +176,7 @@ void LODInstancedRenderer::RenderAll(Renderer* renderer, RenderState* renderStat
             );
         }
     } else {
-        // ✅ 单线程模式：直接处理
+        // ✅ 串行模式：直接处理（小规模场景或TaskScheduler未初始化）
         for (size_t i = 0; i < processCount; ++i) {
             const auto& pending = m_pendingInstances[i];
             
@@ -1180,78 +1181,18 @@ void LODInstancedRenderer::SetupInstanceAttributes(
 
 // ==================== 多线程数据准备 ====================
 
-void LODInstancedRenderer::EnableMultithreading(int numThreads) {
-    if (m_multithreadingEnabled) {
-        return;
-    }
-    
-    if (numThreads <= 0) {
-        numThreads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
-    }
-    
-    m_shouldStop = false;
-    
-    for (int i = 0; i < numThreads; ++i) {
-        m_workerThreads.emplace_back(&LODInstancedRenderer::WorkerThreadFunction, this);
-    }
-    
-    m_multithreadingEnabled = true;
-    
-    LOG_INFO_F("LODInstancedRenderer: Enabled multithreading with %d worker threads", numThreads);
-}
+// ✅ EnableMultithreading, DisableMultithreading, WorkerThreadFunction 已移除
+// 所有多线程功能现在由TaskScheduler统一管理
 
-void LODInstancedRenderer::DisableMultithreading() {
-    if (!m_multithreadingEnabled) {
-        return;
-    }
-    
-    m_shouldStop = true;
-    m_taskCV.notify_all();
-    
-    for (auto& thread : m_workerThreads) {
-        if (thread.joinable()) {
-            thread.join();
-        }
-    }
-    
-    m_workerThreads.clear();
-    m_multithreadingEnabled = false;
-    
-    LOG_INFO("LODInstancedRenderer: Disabled multithreading");
-}
-
-void LODInstancedRenderer::WorkerThreadFunction() {
-    while (!m_shouldStop) {
-        PrepareTask task;
-        
-        {
-            std::unique_lock<std::mutex> lock(m_taskMutex);
-            m_taskCV.wait(lock, [this] { 
-                return m_shouldStop || !m_tasks.empty(); 
-            });
-            
-            if (m_shouldStop) {
-                break;
-            }
-            
-            if (m_tasks.empty()) {
-                continue;
-            }
-            
-            task = std::move(m_tasks.front());
-            m_tasks.pop();
-        }
-        
-        ProcessPrepareTask(task);
-    }
-}
-
-void LODInstancedRenderer::ProcessPrepareTask(const PrepareTask& task) {
+void LODInstancedRenderer::ProcessInstanceBatch(
+    const std::vector<PendingInstance>& instances,
+    std::map<GroupKey, LODInstancedGroup>* targetGroups)
+{
     // 在工作线程中准备数据
     // 注意：需要加锁保护构建缓冲区的访问
     std::lock_guard<std::mutex> lock(m_buildBufferMutex);
     
-    for (const auto& pending : task.instances) {
+    for (const auto& pending : instances) {
         MaterialSortKey sortKey = GenerateSortKey(pending.material, pending.mesh);
         
         GroupKey key;
@@ -1261,7 +1202,7 @@ void LODInstancedRenderer::ProcessPrepareTask(const PrepareTask& task) {
         key.sortKey = sortKey;
         
         // 线程安全的访问构建缓冲区
-        auto& group = (*task.targetGroups)[key];
+        auto& group = (*targetGroups)[key];
         
         if (group.instances.empty()) {
             group.mesh = pending.mesh;
