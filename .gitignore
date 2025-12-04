@@ -63,6 +63,7 @@ config_user.json
 
 # 不忽略第三方库
 !third_party/
+third_party/blender/
 
 # 不忽略资源文件
 !assets/
