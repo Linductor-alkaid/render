@@ -4,7 +4,9 @@
 #include <render/material.h>
 #include <render/shader_cache.h>
 #include <render/logger.h>
-#include <render/renderable.h>
+#include <render/ecs/world.h>
+#include <render/ecs/components.h>
+#include <render/ecs/systems.h>
 #include <render/types.h>
 
 #include <SDL3/SDL.h>
@@ -18,6 +20,7 @@
 #include <vector>
 
 using namespace Render;
+using namespace Render::ECS;
 
 namespace {
 
@@ -81,32 +84,10 @@ struct StatsAccumulator {
     }
 };
 
-void SetCameraUniforms(const Ref<Shader>& shader) {
-    Matrix4 view = Matrix4::Identity();
-    view(2, 3) = -20.0f;
-
-    const float aspect = 16.0f / 9.0f;
-    const float fov = 45.0f * 3.1415926f / 180.0f;
-    const float nearPlane = 0.1f;
-    const float farPlane = 200.0f;
-    const float f = 1.0f / std::tan(fov * 0.5f);
-
-    Matrix4 projection = Matrix4::Zero();
-    projection(0, 0) = f / aspect;
-    projection(1, 1) = f;
-    projection(2, 2) = (farPlane + nearPlane) / (nearPlane - farPlane);
-    projection(2, 3) = (2.0f * farPlane * nearPlane) / (nearPlane - farPlane);
-    projection(3, 2) = -1.0f;
-
-    shader->Use();
-    if (auto uniformMgr = shader->GetUniformManager()) {
-        uniformMgr->SetMatrix4("uView", view);
-        uniformMgr->SetMatrix4("uProjection", projection);
-        uniformMgr->SetColor("uColor", Color(0.4f, 0.7f, 1.0f, 1.0f));
-        uniformMgr->SetBool("uUseTexture", false);
-        uniformMgr->SetBool("uUseVertexColor", false);
-    }
-}
+struct SceneConfig {
+    Vector3 cameraPosition{0.0f, 0.0f, 20.0f};
+    Color diffuseColor{0.4f, 0.7f, 1.0f, 1.0f};
+};
 
 } // namespace
 
@@ -143,34 +124,73 @@ int main() {
         return 1;
     }
 
+    // 创建 ECS World
+    auto world = std::make_shared<World>();
+    world->Initialize();
+
+    world->RegisterComponent<TransformComponent>();
+    world->RegisterComponent<MeshRenderComponent>();
+    world->RegisterComponent<CameraComponent>();
+    world->RegisterComponent<NameComponent>();
+    world->RegisterComponent<ActiveComponent>();
+
+    world->RegisterSystem<TransformSystem>();
+    world->RegisterSystem<CameraSystem>();
+    world->RegisterSystem<UniformSystem>(renderer);
+    world->RegisterSystem<MeshRenderSystem>(renderer);
+
+    world->PostInitialize();
+
+    SceneConfig sceneConfig{};
+
+    // 创建相机
+    EntityID cameraEntity = world->CreateEntity({ .name = "MainCamera", .active = true });
+    TransformComponent cameraTransform;
+    cameraTransform.SetPosition(sceneConfig.cameraPosition);
+    world->AddComponent(cameraEntity, cameraTransform);
+
+    CameraComponent cameraComp;
+    cameraComp.camera = std::make_shared<Camera>();
+    cameraComp.camera->SetPerspective(45.0f, 16.0f / 9.0f, 0.1f, 200.0f);
+    cameraComp.active = true;
+    world->AddComponent(cameraEntity, cameraComp);
+
     const int gridDim = 20;      // 400 instances
     const float spacing = 1.5f;
     const float offset = (gridDim - 1) * spacing * 0.5f;
 
-    std::vector<std::unique_ptr<MeshRenderable>> renderables;
-    renderables.reserve(static_cast<size_t>(gridDim) * gridDim);
+    std::vector<EntityID> entities;
+    entities.reserve(static_cast<size_t>(gridDim) * gridDim);
 
     for (int y = 0; y < gridDim; ++y) {
         for (int x = 0; x < gridDim; ++x) {
-            auto renderable = std::make_unique<MeshRenderable>();
-            renderable->SetMesh(mesh);
-            renderable->SetMaterial(material);
-            renderable->SetLayerID(300);
-            renderable->SetRenderPriority(0);
+            EntityID entity = world->CreateEntity({ 
+                .name = "Cube_" + std::to_string(y * gridDim + x), 
+                .active = true 
+            });
 
-            auto transform = renderable->GetTransform();
-            if (!transform) {
-                transform = std::make_shared<Transform>();
-                renderable->SetTransform(transform);
-            }
-            transform->SetPosition(Vector3(x * spacing - offset, y * spacing - offset, 0.0f));
-            transform->SetScale(Vector3(0.9f, 0.9f, 0.9f));
+            // 设置变换
+            TransformComponent transform;
+            transform.SetPosition(Vector3(x * spacing - offset, y * spacing - offset, 0.0f));
+            transform.SetScale(Vector3(0.9f, 0.9f, 0.9f));
+            world->AddComponent(entity, transform);
 
-            renderables.emplace_back(std::move(renderable));
+            // 设置网格渲染组件
+            MeshRenderComponent meshComp;
+            meshComp.mesh = mesh;
+            meshComp.material = material;
+            meshComp.visible = true;
+            meshComp.layerID = 300;
+            meshComp.castShadows = false;
+            meshComp.receiveShadows = false;
+            meshComp.resourcesLoaded = true;
+            world->AddComponent(entity, meshComp);
+
+            entities.push_back(entity);
         }
     }
 
-    Logger::GetInstance().InfoFormat("[BatchingBenchmark] Created %zu renderables", renderables.size());
+    Logger::GetInstance().InfoFormat("[BatchingBenchmark] Created %zu entities", entities.size());
 
     const int warmupFrames = 30;
     const int measureFrames = 180;
@@ -211,13 +231,17 @@ int main() {
                 renderer->BeginFrame();
                 renderer->Clear();
 
-                SetCameraUniforms(shader);
-
-                for (auto& renderable : renderables) {
-                    renderable->SubmitToRenderer(renderer);
+                // 设置shader uniforms
+                if (auto uniformMgr = shader->GetUniformManager()) {
+                    uniformMgr->SetColor("uColor", sceneConfig.diffuseColor);
+                    uniformMgr->SetBool("uUseTexture", false);
+                    uniformMgr->SetBool("uUseVertexColor", false);
                 }
 
+                // 使用ECS系统更新和渲染
+                world->Update(0.016f);
                 renderer->FlushRenderQueue();
+
                 renderer->EndFrame();
             } catch (const std::exception& e) {
                 frameSucceeded = false;
@@ -246,6 +270,7 @@ int main() {
         stats.LogSummary(mode);
     }
 
+    world->Shutdown();
     Renderer::Destroy(renderer);
     Logger::GetInstance().InfoFormat("[BatchingBenchmark] Completed. Press any key to exit window.");
     return 0;
