@@ -1346,22 +1346,24 @@ bool RenderBatch::Draw(RenderState* renderState, uint32_t& drawCallCounter, Batc
 BatchManager::BatchManager()
     : m_mode(BatchingMode::Disabled)
     , m_resourceManager(nullptr)
-    , m_shutdown(false)
-    , m_processing(false)
     , m_workerProcessedCount(0)
     , m_workerQueueHighWater(0)
     , m_workerDrainWaitNs(0) {
-    m_workerThread = std::thread(&BatchManager::WorkerLoop, this);
+    // ✅ 不再创建独立的工作线程
+    // 所有任务通过TaskScheduler提交
 }
 
 BatchManager::~BatchManager() {
-    {
-        std::lock_guard<std::mutex> lock(m_queueMutex);
-        m_shutdown = true;
+    // ✅ 等待所有待处理的任务完成
+    if (!m_pendingTaskHandles.empty()) {
+        TaskScheduler::GetInstance().WaitForAll(m_pendingTaskHandles);
+        m_pendingTaskHandles.clear();
     }
-    m_queueCv.notify_all();
-    if (m_workerThread.joinable()) {
-        m_workerThread.join();
+    
+    // 清空待处理项目
+    {
+        std::lock_guard<std::mutex> lock(m_recordingMutex);
+        m_pendingItems.clear();
     }
 }
 
@@ -1370,7 +1372,11 @@ void BatchManager::SetMode(BatchingMode mode) {
         return;
     }
 
-    DrainWorker();
+    // ✅ 等待所有待处理的任务完成
+    if (!m_pendingTaskHandles.empty()) {
+        TaskScheduler::GetInstance().WaitForAll(m_pendingTaskHandles);
+        m_pendingTaskHandles.clear();
+    }
 
     {
         std::lock_guard<std::mutex> storageLock(m_storageMutex);
@@ -1397,7 +1403,11 @@ void BatchManager::SetResourceManager(ResourceManager* resourceManager) {
 }
 
 void BatchManager::Reset() {
-    DrainWorker();
+    // ✅ 等待所有待处理的任务完成
+    if (!m_pendingTaskHandles.empty()) {
+        TaskScheduler::GetInstance().WaitForAll(m_pendingTaskHandles);
+        m_pendingTaskHandles.clear();
+    }
 
     {
         std::lock_guard<std::mutex> storageLock(m_storageMutex);
@@ -1460,89 +1470,105 @@ void BatchManager::AddItem(const BatchableItem& item) {
     workItem.item = std::move(localItem);
     workItem.shouldBatch = shouldBatch;
 
-    EnqueueWork(std::move(workItem));
-}
-
-void BatchManager::EnqueueWork(WorkItem workItem) {
+    // ✅ 直接添加到待处理列表（加锁保护）
     {
-        std::lock_guard<std::mutex> lock(m_queueMutex);
-        if (m_shutdown) {
-            return;
-        }
+        std::lock_guard<std::mutex> lock(m_recordingMutex);
         m_pendingItems.push_back(std::move(workItem));
-
-        uint32_t currentDepth = static_cast<uint32_t>(m_pendingItems.size() + (m_processing ? 1 : 0));
+        
+        // 更新队列深度统计
+        uint32_t currentDepth = static_cast<uint32_t>(m_pendingItems.size());
         uint32_t observed = m_workerQueueHighWater.load(std::memory_order_relaxed);
         while (currentDepth > observed &&
                !m_workerQueueHighWater.compare_exchange_weak(observed, currentDepth, std::memory_order_relaxed)) {
-            // retry until update succeeds or observed catches up
+            // retry
         }
     }
-    m_queueCv.notify_one();
 }
 
-void BatchManager::DrainWorker() {
-    std::unique_lock<std::mutex> lock(m_queueMutex);
-    if (m_shutdown) {
+// ✅ 新的并行处理函数
+void BatchManager::ProcessItemsParallel() {
+    std::vector<WorkItem> itemsToProcess;
+    
+    // 获取所有待处理项目
+    {
+        std::lock_guard<std::mutex> lock(m_recordingMutex);
+        if (m_pendingItems.empty()) {
+            return;
+        }
+        itemsToProcess = std::move(m_pendingItems);
+        m_pendingItems.clear();
+    }
+    
+    const size_t itemCount = itemsToProcess.size();
+    if (itemCount == 0) {
         return;
     }
-
-    if (m_pendingItems.empty() && !m_processing) {
+    
+    // ✅ 根据项目数量和线程数确定并行任务数
+    const size_t numThreads = TaskScheduler::GetInstance().GetWorkerCount();
+    const size_t minItemsPerTask = 50;  // 最少50个项目才值得并行
+    const size_t numTasks = std::min(numThreads, (itemCount + minItemsPerTask - 1) / minItemsPerTask);
+    
+    if (numTasks <= 1 || itemCount < minItemsPerTask) {
+        // 项目太少，串行处理更高效
+        for (const auto& workItem : itemsToProcess) {
+            ProcessWorkItem(workItem);
+        }
+        m_workerProcessedCount.fetch_add(static_cast<uint32_t>(itemCount), std::memory_order_relaxed);
         return;
     }
-
+    
+    // ✅ 并行处理：将项目分配到多个任务
+    const size_t itemsPerTask = (itemCount + numTasks - 1) / numTasks;
+    
+    m_pendingTaskHandles.clear();
+    m_pendingTaskHandles.reserve(numTasks);
+    
+    for (size_t taskIdx = 0; taskIdx < numTasks; ++taskIdx) {
+        const size_t startIdx = taskIdx * itemsPerTask;
+        const size_t endIdx = std::min(startIdx + itemsPerTask, itemCount);
+        
+        if (startIdx >= endIdx) {
+            break;
+        }
+        
+        auto handle = TaskScheduler::GetInstance().SubmitLambda(
+            [this, &itemsToProcess, startIdx, endIdx]() {
+                for (size_t i = startIdx; i < endIdx; ++i) {
+                    try {
+                        ProcessWorkItem(itemsToProcess[i]);
+                        m_workerProcessedCount.fetch_add(1, std::memory_order_relaxed);
+                    } catch (const std::exception& e) {
+                        Logger::GetInstance().ErrorFormat(
+                            "[BatchManager] Parallel worker error: %s",
+                            e.what()
+                        );
+                    }
+                }
+            },
+            TaskPriority::High,  // 批处理是高优先级
+            "BatchGrouping"
+        );
+        
+        m_pendingTaskHandles.push_back(handle);
+    }
+    
+    // ✅ 等待所有并行任务完成
     auto waitBegin = std::chrono::steady_clock::now();
-    m_queueCv.notify_all();
-    m_idleCv.wait(lock, [this]() {
-        return m_shutdown || (m_pendingItems.empty() && !m_processing);
-    });
+    TaskScheduler::GetInstance().WaitForAll(m_pendingTaskHandles);
     auto waitEnd = std::chrono::steady_clock::now();
+    
     auto waitNs = std::chrono::duration_cast<std::chrono::nanoseconds>(waitEnd - waitBegin).count();
     if (waitNs > 0) {
         m_workerDrainWaitNs.fetch_add(static_cast<uint64_t>(waitNs), std::memory_order_relaxed);
     }
-}
-
-void BatchManager::WorkerLoop() {
-    std::unique_lock<std::mutex> lock(m_queueMutex);
-
-    while (!m_shutdown) {
-        m_queueCv.wait(lock, [this]() {
-            return m_shutdown || !m_pendingItems.empty();
-        });
-
-        if (m_shutdown) {
-            break;
-        }
-
-        WorkItem workItem = std::move(m_pendingItems.front());
-        m_pendingItems.pop_front();
-        m_processing = true;
-
-        lock.unlock();
-
-        try {
-            ProcessWorkItem(workItem);
-        } catch (const std::exception& e) {
-            Logger::GetInstance().ErrorFormat("[BatchManager] Worker error: %s", e.what());
-        } catch (...) {
-            Logger::GetInstance().Error("[BatchManager] Worker encountered an unknown error");
-        }
-
-        lock.lock();
-
-        m_processing = false;
-        if (m_pendingItems.empty()) {
-            m_idleCv.notify_all();
-        }
-    }
-
-    m_idleCv.notify_all();
+    
+    m_pendingTaskHandles.clear();
 }
 
 void BatchManager::ProcessWorkItem(const WorkItem& workItem) {
-    m_workerProcessedCount.fetch_add(1, std::memory_order_relaxed);
-
+    // ✅ 注意：m_workerProcessedCount在并行任务中更新，这里不再更新
+    
     if (!workItem.shouldBatch) {
         m_recordingBuffer.AddImmediate(workItem.item.renderable);
         return;
@@ -1574,7 +1600,10 @@ BatchManager::FlushResult BatchManager::Flush(RenderState* renderState) {
         return result;
     }
 
-    DrainWorker();
+    // ✅ 并行处理所有待处理项目
+    ProcessItemsParallel();
+    
+    // ✅ 交换缓冲区（此时所有批次已准备就绪）
     SwapBuffers();
 
     result.workerProcessed = m_workerProcessedCount.exchange(0, std::memory_order_relaxed);
@@ -1674,8 +1703,8 @@ uint32_t RenderBatch::GetFallbackTriangleCount() const noexcept {
 }
 
 size_t BatchManager::GetPendingItemCount() const noexcept {
-    std::lock_guard<std::mutex> lock(m_queueMutex);
-    return m_pendingItems.size() + (m_processing ? 1u : 0u);
+    std::lock_guard<std::mutex> lock(m_recordingMutex);
+    return m_pendingItems.size();
 }
 
 } // namespace Render

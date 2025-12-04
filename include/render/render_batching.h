@@ -5,6 +5,7 @@
 #include "render/renderable.h"
 #include "render/resource_handle.h"
 #include "render/types.h"
+#include "render/task_scheduler.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -12,9 +13,6 @@
 #include <unordered_map>
 #include <mutex>
 #include <vector>
-#include <thread>
-#include <condition_variable>
-#include <deque>
 #include <atomic>
 
 namespace Render {
@@ -276,24 +274,24 @@ private:
     BatchCommandBuffer m_recordingBuffer;
     ResourceManager* m_resourceManager;
 
-    std::thread m_workerThread;
-    mutable std::mutex m_queueMutex;
-    std::condition_variable m_queueCv;
-    std::condition_variable m_idleCv;
-    std::deque<WorkItem> m_pendingItems;
-    bool m_shutdown;
-    bool m_processing;
-
+    // ✅ 移除独立的工作线程，改用TaskScheduler
+    // std::thread m_workerThread;
+    
+    // ✅ 简化同步机制：只需要保护录制缓冲区
+    mutable std::mutex m_recordingMutex;
+    std::vector<WorkItem> m_pendingItems;
+    
+    // ✅ 任务句柄，用于等待并行任务完成
+    std::vector<std::shared_ptr<TaskHandle>> m_pendingTaskHandles;
+    
     std::mutex m_storageMutex;
     std::atomic<uint32_t> m_workerProcessedCount;
     std::atomic<uint32_t> m_workerQueueHighWater;
     std::atomic<uint64_t> m_workerDrainWaitNs;
 
     void SwapBuffers();
-    void DrainWorker();
-    void WorkerLoop();
+    void ProcessItemsParallel();  // ✅ 并行处理批次分组
     void ProcessWorkItem(const WorkItem& workItem);
-    void EnqueueWork(WorkItem workItem);
 };
 
 } // namespace Render
