@@ -243,8 +243,9 @@ set(RENDER_SOURCES
     src/ecs/systems.cpp
     src/ecs/components.cpp
     
-    # Physics (初始框架)
+    # Physics
     src/physics/physics_world.cpp
+    src/physics/collision/broad_phase.cpp
     
     # Rendering
     src/rendering/shader.cpp
