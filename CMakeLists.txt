@@ -228,6 +228,7 @@ set(RENDER_SOURCES
     src/core/render_layer.cpp
     src/core/resource_manager.cpp
     src/core/async_resource_loader.cpp
+    src/core/task_scheduler.cpp
     src/core/transform.cpp
     src/core/camera.cpp
     src/core/gl_thread_checker.cpp
@@ -354,6 +355,7 @@ set(RENDER_HEADERS
     include/render/resource_manager.h
     include/render/resource_handle.h
     include/render/resource_slot.h
+    include/render/task_scheduler.h
     include/render/transform.h
     include/render/camera.h
     include/render/math_utils.h
