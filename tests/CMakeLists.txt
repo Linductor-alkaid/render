@@ -27,6 +27,8 @@ add_executable(test_transform_error_handling test_transform_error_handling.cpp)
 # 阶段1: TaskScheduler 单元测试
 # ============================================================================
 add_executable(test_task_scheduler test_task_scheduler.cpp)
+add_executable(test_physics_components test_physics_components.cpp)
+add_executable(test_physics_math test_physics_math.cpp)
 
 target_link_libraries(mesh_tangent_test PRIVATE RenderEngine)
 target_link_libraries(model_loader_regression_test PRIVATE RenderEngine)
@@ -41,6 +43,8 @@ target_link_libraries(scene_manager_stress_test PRIVATE RenderEngine)
 target_link_libraries(test_memory_layout_optimization PRIVATE RenderEngine)
 target_link_libraries(test_transform_error_handling PRIVATE RenderEngine)
 target_link_libraries(test_task_scheduler PRIVATE RenderEngine)
+target_link_libraries(test_physics_components PRIVATE RenderEngine)
+target_link_libraries(test_physics_math PRIVATE RenderEngine)
 
 target_compile_definitions(mesh_tangent_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(model_loader_regression_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
@@ -55,7 +59,8 @@ target_compile_definitions(scene_manager_stress_test PRIVATE PROJECT_SOURCE_DIR=
 target_compile_definitions(test_memory_layout_optimization PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(test_transform_error_handling PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(test_task_scheduler PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
-
+target_compile_definitions(test_physics_components PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+target_compile_definitions(test_physics_math PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 if(MSVC)
     target_compile_options(mesh_tangent_test PRIVATE /utf-8)
     target_compile_options(model_loader_regression_test PRIVATE /utf-8)
@@ -70,6 +75,8 @@ if(MSVC)
     target_compile_options(test_memory_layout_optimization PRIVATE /utf-8)
     target_compile_options(test_transform_error_handling PRIVATE /utf-8)
     target_compile_options(test_task_scheduler PRIVATE /utf-8)
+    target_compile_options(test_physics_components PRIVATE /utf-8)
+    target_compile_options(test_physics_math PRIVATE /utf-8)
 endif()
 
 add_test(NAME mesh_tangent_test COMMAND mesh_tangent_test)
@@ -85,4 +92,6 @@ add_test(NAME scene_manager_stress_test COMMAND scene_manager_stress_test)
 add_test(NAME test_memory_layout_optimization COMMAND test_memory_layout_optimization)
 add_test(NAME test_transform_error_handling COMMAND test_transform_error_handling)
 add_test(NAME test_task_scheduler COMMAND test_task_scheduler)
+add_test(NAME test_physics_components COMMAND test_physics_components)
+add_test(NAME test_physics_math COMMAND test_physics_math)
 
