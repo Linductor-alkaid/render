@@ -160,15 +160,14 @@ bool CollisionDetector::BoxVsBox(
     const Vector3& centerB, const Vector3& halfExtentsB, const Quaternion& rotationB,
     ContactManifold& manifold
 ) {
-    // SAT (Separating Axis Theorem) 简化实现
-    // 完整的 SAT 需要测试 15 个轴，这里先实现 AABB 版本
+    // SAT (Separating Axis Theorem) 完整实现
     
-    // 如果两个盒体都是轴对齐的，使用简化检测
+    // 如果两个盒体都是轴对齐的，使用优化路径
     bool isAAligned = rotationA.isApprox(Quaternion::Identity());
     bool isBAligned = rotationB.isApprox(Quaternion::Identity());
     
     if (isAAligned && isBAligned) {
-        // AABB vs AABB 检测
+        // AABB vs AABB 快速检测
         AABB aabbA(centerA - halfExtentsA, centerA + halfExtentsA);
         AABB aabbB(centerB - halfExtentsB, centerB + halfExtentsB);
         
@@ -176,11 +175,9 @@ bool CollisionDetector::BoxVsBox(
             return false;
         }
         
-        // 计算穿透深度和法线
         Vector3 delta = centerB - centerA;
         Vector3 overlap = (halfExtentsA + halfExtentsB) - delta.cwiseAbs();
         
-        // 找到最小穿透轴
         int minAxis = 0;
         float minOverlap = overlap.x();
         
@@ -203,9 +200,110 @@ bool CollisionDetector::BoxVsBox(
         return true;
     }
     
-    // OBB vs OBB 完整 SAT 实现（将在后续优化）
-    // 当前返回 false，表示未实现
-    return false;
+    // ========== OBB vs OBB 完整 SAT 算法 ==========
+    
+    // 获取旋转矩阵
+    Matrix3 rotMatrixA = rotationA.toRotationMatrix();
+    Matrix3 rotMatrixB = rotationB.toRotationMatrix();
+    
+    // 获取各自的轴
+    Vector3 axesA[3] = {
+        rotMatrixA.col(0),
+        rotMatrixA.col(1),
+        rotMatrixA.col(2)
+    };
+    
+    Vector3 axesB[3] = {
+        rotMatrixB.col(0),
+        rotMatrixB.col(1),
+        rotMatrixB.col(2)
+    };
+    
+    // 中心距离向量
+    Vector3 t = centerB - centerA;
+    
+    float minPenetration = std::numeric_limits<float>::max();
+    Vector3 minAxis = Vector3::UnitX();
+    int minAxisIndex = 0;
+    
+    // Lambda：测试单个分离轴
+    auto TestAxis = [&](const Vector3& axis, int axisIndex) -> bool {
+        float axisLenSq = axis.squaredNorm();
+        if (axisLenSq < MathUtils::EPSILON * MathUtils::EPSILON) {
+            return true;  // 轴太小，跳过
+        }
+        
+        Vector3 normalizedAxis = axis / std::sqrt(axisLenSq);
+        
+        // 投影半径
+        float ra = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            ra += halfExtentsA[i] * std::abs(normalizedAxis.dot(axesA[i]));
+        }
+        
+        float rb = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            rb += halfExtentsB[i] * std::abs(normalizedAxis.dot(axesB[i]));
+        }
+        
+        // 中心距离在该轴上的投影
+        float distance = std::abs(t.dot(normalizedAxis));
+        
+        // 检测分离
+        if (distance > ra + rb) {
+            return false;  // 找到分离轴，不相交
+        }
+        
+        // 记录最小穿透
+        float penetration = (ra + rb) - distance;
+        if (penetration < minPenetration) {
+            minPenetration = penetration;
+            minAxis = normalizedAxis;
+            minAxisIndex = axisIndex;
+        }
+        
+        return true;
+    };
+    
+    // 测试 A 的 3 个面法线
+    for (int i = 0; i < 3; ++i) {
+        if (!TestAxis(axesA[i], i)) {
+            return false;
+        }
+    }
+    
+    // 测试 B 的 3 个面法线
+    for (int i = 0; i < 3; ++i) {
+        if (!TestAxis(axesB[i], i + 3)) {
+            return false;
+        }
+    }
+    
+    // 测试 9 个边叉积轴
+    int axisIdx = 6;
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            Vector3 axis = axesA[i].cross(axesB[j]);
+            if (!TestAxis(axis, axisIdx++)) {
+                return false;
+            }
+        }
+    }
+    
+    // 所有轴都没有分离，发生碰撞
+    
+    // 确保法线指向 B
+    if (t.dot(minAxis) < 0.0f) {
+        minAxis = -minAxis;
+    }
+    
+    manifold.SetNormal(minAxis);
+    manifold.penetration = minPenetration;
+    
+    // 简化的接触点（中心点）
+    manifold.AddContact(centerA + t * 0.5f, minPenetration);
+    
+    return true;
 }
 
 // ============================================================================

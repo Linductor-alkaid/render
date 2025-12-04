@@ -181,6 +181,45 @@ bool Test_BoxVsBox_NoCollision() {
     return true;
 }
 
+bool Test_BoxVsBox_OBB_Rotated() {
+    ContactManifold manifold;
+    
+    // 测试旋转的 OBB
+    Quaternion rotation = MathUtils::AngleAxis(MathUtils::PI / 4.0f, Vector3::UnitZ());
+    
+    bool hit = CollisionDetector::BoxVsBox(
+        Vector3(0, 0, 0), Vector3(1, 1, 1), Quaternion::Identity(),
+        Vector3(1.5f, 0, 0), Vector3(1, 1, 1), rotation,
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "旋转的 OBB 应该能正确检测碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+    }
+    
+    return true;
+}
+
+bool Test_BoxVsBox_OBB_EdgeCase() {
+    ContactManifold manifold;
+    
+    // 边缘情况：盒体边对边
+    Quaternion rotationA = MathUtils::AngleAxis(MathUtils::PI / 6.0f, Vector3::UnitY());
+    Quaternion rotationB = MathUtils::AngleAxis(-MathUtils::PI / 6.0f, Vector3::UnitY());
+    
+    bool hit = CollisionDetector::BoxVsBox(
+        Vector3(0, 0, 0), Vector3(0.5f, 0.5f, 0.5f), rotationA,
+        Vector3(1.2f, 0, 0), Vector3(0.5f, 0.5f, 0.5f), rotationB,
+        manifold
+    );
+    
+    // 这个测试可能碰撞也可能不碰撞，主要测试不崩溃
+    std::cout << "  OBB 边缘测试: " << (hit ? "碰撞" : "不碰撞") << std::endl;
+    
+    return true;
+}
+
 // ============================================================================
 // 胶囊体 vs 胶囊体测试
 // ============================================================================
@@ -381,6 +420,8 @@ int main() {
     std::cout << "\n--- 盒体 vs 盒体测试 ---" << std::endl;
     RUN_TEST(Test_BoxVsBox_Collision);
     RUN_TEST(Test_BoxVsBox_NoCollision);
+    RUN_TEST(Test_BoxVsBox_OBB_Rotated);
+    RUN_TEST(Test_BoxVsBox_OBB_EdgeCase);
     
     std::cout << "\n--- 胶囊体 vs 胶囊体测试 ---" << std::endl;
     RUN_TEST(Test_CapsuleVsCapsule_Collision);
