@@ -243,6 +243,43 @@ bool Test_CapsuleVsCapsule_Collision() {
 }
 
 // ============================================================================
+// 胶囊体 vs 盒体测试
+// ============================================================================
+
+bool Test_CapsuleVsBox_Collision() {
+    ContactManifold manifold;
+    
+    // 胶囊中心在 1.3，半径 0.5，盒体边界在 1
+    // 胶囊最近点在 0.8，明确碰撞
+    bool hit = CollisionDetector::CapsuleVsBox(
+        Vector3(1.3f, 0, 0), 0.5f, 2.0f, Quaternion::Identity(),
+        Vector3(0, 0, 0), Vector3(1, 1, 1), Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "应该检测到碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+    }
+    
+    return true;
+}
+
+bool Test_CapsuleVsBox_NoCollision() {
+    ContactManifold manifold;
+    
+    bool hit = CollisionDetector::CapsuleVsBox(
+        Vector3(5, 0, 0), 0.5f, 2.0f, Quaternion::Identity(),
+        Vector3(0, 0, 0), Vector3(1, 1, 1), Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(!hit, "不应该检测到碰撞");
+    
+    return true;
+}
+
+// ============================================================================
 // 辅助函数测试
 // ============================================================================
 
@@ -425,6 +462,10 @@ int main() {
     
     std::cout << "\n--- 胶囊体 vs 胶囊体测试 ---" << std::endl;
     RUN_TEST(Test_CapsuleVsCapsule_Collision);
+    
+    std::cout << "\n--- 胶囊体 vs 盒体测试 ---" << std::endl;
+    RUN_TEST(Test_CapsuleVsBox_Collision);
+    RUN_TEST(Test_CapsuleVsBox_NoCollision);
     
     std::cout << "\n--- 辅助函数测试 ---" << std::endl;
     RUN_TEST(Test_ClosestPointOnSegment);

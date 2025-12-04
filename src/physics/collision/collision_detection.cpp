@@ -368,9 +368,71 @@ bool CollisionDetector::CapsuleVsBox(
     const Vector3& boxCenter, const Vector3& boxHalfExtents, const Quaternion& boxRotation,
     ContactManifold& manifold
 ) {
-    // 简化实现：当前未实现
-    // 将在后续优化阶段添加
-    return false;
+    // 获取胶囊体的中心线段
+    Matrix3 capsuleRotMatrix = capsuleRotation.toRotationMatrix();
+    Vector3 capsuleAxis = capsuleRotMatrix * Vector3::UnitY();
+    float halfHeight = capsuleHeight * 0.5f;
+    
+    Vector3 segmentA = capsuleCenter - capsuleAxis * halfHeight;
+    Vector3 segmentB = capsuleCenter + capsuleAxis * halfHeight;
+    
+    // 找到线段到盒体的最近点对
+    // 方法：采样线段上的多个点，找到距离盒体最近的点
+    const int samples = 16;  // 增加采样点以提高精度
+    float minDistSq = std::numeric_limits<float>::max();
+    Vector3 closestSegmentPoint;
+    Vector3 closestBoxPoint;
+    
+    for (int i = 0; i <= samples; ++i) {
+        float t = static_cast<float>(i) / static_cast<float>(samples);
+        Vector3 samplePoint = segmentA + (segmentB - segmentA) * t;
+        
+        // 找到盒体上最近的点
+        Vector3 boxPoint = ClosestPointOnOBB(samplePoint, boxCenter, boxHalfExtents, boxRotation);
+        
+        float distSq = (samplePoint - boxPoint).squaredNorm();
+        if (distSq < minDistSq) {
+            minDistSq = distSq;
+            closestSegmentPoint = samplePoint;
+            closestBoxPoint = boxPoint;
+        }
+    }
+    
+    // 额外检测：线段端点
+    for (const Vector3& endpoint : {segmentA, segmentB}) {
+        Vector3 boxPoint = ClosestPointOnOBB(endpoint, boxCenter, boxHalfExtents, boxRotation);
+        float distSq = (endpoint - boxPoint).squaredNorm();
+        if (distSq < minDistSq) {
+            minDistSq = distSq;
+            closestSegmentPoint = endpoint;
+            closestBoxPoint = boxPoint;
+        }
+    }
+    
+    // 检测是否碰撞
+    float radiusSq = capsuleRadius * capsuleRadius;
+    if (minDistSq >= radiusSq) {
+        return false;
+    }
+    
+    float dist = std::sqrt(minDistSq);
+    
+    // 处理重叠情况
+    if (dist < MathUtils::EPSILON) {
+        // 胶囊体中心线穿过盒体
+        manifold.SetNormal(Vector3::UnitY());
+        manifold.penetration = capsuleRadius;
+        manifold.AddContact(closestBoxPoint, capsuleRadius);
+        return true;
+    }
+    
+    // 计算碰撞法线和穿透深度
+    Vector3 normal = (closestSegmentPoint - closestBoxPoint) / dist;
+    manifold.SetNormal(normal);
+    manifold.penetration = capsuleRadius - dist;
+    manifold.AddContact(closestBoxPoint, manifold.penetration);
+    
+    return true;
 }
 
 // ============================================================================
