@@ -19,6 +19,10 @@ endif()
 
 # OpenMP 支持（用于批量变换的并行处理）
 option(ENABLE_OPENMP "Enable OpenMP for parallel processing" ON)
+
+# 物理引擎选项
+option(ENABLE_PHYSICS "Enable physics engine" ON)
+option(USE_EXTERNAL_PHYSICS "Use external physics library (Bullet/PhysX)" OFF)
 if(ENABLE_OPENMP)
     find_package(OpenMP)
     if(OpenMP_CXX_FOUND)
@@ -239,6 +243,9 @@ set(RENDER_SOURCES
     src/ecs/systems.cpp
     src/ecs/components.cpp
     
+    # Physics (初始框架)
+    src/physics/physics_world.cpp
+    
     # Rendering
     src/rendering/shader.cpp
     src/rendering/uniform_manager.cpp
@@ -276,6 +283,7 @@ set(RENDER_SOURCES
     src/application/modules/debug_hud_module.cpp
     src/application/modules/input_module.cpp
     src/application/modules/ui_runtime_module.cpp
+    src/application/modules/physics_module.cpp
     src/application/operation_mapping.cpp
     src/application/scene_manager.cpp
     src/application/scene_graph.cpp

@@ -93,6 +93,68 @@ struct AABB {
                (min.y() <= other.max.y() && max.y() >= other.min.y()) &&
                (min.z() <= other.max.z() && max.z() >= other.min.z());
     }
+    
+    // 扩展包围盒以包含另一个 AABB
+    void Merge(const AABB& other) {
+        min = min.cwiseMin(other.min);
+        max = max.cwiseMax(other.max);
+    }
+    
+    // 扩展包围盒以包含一个点
+    void Expand(const Vector3& point) {
+        min = min.cwiseMin(point);
+        max = max.cwiseMax(point);
+    }
+    
+    // 获取表面积
+    float GetSurfaceArea() const {
+        Vector3 size = GetSize();
+        return 2.0f * (size.x() * size.y() + size.y() * size.z() + size.z() * size.x());
+    }
+};
+
+// ============================================================================
+// 定向包围盒 (Oriented Bounding Box)
+// ============================================================================
+
+struct OBB {
+    Vector3 center;         // 中心点
+    Vector3 halfExtents;    // 半尺寸
+    Quaternion orientation; // 旋转方向
+    
+    OBB() : center(Vector3::Zero()), halfExtents(Vector3::Ones()), 
+            orientation(Quaternion::Identity()) {}
+    
+    OBB(const Vector3& center, const Vector3& halfExtents, const Quaternion& orientation)
+        : center(center), halfExtents(halfExtents), orientation(orientation) {}
+    
+    // 从 AABB 和变换创建 OBB
+    static OBB FromAABB(const AABB& aabb, const Quaternion& rotation = Quaternion::Identity()) {
+        return OBB(aabb.GetCenter(), aabb.GetExtents(), rotation);
+    }
+    
+    // 转换为轴对齐包围盒（保守估计）
+    AABB GetAABB() const {
+        // 计算旋转后的范围
+        Matrix3 rotMatrix = orientation.toRotationMatrix();
+        Vector3 absRotMatrix = rotMatrix.cwiseAbs() * halfExtents;
+        
+        return AABB(center - absRotMatrix, center + absRotMatrix);
+    }
+    
+    // 获取 OBB 的 8 个顶点
+    void GetVertices(Vector3 vertices[8]) const {
+        Matrix3 rotMatrix = orientation.toRotationMatrix();
+        
+        for (int i = 0; i < 8; ++i) {
+            Vector3 offset(
+                (i & 1) ? halfExtents.x() : -halfExtents.x(),
+                (i & 2) ? halfExtents.y() : -halfExtents.y(),
+                (i & 4) ? halfExtents.z() : -halfExtents.z()
+            );
+            vertices[i] = center + rotMatrix * offset;
+        }
+    }
 };
 
 // ============================================================================
@@ -182,6 +244,24 @@ struct Ray {
         
         return true;
     }
+};
+
+// ============================================================================
+// 射线投射结果（用于物理查询）
+// ============================================================================
+
+namespace ECS { struct EntityID; }  // 前向声明
+
+struct RaycastHit {
+    ECS::EntityID* entity = nullptr;  // 击中的实体（使用指针避免包含整个 entity.h）
+    Vector3 point = Vector3::Zero();  // 击中点（世界空间）
+    Vector3 normal = Vector3::Zero(); // 击中面法线（世界空间）
+    float distance = 0.0f;            // 从射线起点到击中点的距离
+    
+    RaycastHit() = default;
+    
+    // 是否有效（击中了物体）
+    bool IsValid() const { return entity != nullptr; }
 };
 
 // ============================================================================
