@@ -91,8 +91,12 @@ struct PhysicsMaterial {
  * @brief 刚体组件
  * 
  * 为实体添加物理动力学行为
+ * 
+ * @note 包含 Eigen 类型，需要对齐
  */
 struct RigidBodyComponent {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    
     /**
      * @brief 刚体类型
      */
@@ -222,8 +226,12 @@ struct RigidBodyComponent {
  * @brief 碰撞体组件
  * 
  * 定义物体的碰撞形状
+ * 
+ * @note 包含 Eigen 类型，需要对齐
  */
 struct ColliderComponent {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    
     /**
      * @brief 碰撞形状类型
      */

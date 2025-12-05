@@ -415,9 +415,9 @@ struct PhysicsMaterial {
 
 ### 2.4 碰撞检测系统集成
 
-**优先级**: 🔴 Critical | **预计时间**: 2 天
+**优先级**: 🔴 Critical | **预计时间**: 2 天 | ✅ **已完成**
 
-- [ ] **2.4.1** 实现 `CollisionDetectionSystem`
+- [x] **2.4.1** 实现 `CollisionDetectionSystem`
   ```cpp
   class CollisionDetectionSystem : public System {
   public:
@@ -438,20 +438,22 @@ struct PhysicsMaterial {
   };
   ```
 
-- [ ] **2.4.2** 实现碰撞层与碰撞掩码逻辑
-- [ ] **2.4.3** 实现触发器 (Trigger) 事件系统
+- [x] **2.4.2** 实现碰撞层与碰撞掩码逻辑
+- [x] **2.4.3** 实现触发器 (Trigger) 事件系统
   ```cpp
   struct TriggerEnterEvent { EntityID trigger; EntityID other; };
   struct TriggerExitEvent { EntityID trigger; EntityID other; };
   struct TriggerStayEvent { EntityID trigger; EntityID other; };
   ```
 
-- [ ] **2.4.4** 集成到 `EventBus`，发送碰撞事件
+- [x] **2.4.4** 集成到 `EventBus`，发送碰撞事件
 
 **验证标准**:
 - ✅ 碰撞事件正确触发
 - ✅ 触发器不产生物理响应
 - ✅ 碰撞层过滤正常工作
+- ✅ CollisionDetectionSystem 集成到 ECS
+- ✅ test_collision_system.cpp 测试通过 (8/8)
 
 ---
 
@@ -1257,6 +1259,15 @@ struct PhysicsMaterial {
 ---
 
 ## 📝 变更日志
+
+### Version 1.6.0 (2025-12-05)
+- ✅ 完成阶段 2：碰撞检测系统（100%）
+- 新增 physics_systems.h/cpp, physics_events.h
+- CollisionDetectionSystem 集成粗检测和细检测
+- 完整的碰撞事件系统（Enter/Stay/Exit）
+- 触发器事件系统
+- 碰撞层和掩码过滤
+- ✅ 测试通过：8/8 (test_collision_system)
 
 ### Version 1.5.0 (2025-12-04)
 - ✅ 完成 GJK/EPA 算法实现

@@ -245,6 +245,7 @@ set(RENDER_SOURCES
     
     # Physics
     src/physics/physics_world.cpp
+    src/physics/physics_systems.cpp
     src/physics/collision/broad_phase.cpp
     src/physics/collision/collision_detection.cpp
     src/physics/collision/gjk.cpp
