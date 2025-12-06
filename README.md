@@ -1,4 +1,6 @@
-# RenderEngine
+<p align="center">
+  <h1 align="center">RenderEngine</h1>
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/C%2B%2B-20-blue.svg" alt="C++20">
