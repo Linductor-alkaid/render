@@ -1,6 +1,18 @@
 # RenderEngine
 
-一个基于现代 C++20 的跨平台 3D 渲染引擎，采用 ECS（Entity Component System）架构设计，支持 2D/3D 渲染、UI 系统、精灵动画、光照系统和资源异步加载等功能。
+<p align="center">
+  <img src="https://img.shields.io/badge/C%2B%2B-20-blue.svg" alt="C++20">
+  <img src="https://img.shields.io/badge/OpenGL-4.5%2B-green.svg" alt="OpenGL 4.5+">
+  <img src="https://img.shields.io/badge/SDL-3.0-brightgreen.svg" alt="SDL3">
+  <img src="https://img.shields.io/badge/CMake-3.20%2B-blueviolet.svg" alt="CMake">
+  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-blue.svg" alt="CI">
+  <img src="https://img.shields.io/badge/OS-Windows-blue.svg" alt="Windows Only">
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-red.svg" alt="License">
+</p>
+
+
+
+一个基于现代 C++20 的 3D 渲染引擎，采用 ECS（Entity Component System）架构设计，支持 2D/3D 渲染、UI 系统、精灵动画、光照系统和资源异步加载等功能。
 
 ## 核心特性
 
@@ -77,9 +89,6 @@
 使用 Visual Studio 2022:
 
 ```batch
-# 配置项目（会自动检测并配置第三方库）
-build.bat
-
 # 编译 Release 版本
 cmake --build build --config Release
 
@@ -236,7 +245,6 @@ RenderEngine 采用清晰的分层架构设计：
 ## 项目特点
 
 ✅ **现代 C++20** - 充分利用新特性，类型安全且性能优异  
-✅ **跨平台支持** - 基于 SDL3 的 Windows/Linux/macOS 支持  
 ✅ **完整功能** - 2D/3D 渲染、UI、动画、光照等完整特性  
 ✅ **高性能** - 多种优化策略，适合实时渲染应用  
 ✅ **易于扩展** - 模块化架构，插件式设计  
