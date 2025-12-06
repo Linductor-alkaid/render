@@ -154,6 +154,11 @@ Vector3 PhysicsUpdateSystem::ApplyForceField(
     const RigidBodyComponent& body,
     const Vector3& bodyPosition
 ) {
+    // 力场禁用时不产生任何力
+    if (!field.enabled) {
+        return Vector3::Zero();
+    }
+
     Vector3 toBody = bodyPosition - fieldPosition;
     float distance = toBody.norm();
     

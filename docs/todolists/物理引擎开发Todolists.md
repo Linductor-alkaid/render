@@ -483,7 +483,7 @@ struct PhysicsMaterial {
   - 在 `PhysicsUpdateSystem` 中应用全局重力
   - 支持 `useGravity` 和 `gravityScale`
 
-- [ ] **3.1.3** 添加力场组件（可选）
+- [x] **3.1.3** 添加力场组件（可选）
   ```cpp
   struct ForceFieldComponent {
       enum class Type { Gravity, Wind, Radial, Vortex };
@@ -1262,8 +1262,8 @@ struct PhysicsMaterial {
 
 ### Version 1.7.0 (2025-12-06)
 - ✅ 完成力与冲量系统
-- 新增 physics_update_systems.cpp, for_accumulator.h 实现力累加器和重力应用
-- ✅ 测试通过：10/10 (test_force_and_impulse_system)
+- 新增 physics_update_systems.cpp, for_accumulator.h 实现力累加器、重力应用以及力场
+- ✅ 测试通过：19/19 (test_force_and_impulse_system)
 
 ### Version 1.6.0 (2025-12-05)
 - ✅ 完成阶段 2：碰撞检测系统（100%）

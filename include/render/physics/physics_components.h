@@ -539,85 +539,291 @@ struct ColliderComponent {
 /**
  * @brief 力场组件
  * 
- * 定义空间中的力场（重力、风力、径向力、涡流等）
- * 影响范围内的刚体
+ * 在一定范围内对刚体施加力，模拟重力场、风场、径向力场、涡流等效果
+ * 
+ * 使用示例：
+ * @code
+ * // 创建一个向下的重力场
+ * ForceFieldComponent gravityField;
+ * gravityField.type = ForceFieldComponent::Type::Gravity;
+ * gravityField.direction = Vector3(0, -1, 0);
+ * gravityField.strength = 20.0f;
+ * gravityField.radius = 10.0f;
+ * 
+ * // 创建一个径向吸引力场（黑洞效果）
+ * ForceFieldComponent blackHole;
+ * blackHole.type = ForceFieldComponent::Type::Radial;
+ * blackHole.strength = -50.0f;  // 负值表示吸引
+ * blackHole.radius = 15.0f;
+ * blackHole.linearFalloff = false;  // 使用平方反比衰减
+ * 
+ * // 创建一个旋转的涡流场
+ * ForceFieldComponent vortex;
+ * vortex.type = ForceFieldComponent::Type::Vortex;
+ * vortex.direction = Vector3(0, 1, 0);  // 旋转轴
+ * vortex.strength = 30.0f;
+ * vortex.radius = 8.0f;
+ * @endcode
  */
 struct ForceFieldComponent {
     /**
      * @brief 力场类型
      */
     enum class Type {
-        Gravity,  // 重力场（方向力）
-        Wind,     // 风力场（方向力）
-        Radial,   // 径向力场（从中心向外或向内）
-        Vortex    // 涡流场（旋转力）
+        /**
+         * @brief 重力场/定向力场
+         * 
+         * 在指定方向上施加恒定的力
+         * 使用 direction 和 strength 参数
+         * 
+         * 示例：模拟行星引力、风力
+         */
+        Gravity,
+        
+        /**
+         * @brief 风场（与 Gravity 相同，语义上的区别）
+         * 
+         * 持续的定向力，通常用于模拟环境效果
+         * 使用 direction 和 strength 参数
+         */
+        Wind,
+        
+        /**
+         * @brief 径向力场
+         * 
+         * 从力场中心向外（或向内）的径向力
+         * strength > 0: 排斥力（爆炸效果）
+         * strength < 0: 吸引力（黑洞效果）
+         * 
+         * 力的方向：从力场中心指向物体（排斥）或相反（吸引）
+         */
+        Radial,
+        
+        /**
+         * @brief 涡流场
+         * 
+         * 围绕指定轴旋转的力
+         * 使用 direction 作为旋转轴
+         * 力的方向：垂直于径向和旋转轴的切线方向
+         * 
+         * 示例：龙卷风、漩涡
+         */
+        Vortex
     };
+    
+    // ==================== 基本属性 ====================
     
     /// 力场类型
     Type type = Type::Gravity;
     
-    /// 力场方向（对于 Gravity/Wind 类型）
-    Vector3 direction = Vector3(0, -1, 0);
+    /// 力场方向（用于 Gravity/Wind/Vortex）
+    /// - Gravity/Wind: 力的方向
+    /// - Vortex: 旋转轴方向（应为单位向量）
+    /// - Radial: 不使用
+    Vector3 direction = Vector3(0.0f, -1.0f, 0.0f);
     
-    /// 力场强度 (N/kg 或 m/s²)
-    float strength = 9.81f;
+    /// 力场强度
+    /// - 单位：N（牛顿）每千克质量
+    /// - 正值：排斥/推力
+    /// - 负值：吸引/拉力
+    float strength = 10.0f;
     
-    /// 影响半径（0 = 无限远）
+    // ==================== 影响范围 ====================
+    
+    /// 力场影响半径（世界空间单位）
+    /// - 如果 radius <= 0，则影响整个场景（无限范围）
+    /// - 如果 radius > 0，则仅影响半径内的物体
     float radius = 0.0f;
     
-    /// 是否只影响范围内的物体
+    /// 是否仅影响范围内的物体
+    /// - true: 仅影响 radius 内的物体
+    /// - false: 影响所有物体，但在 radius 外衰减
     bool affectOnlyInside = true;
     
-    /// 衰减模式（线性衰减）
-    bool linearFalloff = false;
+    // ==================== 衰减设置 ====================
     
-    ForceFieldComponent() = default;
+    /// 是否使用线性衰减
+    /// - true: 线性衰减 falloff = 1 - (distance / radius)
+    /// - false: 平方反比衰减 falloff = 1 / (1 + distance²)
+    /// 
+    /// 仅在 radius > 0 时生效
+    bool linearFalloff = true;
+    
+    /// 最小衰减系数 [0, 1]
+    /// 即使物体在力场中心，力也会乘以这个最小值
+    /// 用于避免力场中心的力过大
+    float minFalloff = 0.0f;
+    
+    // ==================== 层级过滤 ====================
+    
+    /// 力场影响的碰撞层（位掩码）
+    /// 仅影响与该掩码匹配的物体
+    /// 默认 0xFFFFFFFF 表示影响所有层
+    uint32_t affectLayers = 0xFFFFFFFF;
+    
+    // ==================== 开关 ====================
+    
+    /// 力场是否启用
+    bool enabled = true;
+    
+    // ==================== 辅助方法 ====================
     
     /**
      * @brief 创建重力场
+     * 
+     * @param dir 重力方向（会自动归一化）
+     * @param str 重力强度
+     * @param r 影响半径（0 表示无限）
+     * @return 配置好的重力场组件
      */
-    static ForceFieldComponent CreateGravity(const Vector3& direction, float strength) {
+    static ForceFieldComponent CreateGravityField(
+        const Vector3& dir = Vector3(0.0f, -1.0f, 0.0f),
+        float str = 9.81f,
+        float r = 0.0f
+    ) {
         ForceFieldComponent field;
         field.type = Type::Gravity;
-        field.direction = direction.normalized();
-        field.strength = strength;
-        field.radius = 0.0f;  // 无限范围
+        field.direction = dir.normalized();
+        field.strength = str;
+        field.radius = r;
+        field.affectOnlyInside = (r > 0.0f);
         return field;
     }
     
     /**
-     * @brief 创建风力场
+     * @brief 创建风场
+     * 
+     * @param dir 风向（会自动归一化）
+     * @param str 风力强度
+     * @param r 影响半径（0 表示无限）
+     * @return 配置好的风场组件
      */
-    static ForceFieldComponent CreateWind(const Vector3& direction, float strength, float radius = 0.0f) {
+    static ForceFieldComponent CreateWindField(
+        const Vector3& dir,
+        float str = 5.0f,
+        float r = 0.0f
+    ) {
         ForceFieldComponent field;
         field.type = Type::Wind;
-        field.direction = direction.normalized();
-        field.strength = strength;
-        field.radius = radius;
+        field.direction = dir.normalized();
+        field.strength = str;
+        field.radius = r;
+        field.affectOnlyInside = (r > 0.0f);
+        field.linearFalloff = true;
         return field;
     }
     
     /**
      * @brief 创建径向力场
+     * 
+     * @param str 力场强度（正值=排斥，负值=吸引）
+     * @param r 影响半径
+     * @param useSquareFalloff 是否使用平方反比衰减
+     * @return 配置好的径向力场组件
      */
-    static ForceFieldComponent CreateRadial(float strength, float radius = 0.0f, bool outward = true) {
+    static ForceFieldComponent CreateRadialField(
+        float str = 10.0f,
+        float r = 10.0f,
+        bool useSquareFalloff = true
+    ) {
         ForceFieldComponent field;
         field.type = Type::Radial;
-        field.strength = outward ? strength : -strength;
-        field.radius = radius;
+        field.strength = str;
+        field.radius = r;
+        field.affectOnlyInside = true;
+        field.linearFalloff = !useSquareFalloff;
         return field;
     }
     
     /**
      * @brief 创建涡流场
+     * 
+     * @param axis 旋转轴（会自动归一化）
+     * @param str 旋转强度
+     * @param r 影响半径
+     * @return 配置好的涡流场组件
      */
-    static ForceFieldComponent CreateVortex(const Vector3& axis, float strength, float radius = 0.0f) {
+    static ForceFieldComponent CreateVortexField(
+        const Vector3& axis = Vector3(0.0f, 1.0f, 0.0f),
+        float str = 15.0f,
+        float r = 8.0f
+    ) {
         ForceFieldComponent field;
         field.type = Type::Vortex;
         field.direction = axis.normalized();
-        field.strength = strength;
-        field.radius = radius;
+        field.strength = str;
+        field.radius = r;
+        field.affectOnlyInside = true;
+        field.linearFalloff = true;
         return field;
+    }
+    
+    /**
+     * @brief 创建爆炸力场（短时径向排斥力）
+     * 
+     * @param str 爆炸强度
+     * @param r 爆炸半径
+     * @return 配置好的爆炸力场组件
+     */
+    static ForceFieldComponent CreateExplosionField(
+        float str = 100.0f,
+        float r = 5.0f
+    ) {
+        ForceFieldComponent field;
+        field.type = Type::Radial;
+        field.strength = str;
+        field.radius = r;
+        field.affectOnlyInside = true;
+        field.linearFalloff = true;
+        return field;
+    }
+    
+    /**
+     * @brief 设置影响范围
+     * 
+     * @param r 半径
+     * @param onlyInside 是否仅影响范围内
+     */
+    void SetRadius(float r, bool onlyInside = true) {
+        radius = r;
+        affectOnlyInside = onlyInside;
+    }
+    
+    /**
+     * @brief 设置衰减模式
+     * 
+     * @param linear true=线性衰减，false=平方反比衰减
+     * @param minFalloffFactor 最小衰减系数 [0, 1]
+     */
+    void SetFalloff(bool linear, float minFalloffFactor = 0.0f) {
+        linearFalloff = linear;
+        minFalloff = std::max(0.0f, std::min(1.0f, minFalloffFactor));
+    }
+    
+    /**
+     * @brief 设置影响层级
+     * 
+     * @param layers 碰撞层位掩码
+     */
+    void SetAffectLayers(uint32_t layers) {
+        affectLayers = layers;
+    }
+    
+    /**
+     * @brief 启用/禁用力场
+     */
+    void SetEnabled(bool enable) {
+        enabled = enable;
+    }
+    
+    /**
+     * @brief 检查是否影响指定层级
+     * 
+     * @param layer 物体的碰撞层
+     * @return true 如果力场影响该层级
+     */
+    bool AffectsLayer(uint32_t layer) const {
+        return (affectLayers & (1u << layer)) != 0;
     }
 };
 
