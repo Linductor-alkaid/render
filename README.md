@@ -242,7 +242,11 @@ RenderEngine 采用清晰的分层架构设计：
 ✅ **易于扩展** - 模块化架构，插件式设计  
 ✅ **文档完善** - 详细的 API 文档和使用指南  
 
+## 许可证
+
+本项目采用 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE) 许可证。
+
 ## 作者
 
-Linductor
+李朝宇 (2052046346@qq.com)
 
