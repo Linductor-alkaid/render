@@ -1,8 +1,8 @@
 # 物理引擎 API 参考手册
 
-> **版本**: v1.6.0  
-> **开发阶段**: 阶段 1-2 已完成（基础架构 + 碰撞检测系统）  
-> **最后更新**: 2025-12-05
+> **版本**: v1.7.0  
+> **开发阶段**: 阶段 1-3 已完成（基础架构 + 碰撞检测 + 刚体动力学）  
+> **最后更新**: 2025-12-06
 
 ## 目录
 
@@ -12,9 +12,14 @@
   - [RigidBodyComponent](#rigidbodycomponent)
   - [ColliderComponent](#collidercomponent)
   - [PhysicsMaterial](#physicsmaterial)
+  - [ForceFieldComponent](#forcefieldcomponent)
 - [物理世界](#物理世界)
   - [PhysicsWorld](#physicsworld)
   - [PhysicsConfig](#physicsconfig)
+- [动力学系统](#动力学系统)
+  - [ForceAccumulator](#forceaccumulator)
+  - [SymplecticEulerIntegrator](#symplecticeulerintegrator)
+  - [PhysicsUpdateSystem](#physicsupdatesystem)
 - [碰撞检测系统](#碰撞检测系统)
   - [CollisionDetectionSystem](#collisiondetectionsystem)
   - [BroadPhase](#broadphase)
@@ -39,7 +44,7 @@
 
 ## 概述
 
-RenderEngine 物理引擎是一个基于 ECS 架构的 3D 物理模拟系统。当前版本已完成基础架构和碰撞检测系统的开发，支持：
+RenderEngine 物理引擎是一个基于 ECS 架构的 3D 物理模拟系统。当前版本已完成基础架构、碰撞检测与刚体动力学，支持：
 
 - ✅ 基础物理组件（刚体、碰撞体、材质）
 - ✅ 多种碰撞形状（球体、盒体、胶囊体、网格）
@@ -48,8 +53,10 @@ RenderEngine 物理引擎是一个基于 ECS 架构的 3D 物理模拟系统。�
 - ✅ 碰撞事件系统
 - ✅ 触发器系统
 - ✅ 碰撞层和掩码
+- ✅ 刚体动力学：力/扭矩/冲量、全局重力与力场、半隐式欧拉积分
+- ✅ 休眠与渲染插值（平滑视觉，避免螺旋死亡）
 
-**注意**: 动力学模拟、约束求解等功能将在后续阶段实现。
+**注意**: 约束求解、接触解算等功能将在后续阶段实现。
 
 ---
 
@@ -122,13 +129,24 @@ Application::EventBus* eventBus = /* ... */;
 collisionSystem->SetEventBus(eventBus);
 ```
 
-### 5. 更新物理系统
+### 5. 注册物理更新系统
+
+```cpp
+// 注册刚体动力学更新系统（在碰撞检测之后执行）
+auto* physicsSystem = world->RegisterSystem<PhysicsUpdateSystem>();
+
+// 配置重力与固定时间步
+physicsSystem->SetGravity(config.gravity);
+physicsSystem->SetFixedDeltaTime(config.fixedDeltaTime);
+```
+
+### 6. 更新物理系统
 
 ```cpp
 // 在主循环中
 float deltaTime = 0.016f;  // 60 FPS
 
-// 更新碰撞检测系统
+// ECS 会按系统优先级顺序执行：碰撞检测 -> 刚体更新
 world->Update(deltaTime);
 
 // 获取碰撞对
@@ -483,6 +501,45 @@ collider.material = customMaterial;
 
 ---
 
+### ForceFieldComponent
+
+力场组件，在一定范围内对刚体施加方向力、径向力或涡流力。
+
+#### 头文件
+```cpp
+#include "render/physics/physics_components.h"
+```
+
+#### 核心字段
+
+| 类型 | 名称 | 说明 | 默认值 |
+|------|------|------|--------|
+| `Type` | `type` | 力场类型：Gravity / Wind / Radial / Vortex | `Gravity` |
+| `Vector3` | `direction` | 力方向或涡流轴（需归一化） | `(0,-1,0)` |
+| `float` | `strength` | 强度（N/kg，正=推/排斥，负=拉/吸引） | `10.0f` |
+| `float` | `radius` | 影响半径，`<=0` 表示无限范围 | `0.0f` |
+| `bool` | `affectOnlyInside` | 是否仅影响半径内 | `true` |
+| `bool` | `linearFalloff` | 衰减模式：线性 / 平方反比 | `true` |
+| `float` | `minFalloff` | 最小衰减系数，避免中心力过大 | `0.0f` |
+| `uint32_t` | `affectLayers` | 影响的碰撞层掩码 | `0xFFFFFFFF` |
+| `bool` | `enabled` | 开关 | `true` |
+
+#### 工厂方法
+- `CreateGravityField(dir, strength, radius)`
+- `CreateWindField(dir, strength, radius)`
+- `CreateRadialField(strength, radius, useSquareFalloff)`
+- `CreateVortexField(axis, strength, radius)`
+
+#### 使用示例
+```cpp
+auto& field = world->AddComponent<ForceFieldComponent>(fieldEntity);
+field = ForceFieldComponent::CreateRadialField(
+    /* strength */ 25.0f,  /* radius */ 12.0f, /* useSquareFalloff */ true);
+field.affectLayers = 1 << 0;  // 只影响第 0 层
+```
+
+---
+
 ## 物理世界
 
 ### PhysicsWorld
@@ -512,7 +569,7 @@ PhysicsWorld(ECS::World* ecsWorld, const PhysicsConfig& config = PhysicsConfig::
 **参数**:
 - `deltaTime`: 帧时间（秒）
 
-**注意**: 当前版本为框架实现，完整功能将在后续阶段添加。
+**注意**: 当前动力学更新由 `PhysicsUpdateSystem` 承担；`PhysicsWorld::Step` 主要作为包装入口，后续会接入约束与解算。
 
 ##### `void SetGravity(const Vector3& gravity)`
 设置重力。
@@ -663,6 +720,63 @@ customConfig.broadPhaseType = BroadPhaseType::Octree;
 customConfig.spatialHashCellSize = 10.0f;
 customConfig.enableSleeping = true;
 customConfig.solverIterations = 15;
+```
+
+---
+
+## 动力学系统
+
+### ForceAccumulator
+
+力累加器，用于聚合作用在刚体上的力/扭矩/冲量。
+
+- `AddForce(force)`：质心力
+- `AddForceAtPoint(force, point, centerOfMass)`：产生扭矩
+- `AddTorque(torque)`：直接施加扭矩
+- `AddImpulse(impulse, inverseMass)` / `AddAngularImpulse(angularImpulse, invInertia)`：冲量支持
+- `Clear()` / `ClearImpulses()`：重置累积量
+
+### SymplecticEulerIntegrator
+
+半隐式欧拉积分器，负责更新刚体速度与位置。
+
+- `IntegrateVelocity(body, transform*, dt)`：考虑阻尼、速度上限、轴向锁定，使用世界惯性张量
+- `IntegratePosition(body, transform, dt)`：更新位置与旋转，维护 `previousPosition/previousRotation` 供插值
+- 适合实时场景，稳定性优于显式欧拉
+
+### PhysicsUpdateSystem
+
+刚体动力学系统（系统优先级 200，运行在碰撞检测之后）。
+
+主要流程（固定时间步，最多 5 个子步）：
+1) `ApplyForces`：全局重力、力场、刚体累积力/扭矩，应用冲量增量  
+2) `IntegrateVelocity`、`IntegratePosition`：使用半隐式欧拉  
+3) `ResolveCollisions` / `SolveConstraints`：占位，后续接入碰撞解算与约束  
+4) `UpdateSleepingState`：外力/碰撞唤醒，岛屿传播，低动能休眠  
+5) `UpdateAABBs`：刷新包围盒  
+6) `InterpolateTransforms`：渲染插值，alpha=0 时保持上一帧，余量为 0 时直接使用最新解算结果
+
+配置接口：
+- `SetGravity(const Vector3&)` / `GetGravity()`
+- `SetFixedDeltaTime(float)` / `GetFixedDeltaTime()`
+
+施力接口：
+- `ApplyForce(entity, force)`
+- `ApplyForceAtPoint(entity, force, point)`
+- `ApplyTorque(entity, torque)`
+- `ApplyImpulse(entity, impulse)`
+- `ApplyImpulseAtPoint(entity, impulse, point)`
+- `ApplyAngularImpulse(entity, angularImpulse)`
+
+#### 使用示例
+```cpp
+// 注册后设置重力与时间步
+auto* physicsSystem = world->RegisterSystem<PhysicsUpdateSystem>();
+physicsSystem->SetGravity(Vector3(0, -9.81f, 0));
+physicsSystem->SetFixedDeltaTime(1.0f / 60.0f);
+
+// 应用一次冲量（比如开局推球）
+physicsSystem->ApplyImpulse(ballEntity, Vector3(0, 0, 5.0f));
 ```
 
 ---
@@ -1363,13 +1477,18 @@ int main() {
     collisionSystem->SetBroadPhase(std::move(broadPhase));
     collisionSystem->SetEventBus(&eventBus);
     
-    // 6. 订阅碰撞事件
+    // 6. 注册刚体动力学系统
+    auto* physicsSystem = world->RegisterSystem<PhysicsUpdateSystem>();
+    physicsSystem->SetGravity(config.gravity);
+    physicsSystem->SetFixedDeltaTime(config.fixedDeltaTime);
+    
+    // 7. 订阅碰撞事件
     eventBus.Subscribe<CollisionEnterEvent>([](const CollisionEnterEvent& event) {
         std::cout << "碰撞开始: " << event.entityA.index 
                   << " vs " << event.entityB.index << std::endl;
     });
     
-    // 7. 创建地面（静态）
+    // 8. 创建地面（静态）
     auto ground = world->CreateEntity();
     auto& groundTransform = world->AddComponent<TransformComponent>(ground);
     groundTransform.position = Vector3(0, 0, 0);
@@ -1381,7 +1500,7 @@ int main() {
     auto& groundBody = world->AddComponent<RigidBodyComponent>(ground);
     groundBody.type = RigidBodyComponent::BodyType::Static;
     
-    // 8. 创建动态球体
+    // 9. 创建动态球体
     auto ball = world->CreateEntity();
     auto& ballTransform = world->AddComponent<TransformComponent>(ball);
     ballTransform.position = Vector3(0, 10, 0);
@@ -1394,7 +1513,7 @@ int main() {
     ballBody.type = RigidBodyComponent::BodyType::Dynamic;
     PhysicsUtils::InitializeRigidBody(ballBody, ballCollider);
     
-    // 9. 主循环
+    // 10. 主循环
     float deltaTime = 0.016f;  // 60 FPS
     for (int i = 0; i < 100; ++i) {
         // 更新物理系统
@@ -1446,6 +1565,9 @@ int main() {
 - `test_collision_detection.cpp` - 细检测测试（23/23 通过）
 - `test_gjk.cpp` - GJK/EPA 算法测试（12/12 通过）
 - `test_collision_system.cpp` - 碰撞系统集成测试（8/8 通过）
+- `test_force_and_impulse_system.cpp` - 力与冲量测试（29/29 通过）
+- `test_physics_update_system_interpolation.cpp` - 物理更新系统测试（12/12 通过）
+- `test_physics_sleeping.cpp` - 休眠系统测试（6/6 通过）
 
 运行测试：
 ```bash
@@ -1460,7 +1582,6 @@ int main() {
 
 根据开发计划，后续阶段将实现：
 
-- **阶段 3**: 刚体动力学（力、冲量、积分器）
 - **阶段 4**: 约束求解（接触约束、关节约束）
 - **阶段 5**: 物理世界管理（查询系统、性能优化）
 - **阶段 6-9**: 性能优化、调试可视化、测试与文档
@@ -1475,5 +1596,5 @@ int main() {
 
 ---
 
-**最后更新**: 2025-12-05  
-**文档版本**: v1.6.0
+**最后更新**: 2025-12-06  
+**文档版本**: v1.7.0
