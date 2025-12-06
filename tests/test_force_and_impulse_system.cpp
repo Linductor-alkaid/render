@@ -27,6 +27,7 @@
  */
 
  #include "render/physics/dynamics/force_accumulator.h"
+ #include "render/physics/dynamics/symplectic_euler_integrator.h"
  #include "render/physics/physics_systems.h"
  #include "render/physics/physics_components.h"
  #include "render/ecs/world.h"
@@ -112,6 +113,102 @@
      return true;
  }
  
+// ============================================================================
+// SymplecticEulerIntegrator 单元测试
+// ============================================================================
+
+bool Test_SymplecticEulerIntegrator_IntegrateVelocity_AppliesForceAndDamping() {
+    SymplecticEulerIntegrator integrator;
+    RigidBodyComponent body;
+    TransformComponent transform;
+
+    body.SetMass(2.0f); // inverseMass = 0.5
+    body.linearDamping = 0.1f;
+    body.angularDamping = 0.2f;
+    body.force = Vector3(4.0f, 0.0f, 0.0f);   // a = 2 m/s²
+    body.torque = Vector3(0.0f, 2.0f, 0.0f);  // α = 2 rad/s²
+
+    const float dt = 1.0f;
+    integrator.IntegrateVelocity(body, &transform, dt);
+
+    float linearDampingFactor = std::pow(std::max(0.0f, 1.0f - body.linearDamping), dt);
+    float angularDampingFactor = std::pow(std::max(0.0f, 1.0f - body.angularDamping), dt);
+
+    Vector3 expectedLinear = Vector3(2.0f, 0.0f, 0.0f) * linearDampingFactor;
+    Vector3 expectedAngular = Vector3(0.0f, 2.0f, 0.0f) * angularDampingFactor;
+
+    TEST_ASSERT(body.linearVelocity.isApprox(expectedLinear, 1e-5f),
+                "线速度积分或阻尼计算错误");
+    TEST_ASSERT(body.angularVelocity.isApprox(expectedAngular, 1e-5f),
+                "角速度积分或阻尼计算错误");
+    TEST_ASSERT(body.force.isZero(1e-6f), "积分后力应被清零");
+    TEST_ASSERT(body.torque.isZero(1e-6f), "积分后扭矩应被清零");
+
+    return true;
+}
+
+bool Test_SymplecticEulerIntegrator_IntegrateVelocity_Constraints() {
+    SymplecticEulerIntegrator integrator;
+    RigidBodyComponent body;
+    TransformComponent transform;
+
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.0f;
+    body.maxLinearSpeed = 5.0f;
+    body.maxAngularSpeed = 2.0f;
+    body.lockPosition[1] = true;   // 锁定 Y 轴平移
+    body.lockRotation[1] = true;   // 锁定 Y 轴旋转
+
+    body.force = Vector3(10.0f, 10.0f, 0.0f); // 预期会触发锁定与限速
+    body.torque = Vector3(0.0f, 5.0f, 5.0f);
+
+    const float dt = 1.0f;
+    integrator.IntegrateVelocity(body, &transform, dt);
+
+    Vector3 expectedLinear(5.0f, 0.0f, 0.0f); // Y 轴锁定，线速度被限幅到 5
+    Vector3 expectedAngular(0.0f, 0.0f, 2.0f); // Y 轴锁定后再按最大角速度截断
+
+    TEST_ASSERT(body.linearVelocity.isApprox(expectedLinear, 1e-5f),
+                "线速度锁定或限速约束失败");
+    TEST_ASSERT(body.angularVelocity.isApprox(expectedAngular, 1e-5f),
+                "角速度锁定或限速约束失败");
+
+    return true;
+}
+
+bool Test_SymplecticEulerIntegrator_IntegratePosition_UpdatesTransform() {
+    SymplecticEulerIntegrator integrator;
+    RigidBodyComponent body;
+    TransformComponent transform;
+
+    transform.SetPosition(Vector3(1.0f, 1.0f, 1.0f));
+    transform.SetRotation(Quaternion::Identity());
+
+    body.linearVelocity = Vector3(2.0f, 3.0f, 0.0f);
+    body.angularVelocity = Vector3(0.0f, 2.0f, 0.0f);
+    body.lockPosition[1] = true; // 锁定 Y 轴平移
+
+    const float dt = 0.5f;
+    integrator.IntegratePosition(body, transform, dt);
+
+    Vector3 expectedPosition(1.0f + body.linearVelocity.x() * dt, 1.0f, 1.0f);
+    TEST_ASSERT(transform.GetPosition().isApprox(expectedPosition, 1e-5f),
+                "位置积分或轴向锁定错误");
+
+    float deltaAngle = body.angularVelocity.norm() * dt;
+    Quaternion expectedRotation = MathUtils::AngleAxis(deltaAngle, Vector3(0.0f, 1.0f, 0.0f));
+    TEST_ASSERT(transform.GetRotation().coeffs().isApprox(expectedRotation.coeffs(), 1e-5f),
+                "旋转积分结果错误");
+
+    TEST_ASSERT(body.previousPosition.isApprox(Vector3(1.0f, 1.0f, 1.0f), 1e-5f),
+                "previousPosition 未正确保存");
+    TEST_ASSERT(body.previousRotation.coeffs().isApprox(Quaternion::Identity().coeffs(), 1e-5f),
+                "previousRotation 未正确保存");
+
+    return true;
+}
+
  // ============================================================================
  // PhysicsUpdateSystem 集成测试
  // ============================================================================
@@ -469,6 +566,11 @@
      std::cout << "\n--- ForceAccumulator 测试 ---" << std::endl;
      RUN_TEST(Test_ForceAccumulator_AccumulationAndClear);
      
+    std::cout << "\n--- 积分器测试 ---" << std::endl;
+    RUN_TEST(Test_SymplecticEulerIntegrator_IntegrateVelocity_AppliesForceAndDamping);
+    RUN_TEST(Test_SymplecticEulerIntegrator_IntegrateVelocity_Constraints);
+    RUN_TEST(Test_SymplecticEulerIntegrator_IntegratePosition_UpdatesTransform);
+
      std::cout << "\n--- 基础物理测试 ---" << std::endl;
      RUN_TEST(Test_PhysicsUpdateSystem_AppliesGravity);
      RUN_TEST(Test_PhysicsUpdateSystem_ImpulseAffectsVelocityAndRotation);

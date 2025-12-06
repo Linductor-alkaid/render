@@ -503,9 +503,9 @@ struct PhysicsMaterial {
 
 ### 3.2 积分器实现
 
-**优先级**: 🔴 Critical | **预计时间**: 2 天
+**优先级**: 🔴 Critical | **预计时间**: 2 天 | ✅ **已完成**
 
-- [ ] **3.2.1** 实现半隐式欧拉积分器（Symplectic Euler）
+- [x] **3.2.1** 实现半隐式欧拉积分器（Symplectic Euler）
   ```cpp
   class SymplecticEulerIntegrator {
   public:
@@ -514,11 +514,11 @@ struct PhysicsMaterial {
   };
   ```
 
-- [ ] **3.2.2** 实现阻尼
+- [x] **3.2.2** 实现阻尼
   - 线性阻尼：`velocity *= pow(1.0 - linearDamping, dt)`
   - 角阻尼：`angularVelocity *= pow(1.0 - angularDamping, dt)`
 
-- [ ] **3.2.3** 实现速度约束
+- [x] **3.2.3** 实现速度约束
   - 最大速度限制
   - 轴向锁定（`lockPosition`, `lockRotation`）
 
@@ -1263,7 +1263,8 @@ struct PhysicsMaterial {
 ### Version 1.7.0 (2025-12-06)
 - ✅ 完成力与冲量系统
 - 新增 physics_update_systems.cpp, for_accumulator.h 实现力累加器、重力应用以及力场
-- ✅ 测试通过：19/19 (test_force_and_impulse_system)
+- 新增 symplectic_euler_integrator.h/.cpp 实现积分器
+- ✅ 测试通过：29/29 (test_force_and_impulse_system)
 
 ### Version 1.6.0 (2025-12-05)
 - ✅ 完成阶段 2：碰撞检测系统（100%）

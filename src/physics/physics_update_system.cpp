@@ -222,74 +222,15 @@ void PhysicsUpdateSystem::IntegrateVelocity(float dt) {
     auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
     
     for (ECS::EntityID entity : entities) {
-        if (!m_world->HasComponent<RigidBodyComponent>(entity)) {
+        if (!m_world->HasComponent<RigidBodyComponent>(entity) ||
+            !m_world->HasComponent<ECS::TransformComponent>(entity)) {
             continue;
         }
         
         try {
             auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
-            
-            // 跳过静态和运动学物体
-            if (body.IsStatic() || body.IsKinematic()) {
-                continue;
-            }
-            
-            // 跳过休眠物体
-            if (body.isSleeping) {
-                continue;
-            }
-            
-            // 半隐式欧拉积分：v = v0 + a * dt
-            // a = F / m = force * inverseMass
-            
-            // 线性速度积分
-            Vector3 acceleration = body.force * body.inverseMass;
-            body.linearVelocity += acceleration * dt;
-            
-            // 应用线性阻尼
-            if (body.linearDamping > 0.0f) {
-                float dampingFactor = std::pow(1.0f - body.linearDamping, dt);
-                body.linearVelocity *= dampingFactor;
-            }
-            
-            // 应用位置锁定
-            if (body.lockPosition[0]) body.linearVelocity.x() = 0.0f;
-            if (body.lockPosition[1]) body.linearVelocity.y() = 0.0f;
-            if (body.lockPosition[2]) body.linearVelocity.z() = 0.0f;
-            
-            // 角速度积分
-            // 需要将惯性张量转换到世界空间
-            if (!m_world->HasComponent<ECS::TransformComponent>(entity)) {
-                continue;
-            }
-            
             auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
-            Quaternion rotation = transform.GetRotation();
-            
-            // 将局部空间的惯性张量转换到世界空间
-            // 使用四元数转换为旋转矩阵（3x3）
-            Matrix3 rotationMatrix = rotation.toRotationMatrix();
-            Matrix3 worldInvInertia = rotationMatrix * body.inverseInertiaTensor * rotationMatrix.transpose();
-            
-            // 角加速度：α = τ / I = torque * I⁻¹
-            Vector3 angularAcceleration = worldInvInertia * body.torque;
-            body.angularVelocity += angularAcceleration * dt;
-            
-            // 应用角阻尼
-            if (body.angularDamping > 0.0f) {
-                float dampingFactor = std::pow(1.0f - body.angularDamping, dt);
-                body.angularVelocity *= dampingFactor;
-            }
-            
-            // 应用旋转锁定
-            if (body.lockRotation[0]) body.angularVelocity.x() = 0.0f;
-            if (body.lockRotation[1]) body.angularVelocity.y() = 0.0f;
-            if (body.lockRotation[2]) body.angularVelocity.z() = 0.0f;
-            
-            // 本帧力/扭矩已转化为速度，重置以便下一帧重新累积
-            body.force = Vector3::Zero();
-            body.torque = Vector3::Zero();
-            
+            m_integrator.IntegrateVelocity(body, &transform, dt);
         } catch (...) {
             // 忽略组件访问错误
         }
@@ -310,56 +251,7 @@ void PhysicsUpdateSystem::IntegratePosition(float dt) {
             auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
             auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
             
-            // 跳过静态物体
-            if (body.IsStatic()) {
-                continue;
-            }
-            
-            // 运动学物体：位置由脚本控制，不进行物理积分
-            if (body.IsKinematic()) {
-                continue;
-            }
-            
-            // 跳过休眠物体
-            if (body.isSleeping) {
-                continue;
-            }
-            
-            // 保存上一帧的位置和旋转（用于插值）
-            body.previousPosition = transform.GetPosition();
-            body.previousRotation = transform.GetRotation();
-            
-            // 积分位置：x = x0 + v * dt
-            Vector3 newPosition = transform.GetPosition() + body.linearVelocity * dt;
-            
-            // 应用位置锁定
-            if (body.lockPosition[0]) newPosition.x() = transform.GetPosition().x();
-            if (body.lockPosition[1]) newPosition.y() = transform.GetPosition().y();
-            if (body.lockPosition[2]) newPosition.z() = transform.GetPosition().z();
-            
-            transform.SetPosition(newPosition);
-            
-            // 积分旋转：使用角速度更新四元数
-            // q' = q + 0.5 * q * [0, ω] * dt
-            // 简化：使用小角度近似
-            Vector3 angularVelocity = body.angularVelocity;
-            float angle = angularVelocity.norm();
-            
-            if (angle > 0.001f) {
-                Vector3 axis = angularVelocity / angle;
-                float deltaAngle = angle * dt;
-                
-                // 创建旋转增量
-                Quaternion deltaRotation = MathUtils::AngleAxis(deltaAngle, axis);
-                Quaternion newRotation = transform.GetRotation() * deltaRotation;
-                newRotation.normalize();
-                
-                // 应用旋转锁定（通过限制角速度分量）
-                // 这里简化处理：如果锁定某个轴，就不更新该轴的旋转
-                // 实际应该更精确地处理，但为了简化先这样
-                transform.SetRotation(newRotation);
-            }
-            
+            m_integrator.IntegratePosition(body, transform, dt);
         } catch (...) {
             // 忽略组件访问错误
         }

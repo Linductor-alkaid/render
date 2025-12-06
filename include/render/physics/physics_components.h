@@ -23,6 +23,7 @@
 #include "render/types.h"
 #include "render/ecs/entity.h"
 #include <memory>
+#include <limits>
 
 namespace Render {
 
@@ -168,6 +169,14 @@ struct RigidBodyComponent {
     
     /// 角阻尼 [0, 1]，模拟旋转阻力
     float angularDamping = 0.05f;
+    
+    // ==================== 速度约束 ====================
+    
+    /// 最大线速度（m/s），默认无限制
+    float maxLinearSpeed = std::numeric_limits<float>::infinity();
+    
+    /// 最大角速度（rad/s），默认无限制
+    float maxAngularSpeed = std::numeric_limits<float>::infinity();
     
     // ==================== 约束 ====================
     

@@ -247,6 +247,7 @@ set(RENDER_SOURCES
     src/physics/physics_world.cpp
     src/physics/physics_update_system.cpp
     src/physics/physics_systems.cpp
+    src/physics/dynamics/symplectic_euler_integrator.cpp
     src/physics/collision/broad_phase.cpp
     src/physics/collision/collision_detection.cpp
     src/physics/collision/gjk.cpp

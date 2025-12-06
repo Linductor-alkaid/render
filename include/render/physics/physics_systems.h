@@ -28,6 +28,7 @@
 #include "collision/contact_manifold.h"
 #include "collision/broad_phase.h"
 #include "collision/collision_detection.h"
+#include "dynamics/symplectic_euler_integrator.h"
 #include <vector>
 #include <memory>
 #include <unordered_set>
@@ -251,6 +252,7 @@ private:
     float m_fixedDeltaTime = 1.0f / 60.0f;            // 固定时间步长
     float m_accumulator = 0.0f;                       // 时间累积器
     float m_physicsTime = 0.0f;                       // 物理时间
+    SymplecticEulerIntegrator m_integrator;           // 积分器
 };
 
 } // namespace Physics
