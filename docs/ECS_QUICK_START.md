@@ -1,6 +1,6 @@
 # ECS 系统快速入门指南
 
-[返回文档首页](README.md) | [查看安全性改进](ECS_SAFETY_IMPROVEMENTS.md)
+[返回文档首页](README.md)
 
 ---
 

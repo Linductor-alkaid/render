@@ -8,7 +8,6 @@
 #include "render/text/text.h"
 #include "render/material_state_cache.h"
 #include "render/render_layer.h"
-#include "render/task_scheduler.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cstdint>
@@ -803,13 +802,16 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
         return;
     }
 
-    // ✅ 优化：不在这里立即计算排序键
-    // 排序键将在FlushRenderQueue中批量并行计算
-    // 这里只标记为需要计算
-    if (!renderable->HasMaterialSortKey() || renderable->IsMaterialSortKeyDirty()) {
-        // 标记为dirty（Renderable内部已有此机制）
-        renderable->MarkMaterialSortKeyDirty();
+    // 获取层级状态中的 depthFunc 覆盖值（如果有）
+    std::optional<DepthFunc> layerDepthFunc;
+    if (stateOpt.has_value() && stateOpt->overrides.depthFunc.has_value()) {
+        layerDepthFunc = stateOpt->overrides.depthFunc;
+    } else if (descriptor.defaultState.depthFunc.has_value()) {
+        layerDepthFunc = descriptor.defaultState.depthFunc;
     }
+    
+    // 使用层级的 depthFunc 确保材质排序键
+    EnsureMaterialSortKey(renderable, layerDepthFunc);
 
     std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -902,68 +904,6 @@ void Renderer::FlushRenderQueue() {
         originalQueue.push_back(item->renderable);
     }
 
-    // ✅ 并行化材质排序键计算
-    // 收集需要计算排序键的对象
-    std::vector<Renderable*> dirtyRenderables;
-    dirtyRenderables.reserve(originalQueue.size());
-    for (auto* renderable : originalQueue) {
-        if (renderable && renderable->IsMaterialSortKeyDirty()) {
-            dirtyRenderables.push_back(renderable);
-        }
-    }
-    
-    // 构建layerID到depthFunc的映射，用于材质排序键计算
-    std::unordered_map<uint32_t, std::optional<DepthFunc>> layerDepthFuncMap;
-    for (const auto& record : layerRecords) {
-        layerDepthFuncMap[record.descriptor.id.value] = record.state.overrides.depthFunc;
-    }
-    
-    // 如果有大量dirty的排序键，并行计算
-    const size_t minDirtyForParallel = 100;
-    if (!dirtyRenderables.empty() && 
-        dirtyRenderables.size() >= minDirtyForParallel &&
-        TaskScheduler::GetInstance().IsInitialized()) {
-        
-        const size_t numThreads = TaskScheduler::GetInstance().GetWorkerCount();
-        const size_t itemsPerTask = std::max(size_t(50), dirtyRenderables.size() / numThreads);
-        
-        std::vector<std::shared_ptr<TaskHandle>> sortKeyHandles;
-        
-        for (size_t i = 0; i < dirtyRenderables.size(); i += itemsPerTask) {
-            const size_t endIdx = std::min(i + itemsPerTask, dirtyRenderables.size());
-            
-            auto handle = TaskScheduler::GetInstance().SubmitLambda(
-                [this, &dirtyRenderables, &layerDepthFuncMap, i, endIdx]() {
-                    for (size_t j = i; j < endIdx; ++j) {
-                        auto* renderable = dirtyRenderables[j];
-                        std::optional<DepthFunc> layerDepthFunc = std::nullopt;
-                        auto it = layerDepthFuncMap.find(renderable->GetLayerID());
-                        if (it != layerDepthFuncMap.end()) {
-                            layerDepthFunc = it->second;
-                        }
-                        EnsureMaterialSortKey(renderable, layerDepthFunc);
-                    }
-                },
-                TaskPriority::High,
-                "SortKeyCalc"
-            );
-            sortKeyHandles.push_back(handle);
-        }
-        
-        // 等待所有排序键计算完成
-        TaskScheduler::GetInstance().WaitForAll(sortKeyHandles);
-    } else {
-        // 少量dirty或TaskScheduler未初始化，串行计算
-        for (auto* renderable : dirtyRenderables) {
-            std::optional<DepthFunc> layerDepthFunc = std::nullopt;
-            auto it = layerDepthFuncMap.find(renderable->GetLayerID());
-            if (it != layerDepthFuncMap.end()) {
-                layerDepthFunc = it->second;
-            }
-            EnsureMaterialSortKey(renderable, layerDepthFunc);
-        }
-    }
-
     const auto originalSwitchMetrics = ComputeMaterialSwitchMetrics(originalQueue);
 
     std::vector<Renderable*> sortedQueue;
@@ -987,78 +927,6 @@ void Renderer::FlushRenderQueue() {
     static std::unordered_map<uint32_t, LayerLogState> s_layerLogStates;
     constexpr auto kLayerLogInterval = std::chrono::seconds(2);
 
-    // ✅ 第一步：并行化层级排序
-    // 收集需要排序的层级
-    struct SortTask {
-        LayerBucket* bucket;
-        const RenderLayerDescriptor* descriptor;
-    };
-    std::vector<SortTask> sortTasks;
-    sortTasks.reserve(layerRecords.size());
-    
-    for (const auto& record : layerRecords) {
-        auto lookupIt = snapshotLookup.find(record.descriptor.id.value);
-        if (lookupIt == snapshotLookup.end()) {
-            continue;
-        }
-
-        const size_t bucketIndex = lookupIt->second;
-        if (bucketIndex >= bucketsSnapshot.size()) {
-            continue;
-        }
-
-        LayerBucket& bucket = bucketsSnapshot[bucketIndex];
-        
-        if (bucket.items.empty()) {
-            continue;
-        }
-        
-        const bool maskAllows =
-            (record.descriptor.maskIndex >= 32) ||
-            ((activeLayerMask >> record.descriptor.maskIndex) & 0x1u);
-        
-        if (!record.state.enabled || !maskAllows) {
-            continue;
-        }
-        
-        sortTasks.push_back(SortTask{&bucket, &record.descriptor});
-    }
-    
-    // ✅ 并行排序所有层级
-    const size_t minItemsForParallel = 100;  // 少于100个项目不值得并行
-    if (!sortTasks.empty() && TaskScheduler::GetInstance().IsInitialized()) {
-        std::vector<std::shared_ptr<TaskHandle>> sortHandles;
-        sortHandles.reserve(sortTasks.size());
-        
-        for (auto& sortTask : sortTasks) {
-            // 只对较大的层级并行排序
-            if (sortTask.bucket->items.size() >= minItemsForParallel) {
-                auto handle = TaskScheduler::GetInstance().SubmitLambda(
-                    [this, sortTask]() {
-                        SortLayerItems(sortTask.bucket->items, *sortTask.descriptor);
-                    },
-                    TaskPriority::High,
-                    "LayerSort"
-                );
-                sortHandles.push_back(handle);
-            } else {
-                // 小层级直接串行排序
-                SortLayerItems(sortTask.bucket->items, *sortTask.descriptor);
-            }
-        }
-        
-        // 等待所有排序任务完成
-        if (!sortHandles.empty()) {
-            TaskScheduler::GetInstance().WaitForAll(sortHandles);
-        }
-    } else {
-        // 如果TaskScheduler未初始化，回退到串行排序
-        for (auto& sortTask : sortTasks) {
-            SortLayerItems(sortTask.bucket->items, *sortTask.descriptor);
-        }
-    }
-    
-    // ✅ 第二步：按顺序应用层级设置并构建渲染队列
     for (const auto& record : layerRecords) {
         auto lookupIt = snapshotLookup.find(record.descriptor.id.value);
         if (lookupIt == snapshotLookup.end()) {
@@ -1163,9 +1031,7 @@ void Renderer::FlushRenderQueue() {
             m_renderState->SetScissorTest(false);
         }
 
-        // ✅ 排序已在并行阶段完成，这里不再重复排序
-        // SortLayerItems(bucket.items, record.descriptor);
-        
+        SortLayerItems(bucket.items, record.descriptor);
         ApplyLayerOverrides(record.descriptor, record.state);
 
         for (const auto& item : bucket.items) {
