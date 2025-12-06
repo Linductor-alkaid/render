@@ -133,6 +133,126 @@ private:
     }
 };
 
+// ============================================================================
+// 物理更新系统
+// ============================================================================
+
+/**
+ * @brief 物理更新系统
+ * 
+ * 负责更新所有刚体的物理状态
+ * 包括：应用力、重力、积分速度、积分位置等
+ */
+class PhysicsUpdateSystem : public ECS::System {
+public:
+    PhysicsUpdateSystem();
+    ~PhysicsUpdateSystem() override = default;
+    
+    void Update(float deltaTime) override;
+    int GetPriority() const override { return 200; }  // 在碰撞检测之后
+    
+    /**
+     * @brief 设置重力
+     */
+    void SetGravity(const Vector3& gravity) {
+        m_gravity = gravity;
+    }
+    
+    /**
+     * @brief 获取重力
+     */
+    Vector3 GetGravity() const {
+        return m_gravity;
+    }
+    
+    /**
+     * @brief 设置固定时间步长
+     */
+    void SetFixedDeltaTime(float dt) {
+        m_fixedDeltaTime = dt;
+    }
+    
+    /**
+     * @brief 获取固定时间步长
+     */
+    float GetFixedDeltaTime() const {
+        return m_fixedDeltaTime;
+    }
+    
+    /**
+     * @brief 应用力到刚体
+     */
+    void ApplyForce(ECS::EntityID entity, const Vector3& force);
+    
+    /**
+     * @brief 在指定点应用力到刚体
+     */
+    void ApplyForceAtPoint(ECS::EntityID entity, const Vector3& force, const Vector3& point);
+    
+    /**
+     * @brief 应用扭矩到刚体
+     */
+    void ApplyTorque(ECS::EntityID entity, const Vector3& torque);
+    
+    /**
+     * @brief 应用冲量到刚体
+     */
+    void ApplyImpulse(ECS::EntityID entity, const Vector3& impulse);
+    
+    /**
+     * @brief 在指定点应用冲量到刚体
+     */
+    void ApplyImpulseAtPoint(ECS::EntityID entity, const Vector3& impulse, const Vector3& point);
+    
+    /**
+     * @brief 应用角冲量到刚体
+     */
+    void ApplyAngularImpulse(ECS::EntityID entity, const Vector3& angularImpulse);
+    
+private:
+    /**
+     * @brief 固定时间步长更新
+     */
+    void FixedUpdate(float dt);
+    
+    /**
+     * @brief 应用重力和力场
+     */
+    void ApplyForces(float dt);
+    
+    /**
+     * @brief 应用力场到刚体
+     */
+    /**
+     * @brief 计算力场对刚体的作用力
+     * @return 作用力（N）
+     */
+    Vector3 ApplyForceField(const ForceFieldComponent& field, 
+                            const Vector3& fieldPosition,
+                            const RigidBodyComponent& body,
+                            const Vector3& bodyPosition);
+    
+    /**
+     * @brief 积分速度
+     */
+    void IntegrateVelocity(float dt);
+    
+    /**
+     * @brief 积分位置
+     */
+    void IntegratePosition(float dt);
+    
+    /**
+     * @brief 更新 AABB
+     */
+    void UpdateAABBs();
+    
+    Vector3 m_gravity = Vector3(0.0f, -9.81f, 0.0f);  // 全局重力
+    float m_fixedDeltaTime = 1.0f / 60.0f;            // 固定时间步长
+    float m_accumulator = 0.0f;                       // 时间累积器
+    float m_physicsTime = 0.0f;                       // 物理时间
+};
+
 } // namespace Physics
 } // namespace Render
 

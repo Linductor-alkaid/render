@@ -139,7 +139,7 @@ struct RigidBodyComponent {
     float inverseMass = 1.0f;
     
     /// 质心（局部空间）
-    Vector3 centerOfMass = Vector3::Zero();
+    Vector3 centerOfMass{0.0f, 0.0f, 0.0f};
     
     /// 惯性张量（局部空间）
     Matrix3 inertiaTensor = Matrix3::Identity();
@@ -150,16 +150,16 @@ struct RigidBodyComponent {
     // ==================== 运动状态 ====================
     
     /// 线速度 (m/s)
-    Vector3 linearVelocity = Vector3::Zero();
+    Vector3 linearVelocity{0.0f, 0.0f, 0.0f};
     
     /// 角速度 (rad/s)
-    Vector3 angularVelocity = Vector3::Zero();
+    Vector3 angularVelocity{0.0f, 0.0f, 0.0f};
     
     /// 累积的力 (N)
-    Vector3 force = Vector3::Zero();
+    Vector3 force{0.0f, 0.0f, 0.0f};
     
     /// 累积的扭矩 (N·m)
-    Vector3 torque = Vector3::Zero();
+    Vector3 torque{0.0f, 0.0f, 0.0f};
     
     // ==================== 阻尼 ====================
     
@@ -199,19 +199,152 @@ struct RigidBodyComponent {
     // ==================== 插值数据（用于渲染平滑）====================
     
     /// 上一帧的位置
-    Vector3 previousPosition = Vector3::Zero();
+    Vector3 previousPosition{0.0f, 0.0f, 0.0f};
     
     /// 上一帧的旋转
-    Quaternion previousRotation = Quaternion::Identity();
+    Quaternion previousRotation{1.0f, 0.0f, 0.0f, 0.0f}; // w, x, y, z
+    
+    // ==================== 构造函数 ====================
+    
+    /**
+     * @brief 默认构造函数，确保所有 Eigen 类型正确初始化
+     */
+    RigidBodyComponent() {
+        // 显式初始化所有 Vector3 和 Matrix3（防止未初始化内存）
+        centerOfMass.setZero();
+        linearVelocity.setZero();
+        angularVelocity.setZero();
+        force.setZero();
+        torque.setZero();
+        previousPosition.setZero();
+        
+        // 初始化矩阵
+        inertiaTensor.setIdentity();
+        inverseInertiaTensor.setIdentity();
+        
+        // 初始化四元数
+        previousRotation.setIdentity();
+    }
     
     // ==================== 辅助方法 ====================
     
     /**
      * @brief 设置质量并自动计算逆质量
+     * 
+     * @param m 质量 (kg)，如果 <= 0 或物体为 Static，则设置为无限质量（inverseMass = 0）
+     * 
+     * @note 简单版本：只更新质量和逆质量，不修改惯性张量
+     * @note 如果需要更新惯性张量，请在设置质量后调用 SetInertiaTensorFromShape()
      */
     void SetMass(float m) {
-        mass = m;
-        inverseMass = (type == BodyType::Static || m <= 0.0f) ? 0.0f : (1.0f / m);
+        if (type == BodyType::Static || m <= 0.0f) {
+            // 静态物体或无效质量：无限质量
+            mass = 0.0f;
+            inverseMass = 0.0f;
+            // 注意：不修改惯性张量，让 SetBodyType 或 SetInertiaTensor 来处理
+        } else {
+            // 更新质量
+            mass = m;
+            inverseMass = 1.0f / m;
+            // 注意：不自动修改惯性张量
+            // 惯性张量应该通过 SetInertiaTensorFromShape() 显式设置
+        }
+    }
+    
+    /**
+     * @brief 设置惯性张量（局部空间）
+     * 
+     * @param inertia 惯性张量（对角矩阵或完整的 3x3 矩阵）
+     * 
+     * @note 对于常见形状，可以使用以下公式计算惯性张量：
+     * - 球体：I = (2/5) * m * r²
+     * - 立方体：I = (1/6) * m * size²
+     * - 圆柱体：I_axis = (1/2) * m * r², I_perp = (1/12) * m * (3r² + h²)
+     */
+    void SetInertiaTensor(const Matrix3& inertia) {
+        inertiaTensor = inertia;
+        
+        // 计算逆惯性张量
+        if (type == BodyType::Static || mass <= 0.0f) {
+            inverseInertiaTensor = Matrix3::Zero();
+        } else {
+            float determinant = inertiaTensor.determinant();
+            if (std::abs(determinant) > 1e-6f) {
+                inverseInertiaTensor = inertiaTensor.inverse();
+            } else {
+                // 回退到单位矩阵
+                inverseInertiaTensor = Matrix3::Identity();
+            }
+        }
+    }
+    
+    /**
+     * @brief 根据几何形状自动设置惯性张量
+     * 
+     * @param shapeType 形状类型
+     * @param dimensions 形状尺寸参数
+     *                   - 球体: [radius, 0, 0]
+     *                   - 立方体: [width, height, depth]
+     *                   - 圆柱体: [radius, height, 0]
+     */
+    void SetInertiaTensorFromShape(const std::string& shapeType, const Vector3& dimensions) {
+        Matrix3 inertia = Matrix3::Identity();
+        
+        if (shapeType == "sphere") {
+            // 球体：I = (2/5) * m * r²
+            float r = dimensions.x();
+            float I = (2.0f / 5.0f) * mass * r * r;
+            inertia = Matrix3::Identity() * I;
+            
+        } else if (shapeType == "box") {
+            // 立方体：I_x = (1/12) * m * (h² + d²), 其他轴类似
+            float w = dimensions.x();
+            float h = dimensions.y();
+            float d = dimensions.z();
+            inertia(0, 0) = (1.0f / 12.0f) * mass * (h * h + d * d);
+            inertia(1, 1) = (1.0f / 12.0f) * mass * (w * w + d * d);
+            inertia(2, 2) = (1.0f / 12.0f) * mass * (w * w + h * h);
+            
+        } else if (shapeType == "cylinder") {
+            // 圆柱体（Y 轴为对称轴）
+            float r = dimensions.x();
+            float h = dimensions.y();
+            inertia(0, 0) = (1.0f / 12.0f) * mass * (3.0f * r * r + h * h);
+            inertia(1, 1) = (1.0f / 2.0f) * mass * r * r;  // 沿轴
+            inertia(2, 2) = (1.0f / 12.0f) * mass * (3.0f * r * r + h * h);
+            
+        } else {
+            // 默认：单位立方体
+            float I = (1.0f / 6.0f) * mass;
+            inertia = Matrix3::Identity() * I;
+        }
+        
+        SetInertiaTensor(inertia);
+    }
+    
+    /**
+     * @brief 设置刚体类型
+     * 
+     * @note 改变类型会自动更新质量相关属性
+     */
+    void SetBodyType(BodyType newType) {
+        type = newType;
+        
+        // 静态物体：无限质量
+        if (type == BodyType::Static) {
+            inverseMass = 0.0f;
+            inverseInertiaTensor = Matrix3::Zero();
+            linearVelocity = Vector3::Zero();
+            angularVelocity = Vector3::Zero();
+        } 
+        // 动态物体：恢复正常质量
+        else if (type == BodyType::Dynamic && mass > 0.0f) {
+            inverseMass = 1.0f / mass;
+            if (!inertiaTensor.isZero()) {
+                inverseInertiaTensor = inertiaTensor.inverse();
+            }
+        }
+        // 运动学物体：保持质量但不受力影响（在物理更新中处理）
     }
     
     /**
@@ -236,8 +369,18 @@ struct RigidBodyComponent {
      * @brief 是否为动态物体
      */
     bool IsDynamic() const { return type == BodyType::Dynamic; }
+    
+    /**
+     * @brief 获取当前动能
+     * 
+     * @return 动能 (J)
+     */
+    float GetKineticEnergy() const {
+        float linearKE = 0.5f * mass * linearVelocity.squaredNorm();
+        float angularKE = 0.5f * angularVelocity.dot(inertiaTensor * angularVelocity);
+        return linearKE + angularKE;
+    }
 };
-
 // ============================================================================
 // 碰撞体组件
 // ============================================================================
@@ -386,6 +529,95 @@ struct ColliderComponent {
         collider.shapeData.capsule.radius = radius;
         collider.shapeData.capsule.height = height;
         return collider;
+    }
+};
+
+// ============================================================================
+// 力场组件
+// ============================================================================
+
+/**
+ * @brief 力场组件
+ * 
+ * 定义空间中的力场（重力、风力、径向力、涡流等）
+ * 影响范围内的刚体
+ */
+struct ForceFieldComponent {
+    /**
+     * @brief 力场类型
+     */
+    enum class Type {
+        Gravity,  // 重力场（方向力）
+        Wind,     // 风力场（方向力）
+        Radial,   // 径向力场（从中心向外或向内）
+        Vortex    // 涡流场（旋转力）
+    };
+    
+    /// 力场类型
+    Type type = Type::Gravity;
+    
+    /// 力场方向（对于 Gravity/Wind 类型）
+    Vector3 direction = Vector3(0, -1, 0);
+    
+    /// 力场强度 (N/kg 或 m/s²)
+    float strength = 9.81f;
+    
+    /// 影响半径（0 = 无限远）
+    float radius = 0.0f;
+    
+    /// 是否只影响范围内的物体
+    bool affectOnlyInside = true;
+    
+    /// 衰减模式（线性衰减）
+    bool linearFalloff = false;
+    
+    ForceFieldComponent() = default;
+    
+    /**
+     * @brief 创建重力场
+     */
+    static ForceFieldComponent CreateGravity(const Vector3& direction, float strength) {
+        ForceFieldComponent field;
+        field.type = Type::Gravity;
+        field.direction = direction.normalized();
+        field.strength = strength;
+        field.radius = 0.0f;  // 无限范围
+        return field;
+    }
+    
+    /**
+     * @brief 创建风力场
+     */
+    static ForceFieldComponent CreateWind(const Vector3& direction, float strength, float radius = 0.0f) {
+        ForceFieldComponent field;
+        field.type = Type::Wind;
+        field.direction = direction.normalized();
+        field.strength = strength;
+        field.radius = radius;
+        return field;
+    }
+    
+    /**
+     * @brief 创建径向力场
+     */
+    static ForceFieldComponent CreateRadial(float strength, float radius = 0.0f, bool outward = true) {
+        ForceFieldComponent field;
+        field.type = Type::Radial;
+        field.strength = outward ? strength : -strength;
+        field.radius = radius;
+        return field;
+    }
+    
+    /**
+     * @brief 创建涡流场
+     */
+    static ForceFieldComponent CreateVortex(const Vector3& axis, float strength, float radius = 0.0f) {
+        ForceFieldComponent field;
+        field.type = Type::Vortex;
+        field.direction = axis.normalized();
+        field.strength = strength;
+        field.radius = radius;
+        return field;
     }
 };
 
