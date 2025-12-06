@@ -27,6 +27,8 @@
 #include "render/logger.h"
 #include <cmath>
 #include <algorithm>
+#include <unordered_set>
+#include <queue>
 
 namespace Render {
 namespace Physics {
@@ -413,8 +415,203 @@ void PhysicsUpdateSystem::SolveConstraints(float dt) {
 }
 
 void PhysicsUpdateSystem::UpdateSleepingState(float dt) {
-    (void)dt;
-    // 占位：后续接入休眠检测
+    if (!m_world) {
+        return;
+    }
+
+    using EntityID = ECS::EntityID;
+    const float sleepDelay = 0.5f;  // 0.5 秒低动能后进入休眠
+
+    // 预取碰撞对，用于碰撞/岛屿唤醒
+    CollisionDetectionSystem* collisionSystem = m_world->GetSystem<CollisionDetectionSystem>();
+    const std::vector<CollisionPair>* collisionPairs = collisionSystem ? &collisionSystem->GetCollisionPairs() : nullptr;
+
+    // 构建碰撞邻接表，便于岛屿唤醒
+    std::unordered_map<EntityID, std::vector<EntityID>, EntityID::Hash> adjacency;
+    std::unordered_set<EntityID, EntityID::Hash> wakeSeeds;
+    std::unordered_set<EntityID, EntityID::Hash> wokenThisFrame;
+
+    if (collisionPairs) {
+        for (const auto& pair : *collisionPairs) {
+            if (!m_world->HasComponent<ColliderComponent>(pair.entityA) ||
+                !m_world->HasComponent<ColliderComponent>(pair.entityB)) {
+                continue;
+            }
+
+            try {
+                auto& colliderA = m_world->GetComponent<ColliderComponent>(pair.entityA);
+                auto& colliderB = m_world->GetComponent<ColliderComponent>(pair.entityB);
+
+                // 触发器不参与物理解算，也不用于唤醒
+                if (colliderA.isTrigger || colliderB.isTrigger) {
+                    continue;
+                }
+
+                adjacency[pair.entityA].push_back(pair.entityB);
+                adjacency[pair.entityB].push_back(pair.entityA);
+
+                auto& bodyA = m_world->GetComponent<RigidBodyComponent>(pair.entityA);
+                auto& bodyB = m_world->GetComponent<RigidBodyComponent>(pair.entityB);
+
+                bool activeA = bodyA.IsDynamic() && (!bodyA.isSleeping || bodyA.GetKineticEnergy() >= bodyA.sleepThreshold);
+                bool activeB = bodyB.IsDynamic() && (!bodyB.isSleeping || bodyB.GetKineticEnergy() >= bodyB.sleepThreshold);
+
+                // 碰撞唤醒：活跃物体撞击休眠物体
+                if (activeA && bodyB.IsDynamic() && bodyB.isSleeping) {
+                    wakeSeeds.insert(pair.entityB);
+                }
+                if (activeB && bodyA.IsDynamic() && bodyA.isSleeping) {
+                    wakeSeeds.insert(pair.entityA);
+                }
+            } catch (...) {
+                // 忽略组件访问错误
+            }
+        }
+    }
+
+    // 查询所有刚体
+    auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
+
+    // 外力/扭矩直接唤醒
+    for (EntityID entity : entities) {
+        if (!m_world->HasComponent<RigidBodyComponent>(entity)) {
+            continue;
+        }
+
+        try {
+            auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+            if (!body.IsDynamic()) {
+                continue;
+            }
+
+            if (!body.force.isZero(1e-6f) || !body.torque.isZero(1e-6f)) {
+                wakeSeeds.insert(entity);
+                wokenThisFrame.insert(entity);
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
+
+    // 先将所有唤醒种子唤醒
+    for (const auto& entity : wakeSeeds) {
+        if (!m_world->HasComponent<RigidBodyComponent>(entity)) {
+            continue;
+        }
+        try {
+            auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+            if (body.IsDynamic() && body.isSleeping) {
+                body.WakeUp();
+                wokenThisFrame.insert(entity);
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
+
+    // 岛屿唤醒：将种子通过碰撞邻接传播
+    std::queue<EntityID> queue;
+    std::unordered_set<EntityID, EntityID::Hash> visited;
+    for (const auto& seed : wakeSeeds) {
+        if (visited.insert(seed).second) {
+            queue.push(seed);
+        }
+    }
+
+    while (!queue.empty()) {
+        EntityID current = queue.front();
+        queue.pop();
+
+        auto it = adjacency.find(current);
+        if (it == adjacency.end()) {
+            continue;
+        }
+
+        for (EntityID neighbor : it->second) {
+            if (visited.find(neighbor) != visited.end()) {
+                continue;
+            }
+
+            if (!m_world->HasComponent<RigidBodyComponent>(neighbor)) {
+                continue;
+            }
+
+            try {
+                auto& neighborBody = m_world->GetComponent<RigidBodyComponent>(neighbor);
+                if (!neighborBody.IsDynamic()) {
+                    continue;
+                }
+
+                if (neighborBody.isSleeping) {
+                    neighborBody.WakeUp();
+                    wokenThisFrame.insert(neighbor);
+                }
+
+                visited.insert(neighbor);
+                queue.push(neighbor);
+            } catch (...) {
+                // 忽略组件访问错误
+            }
+        }
+    }
+
+    // 最终休眠检测：低动能持续一段时间后进入休眠
+    for (EntityID entity : entities) {
+        if (!m_world->HasComponent<RigidBodyComponent>(entity)) {
+            continue;
+        }
+
+        try {
+            auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+
+            if (!body.IsDynamic()) {
+                continue;
+            }
+
+            bool wokeThisFrame = wokenThisFrame.find(entity) != wokenThisFrame.end();
+
+            float kineticEnergy = body.GetKineticEnergy();
+            float linearSpeedSq = body.linearVelocity.squaredNorm();
+            float angularSpeedSq = body.angularVelocity.squaredNorm();
+            const float motionEpsilon = 1e-8f;
+
+            // 高动能或被唤醒：重置计时
+            if (kineticEnergy >= body.sleepThreshold) {
+                body.WakeUp();
+                continue;
+            }
+
+            // 当前帧被唤醒（碰撞/外力/岛屿传播）：保持清零计时
+            if (wokeThisFrame) {
+                body.isSleeping = false;
+                body.sleepTimer = 0.0f;
+                continue;
+            }
+
+            // 仍有可察觉运动：保持清零计时
+            if (linearSpeedSq > motionEpsilon || angularSpeedSq > motionEpsilon) {
+                body.isSleeping = false;
+                body.sleepTimer = 0.0f;
+                continue;
+            }
+
+            // 低动能累积计时
+            body.sleepTimer += dt;
+
+            if (body.sleepTimer >= sleepDelay) {
+                body.sleepTimer = sleepDelay;
+                body.isSleeping = true;
+                body.linearVelocity = Vector3::Zero();
+                body.angularVelocity = Vector3::Zero();
+                body.force = Vector3::Zero();
+                body.torque = Vector3::Zero();
+            } else {
+                body.isSleeping = false;
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
 }
 
 void PhysicsUpdateSystem::ApplyForce(ECS::EntityID entity, const Vector3& force) {
