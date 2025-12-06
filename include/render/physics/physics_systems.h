@@ -32,6 +32,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_set>
+#include <unordered_map>
 
 namespace Render {
 namespace Physics {
@@ -212,6 +213,14 @@ public:
     
 private:
     /**
+     * @brief 用于在渲染插值前后保存/恢复模拟结果
+     */
+    struct SimulatedTransformState {
+        Vector3 position{0.0f, 0.0f, 0.0f};
+        Quaternion rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    };
+    
+    /**
      * @brief 固定时间步长更新
      */
     void FixedUpdate(float dt);
@@ -248,11 +257,43 @@ private:
      */
     void UpdateAABBs();
     
+    /**
+     * @brief 恢复上次物理解算后的状态（避免插值污染）
+     */
+    void RestoreSimulatedTransforms();
+    
+    /**
+     * @brief 缓存当前物理解算结果，供下一帧恢复
+     */
+    void CacheSimulatedTransforms();
+    
+    /**
+     * @brief 进行渲染插值，提升视觉平滑
+     * @param alpha 插值因子 [0,1]
+     */
+    void InterpolateTransforms(float alpha);
+    
+    /**
+     * @brief 处理碰撞结果的占位（后续实现）
+     */
+    void ResolveCollisions(float dt);
+    
+    /**
+     * @brief 求解约束的占位（后续实现）
+     */
+    void SolveConstraints(float dt);
+    
+    /**
+     * @brief 休眠检测的占位（后续实现）
+     */
+    void UpdateSleepingState(float dt);
+    
     Vector3 m_gravity = Vector3(0.0f, -9.81f, 0.0f);  // 全局重力
     float m_fixedDeltaTime = 1.0f / 60.0f;            // 固定时间步长
     float m_accumulator = 0.0f;                       // 时间累积器
     float m_physicsTime = 0.0f;                       // 物理时间
     SymplecticEulerIntegrator m_integrator;           // 积分器
+    std::unordered_map<ECS::EntityID, SimulatedTransformState, ECS::EntityID::Hash> m_simulatedTransforms; // 物理解算缓存
 };
 
 } // namespace Physics

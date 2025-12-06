@@ -21,10 +21,12 @@
 #include "render/physics/physics_systems.h"
 #include "render/physics/physics_utils.h"
 #include "render/physics/dynamics/force_accumulator.h"
+#include "render/math_utils.h"
 #include "render/ecs/world.h"
 #include "render/ecs/components.h"
 #include "render/logger.h"
 #include <cmath>
+#include <algorithm>
 
 namespace Render {
 namespace Physics {
@@ -41,6 +43,9 @@ void PhysicsUpdateSystem::Update(float deltaTime) {
         return;
     }
     
+    // 先恢复上一帧物理解算结果，避免插值写回污染
+    RestoreSimulatedTransforms();
+    
     // 固定时间步长更新
     m_accumulator += deltaTime;
     
@@ -54,6 +59,21 @@ void PhysicsUpdateSystem::Update(float deltaTime) {
         m_physicsTime += m_fixedDeltaTime;
         subSteps++;
     }
+    
+    // 缓存物理解算后的真实状态（供下帧恢复）
+    CacheSimulatedTransforms();
+    
+    // 渲染插值，提升视觉平滑度
+    float alpha = 0.0f;
+    if (m_fixedDeltaTime > 0.0f) {
+        // 当时间余量耗尽时直接使用最新物理解算结果，避免回退到上一帧
+        if (m_accumulator <= 1e-6f) {
+            alpha = 1.0f;
+        } else {
+            alpha = std::clamp(m_accumulator / m_fixedDeltaTime, 0.0f, 1.0f);
+        }
+    }
+    InterpolateTransforms(alpha);
 }
 
 void PhysicsUpdateSystem::FixedUpdate(float dt) {
@@ -66,7 +86,16 @@ void PhysicsUpdateSystem::FixedUpdate(float dt) {
     // 3. 积分位置
     IntegratePosition(dt);
     
-    // 4. 更新 AABB
+    // 4. 碰撞结果处理（占位，后续接入碰撞解算）
+    ResolveCollisions(dt);
+    
+    // 5. 约束求解（占位）
+    SolveConstraints(dt);
+    
+    // 6. 休眠检测（占位）
+    UpdateSleepingState(dt);
+    
+    // 7. 更新 AABB
     UpdateAABBs();
     
     // 注意：碰撞检测和约束求解在 CollisionDetectionSystem 中处理
@@ -280,6 +309,112 @@ void PhysicsUpdateSystem::UpdateAABBs() {
             // 忽略组件访问错误
         }
     }
+}
+
+void PhysicsUpdateSystem::RestoreSimulatedTransforms() {
+    if (!m_world) {
+        return;
+    }
+    
+    auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
+    for (ECS::EntityID entity : entities) {
+        if (!m_world->HasComponent<ECS::TransformComponent>(entity) ||
+            !m_world->HasComponent<RigidBodyComponent>(entity)) {
+            continue;
+        }
+        
+        try {
+            auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
+            auto it = m_simulatedTransforms.find(entity);
+            if (it == m_simulatedTransforms.end()) {
+                SimulatedTransformState state;
+                state.position = transform.GetPosition();
+                state.rotation = transform.GetRotation();
+                m_simulatedTransforms[entity] = state;
+            } else {
+                transform.SetPosition(it->second.position);
+                transform.SetRotation(it->second.rotation);
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
+}
+
+void PhysicsUpdateSystem::CacheSimulatedTransforms() {
+    if (!m_world) {
+        return;
+    }
+    
+    std::unordered_map<ECS::EntityID, SimulatedTransformState, ECS::EntityID::Hash> newCache;
+    auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
+    for (ECS::EntityID entity : entities) {
+        if (!m_world->HasComponent<ECS::TransformComponent>(entity)) {
+            continue;
+        }
+        
+        try {
+            auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
+            SimulatedTransformState state;
+            state.position = transform.GetPosition();
+            state.rotation = transform.GetRotation();
+            newCache[entity] = state;
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
+    
+    m_simulatedTransforms.swap(newCache);
+}
+
+void PhysicsUpdateSystem::InterpolateTransforms(float alpha) {
+    if (!m_world) {
+        return;
+    }
+    
+    float t = MathUtils::Clamp(alpha, 0.0f, 1.0f);
+    
+    auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
+    for (ECS::EntityID entity : entities) {
+        if (!m_world->HasComponent<ECS::TransformComponent>(entity) ||
+            !m_world->HasComponent<RigidBodyComponent>(entity)) {
+            continue;
+        }
+        
+        try {
+            auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
+            auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+            
+            auto it = m_simulatedTransforms.find(entity);
+            const Vector3 currentPos = (it != m_simulatedTransforms.end())
+                ? it->second.position : transform.GetPosition();
+            const Quaternion currentRot = (it != m_simulatedTransforms.end())
+                ? it->second.rotation : transform.GetRotation();
+            
+            Vector3 interpolatedPos = MathUtils::Lerp(body.previousPosition, currentPos, t);
+            Quaternion interpolatedRot = MathUtils::Slerp(body.previousRotation, currentRot, t);
+            
+            transform.SetPosition(interpolatedPos);
+            transform.SetRotation(interpolatedRot);
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
+}
+
+void PhysicsUpdateSystem::ResolveCollisions(float dt) {
+    (void)dt;
+    // 占位：后续接入碰撞解算
+}
+
+void PhysicsUpdateSystem::SolveConstraints(float dt) {
+    (void)dt;
+    // 占位：后续接入约束求解
+}
+
+void PhysicsUpdateSystem::UpdateSleepingState(float dt) {
+    (void)dt;
+    // 占位：后续接入休眠检测
 }
 
 void PhysicsUpdateSystem::ApplyForce(ECS::EntityID entity, const Vector3& force) {
