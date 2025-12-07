@@ -31,6 +31,9 @@ class World;  // 前向声明
 
 namespace Physics {
 
+class CollisionDetectionSystem;
+class PhysicsUpdateSystem;
+
 /**
  * @brief 物理世界
  * 
@@ -57,10 +60,7 @@ public:
      * @brief 物理步进（每帧调用）
      * @param deltaTime 帧时间（秒）
      */
-    void Step(float deltaTime) {
-        // 实现将在后续添加
-        (void)deltaTime;  // 避免未使用参数警告
-    }
+    void Step(float deltaTime);
     
     /**
      * @brief 设置重力
@@ -81,6 +81,13 @@ public:
      */
     const PhysicsConfig& GetConfig() const {
         return m_config;
+    }
+
+    /**
+     * @brief 更新物理配置
+     */
+    void SetConfig(const PhysicsConfig& config) {
+        m_config = config;
     }
     
 private:

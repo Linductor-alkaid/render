@@ -19,12 +19,27 @@
  * For commercial licensing, please contact: 2052046346@qq.com
  */
 #include "render/physics/physics_world.h"
+#include "render/physics/physics_systems.h"
+#include "render/ecs/world.h"
 
 namespace Render {
 namespace Physics {
 
-// 实现将在后续添加
-// 目前这是一个占位符文件，确保项目可以编译
+void PhysicsWorld::Step(float deltaTime) {
+    if (!m_ecsWorld) {
+        return;
+    }
+
+    auto* physicsSystem = m_ecsWorld->GetSystem<PhysicsUpdateSystem>();
+
+    if (physicsSystem) {
+        physicsSystem->SetGravity(m_config.gravity);
+        physicsSystem->SetFixedDeltaTime(m_config.fixedDeltaTime);
+        physicsSystem->SetSolverIterations(m_config.solverIterations);
+        physicsSystem->SetPositionIterations(m_config.positionIterations);
+        physicsSystem->Update(deltaTime);
+    }
+}
 
 } // namespace Physics
 } // namespace Render

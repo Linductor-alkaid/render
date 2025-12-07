@@ -38,6 +38,7 @@ PhysicsUpdateSystem::PhysicsUpdateSystem() {
     m_fixedDeltaTime = 1.0f / 60.0f;
     m_accumulator = 0.0f;
     m_physicsTime = 0.0f;
+    m_constraintSolver.SetWorld(m_world);
 }
 
 void PhysicsUpdateSystem::Update(float deltaTime) {
@@ -88,13 +89,13 @@ void PhysicsUpdateSystem::FixedUpdate(float dt) {
     // 3. 积分位置
     IntegratePosition(dt);
     
-    // 4. 碰撞结果处理（占位，后续接入碰撞解算）
+    // 4. 碰撞结果处理
     ResolveCollisions(dt);
     
-    // 5. 约束求解（占位）
+    // 5. 约束求解
     SolveConstraints(dt);
     
-    // 6. 休眠检测（占位）
+    // 6. 休眠检测
     UpdateSleepingState(dt);
     
     // 7. 更新 AABB
@@ -405,13 +406,75 @@ void PhysicsUpdateSystem::InterpolateTransforms(float alpha) {
 }
 
 void PhysicsUpdateSystem::ResolveCollisions(float dt) {
-    (void)dt;
-    // 占位：后续接入碰撞解算
+    if (!m_world) {
+        return;
+    }
+
+    CollisionDetectionSystem* collisionSystem = m_world->GetSystem<CollisionDetectionSystem>();
+    if (!collisionSystem) {
+        return;
+    }
+
+    // 使用最新积分后的变换进行碰撞检测，供后续约束解算与唤醒逻辑使用
+    collisionSystem->Update(dt);
+
+    const auto& collisionPairs = collisionSystem->GetCollisionPairs();
+    if (collisionPairs.empty()) {
+        return;
+    }
+
+    // 碰撞即时唤醒，避免休眠刚体在求解阶段被跳过
+    for (const auto& pair : collisionPairs) {
+        if (!m_world->HasComponent<ColliderComponent>(pair.entityA) ||
+            !m_world->HasComponent<ColliderComponent>(pair.entityB) ||
+            !m_world->HasComponent<RigidBodyComponent>(pair.entityA) ||
+            !m_world->HasComponent<RigidBodyComponent>(pair.entityB)) {
+            continue;
+        }
+
+        try {
+            auto& colliderA = m_world->GetComponent<ColliderComponent>(pair.entityA);
+            auto& colliderB = m_world->GetComponent<ColliderComponent>(pair.entityB);
+
+            // 触发器不参与解算也不唤醒对方
+            if (colliderA.isTrigger || colliderB.isTrigger) {
+                continue;
+            }
+
+            auto& bodyA = m_world->GetComponent<RigidBodyComponent>(pair.entityA);
+            auto& bodyB = m_world->GetComponent<RigidBodyComponent>(pair.entityB);
+
+            if (bodyA.IsDynamic() && bodyA.isSleeping) {
+                bodyA.WakeUp();
+            }
+            if (bodyB.IsDynamic() && bodyB.isSleeping) {
+                bodyB.WakeUp();
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
 }
 
 void PhysicsUpdateSystem::SolveConstraints(float dt) {
-    (void)dt;
-    // 占位：后续接入约束求解
+    if (!m_world) {
+        return;
+    }
+
+    CollisionDetectionSystem* collisionSystem = m_world->GetSystem<CollisionDetectionSystem>();
+    if (!collisionSystem) {
+        return;
+    }
+
+    const auto& collisionPairs = collisionSystem->GetCollisionPairs();
+    if (collisionPairs.empty()) {
+        return;
+    }
+
+    m_constraintSolver.SetWorld(m_world);
+    m_constraintSolver.SetSolverIterations(m_solverIterations);
+    m_constraintSolver.SetPositionIterations(m_positionIterations);
+    m_constraintSolver.Solve(dt, collisionPairs);
 }
 
 void PhysicsUpdateSystem::UpdateSleepingState(float dt) {

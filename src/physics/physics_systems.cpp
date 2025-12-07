@@ -124,6 +124,13 @@ void CollisionDetectionSystem::Update(float deltaTime) {
             );
             
             if (collided) {
+                // 补充局部接触点坐标，便于后续约束求解
+                for (int i = 0; i < manifold.contactCount; ++i) {
+                    auto& cp = manifold.contacts[i];
+                    cp.localPointA = rotA.conjugate() * (cp.position - posA);
+                    cp.localPointB = rotB.conjugate() * (cp.position - posB);
+                }
+
                 m_collisionPairs.emplace_back(entityA, entityB, manifold);
                 m_stats.actualCollisions++;
             }

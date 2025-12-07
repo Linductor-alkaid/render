@@ -20,6 +20,8 @@
  */
 #include "render/application/modules/physics_module.h"
 #include "render/physics/physics_world.h"
+#include "render/physics/physics_systems.h"
+#include "render/physics/collision/broad_phase.h"
 #include "render/ecs/world.h"
 #include "render/logger.h"
 
@@ -62,7 +64,7 @@ void PhysicsModule::OnRegister(ECS::World& world, AppContext& ctx) {
     m_physicsWorld = std::make_unique<Physics::PhysicsWorld>(&world, m_config);
     
     // 注册物理系统（将在后续阶段实现）
-    // RegisterPhysicsSystems(world);
+    RegisterPhysicsSystems(world);
     
     m_registered = true;
     
@@ -123,6 +125,7 @@ void PhysicsModule::SetConfig(const Physics::PhysicsConfig& config) {
     
     if (m_physicsWorld) {
         m_physicsWorld->SetGravity(config.gravity);
+        m_physicsWorld->SetConfig(config);
     }
 }
 
@@ -145,11 +148,23 @@ void PhysicsModule::RegisterPhysicsComponents(ECS::World& world) {
 void PhysicsModule::RegisterPhysicsSystems(ECS::World& world) {
     Logger::GetInstance().Info("[PhysicsModule] 注册物理系统...");
     
-    // 系统注册将在后续阶段实现
-    // TODO: world.RegisterSystem<Physics::PhysicsUpdateSystem>();
-    // TODO: world.RegisterSystem<Physics::CollisionDetectionSystem>();
+    auto* collisionSystem = world.RegisterSystem<Physics::CollisionDetectionSystem>();
+    if (collisionSystem) {
+        if (m_config.broadPhaseType == Physics::BroadPhaseType::SpatialHash) {
+            auto broadPhase = std::make_unique<Physics::SpatialHashBroadPhase>(m_config.spatialHashCellSize);
+            collisionSystem->SetBroadPhase(std::move(broadPhase));
+        }
+    }
+
+    auto* physicsSystem = world.RegisterSystem<Physics::PhysicsUpdateSystem>();
+    if (physicsSystem) {
+        physicsSystem->SetGravity(m_config.gravity);
+        physicsSystem->SetFixedDeltaTime(m_config.fixedDeltaTime);
+        physicsSystem->SetSolverIterations(m_config.solverIterations);
+        physicsSystem->SetPositionIterations(m_config.positionIterations);
+    }
     
-    Logger::GetInstance().Info("[PhysicsModule] 物理系统注册完成（占位符）");
+    Logger::GetInstance().Info("[PhysicsModule] 物理系统注册完成");
 }
 
 } // namespace Render::Application

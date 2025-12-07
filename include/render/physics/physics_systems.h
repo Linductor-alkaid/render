@@ -29,6 +29,7 @@
 #include "collision/broad_phase.h"
 #include "collision/collision_detection.h"
 #include "dynamics/symplectic_euler_integrator.h"
+#include "dynamics/constraint_solver.h"
 #include <vector>
 #include <memory>
 #include <unordered_set>
@@ -182,6 +183,20 @@ public:
     }
     
     /**
+     * @brief 设置求解迭代次数
+     */
+    void SetSolverIterations(int iterations) {
+        m_solverIterations = iterations;
+    }
+    
+    /**
+     * @brief 设置位置求解迭代次数
+     */
+    void SetPositionIterations(int iterations) {
+        m_positionIterations = iterations;
+    }
+    
+    /**
      * @brief 应用力到刚体
      */
     void ApplyForce(ECS::EntityID entity, const Vector3& force);
@@ -294,6 +309,9 @@ private:
     float m_physicsTime = 0.0f;                       // 物理时间
     SymplecticEulerIntegrator m_integrator;           // 积分器
     std::unordered_map<ECS::EntityID, SimulatedTransformState, ECS::EntityID::Hash> m_simulatedTransforms; // 物理解算缓存
+    ConstraintSolver m_constraintSolver;             // 约束求解器
+    int m_solverIterations = 10;
+    int m_positionIterations = 4;
 };
 
 } // namespace Physics
