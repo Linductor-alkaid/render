@@ -219,7 +219,6 @@ RenderEngine 采用清晰的分层架构设计：
 - [项目结构分析](docs/PROJECT_STRUCTURE_ANALYSIS.md) - 详细的项目架构说明
 - [项目结构图](docs/PROJECT_STRUCTURE_DIAGRAM.md) - 可视化架构图
 - [架构设计](docs/ARCHITECTURE.md) - 架构设计文档
-- [开发指南](docs/DEVELOPMENT_GUIDE.md) - 开发规范和最佳实践
 - [功能列表](docs/FEATURE_LIST.md) - 已实现和计划中的功能
 
 ### 📖 API 参考
@@ -240,7 +239,6 @@ RenderEngine 采用清晰的分层架构设计：
 - [UI 开发指南](docs/application/UI_DEVELOPMENT_PROGRESS_REPORT.md) - UI 系统开发
 
 ### 🔧 技术文档
-- [线程安全设计](docs/THREAD_SAFETY.md) - 多线程安全保证
 - [材质排序架构](docs/MATERIAL_SORTING_ARCHITECTURE.md) - 渲染优化
 - [JSON 序列化指南](docs/JSON_SERIALIZATION_GUIDE.md) - 场景序列化
 

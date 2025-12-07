@@ -127,8 +127,8 @@
 
 ### ✅ 跨平台支持
 - [x] Windows（已测试）
-- [x] Linux（支持）
-- [x] macOS（支持）
+- [ ] Linux
+- [ ] macOS
 - [ ] iOS
 - [ ] Android
 - [ ] WebGL
@@ -275,10 +275,10 @@
 
 ## 已知限制
 
-1. **平台支持**: 当前主要支持 Windows/Linux/macOS，iOS/Android/WebGL 暂不支持
+1. **平台支持**: 当前主要支持 Windows，Linux/macOS/iOS/Android/WebGL 暂不支持
 2. **图形 API**: 需要 OpenGL 4.5+ 支持，暂不支持 Vulkan/Metal/DirectX
 3. **阴影系统**: 阴影功能尚未实现（计划中）
-4. **物理引擎**: 缺少物理引擎集成
+4. **物理引擎**: 物理引擎集成中
 5. **后处理效果**: 目前仅有帧缓冲基础，完整后处理效果链待实现
 6. **PBR 材质**: 当前使用 Phong 光照模型，PBR 材质系统待实现
 

@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-RenderEngine 是一个基于现代 C++20 的跨平台 3D 渲染引擎，采用 ECS（Entity Component System）架构设计，支持 2D/3D 渲染、UI 系统、精灵动画、光照系统和资源异步加载等功能。
+RenderEngine 是一个基于现代 C++20 的 3D 渲染引擎，采用 ECS（Entity Component System）架构设计，支持 2D/3D 渲染、UI 系统、精灵动画、光照系统和资源异步加载等功能。
 
 ## 项目结构图
 
@@ -17,7 +17,7 @@ G:\myproject\render/
 │   │   ├── render_layer.cpp        # 渲染层级系统
 │   │   ├── resource_manager.cpp    # 资源管理器
 │   │   ├── async_resource_loader.cpp # 异步资源加载
-│   │   ├── task_scheduler.cpp      # ✅ 统一任务调度器
+│   │   ├── task_scheduler.cpp      # 统一任务调度器
 │   │   ├── transform.cpp           # 变换矩阵系统
 │   │   ├── camera.cpp              # 相机系统
 │   │   └── gl_thread_checker.cpp   # OpenGL线程安全检查
@@ -137,7 +137,7 @@ G:\myproject\render/
 │       ├── renderer.h              # 主渲染器接口
 │       ├── types.h                 # 基础类型定义
 │       ├── math_utils.h            # 数学工具函数
-│       ├── task_scheduler.h        # ✅ 统一任务调度器
+│       ├── task_scheduler.h        # 统一任务调度器
 │       ├── lod_system.h            # LOD系统（组件、配置、选择器）
 │       ├── lod_generator.h         # LOD网格生成器
 │       ├── lod_instanced_renderer.h # LOD实例化渲染器
