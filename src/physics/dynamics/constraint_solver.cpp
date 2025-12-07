@@ -26,6 +26,7 @@
 #include "render/ecs/components.h"
 #include "render/math_utils.h"
 #include <algorithm>
+#include <limits>
 
 namespace Render {
 namespace Physics {
@@ -34,23 +35,49 @@ namespace {
 constexpr float kBaumgarte = 0.2f;
 constexpr float kAllowedPenetration = 0.01f;
 constexpr float kRestitutionVelocityThreshold = 1.0f;
+constexpr float kContactMatchThresholdSq = 1e-4f;
+}  // namespace
 
-Matrix3 ComputeWorldInvInertia(const RigidBodyComponent& body, const Quaternion& rotation) {
+Matrix3 ConstraintSolver::ComputeWorldInvInertia(const RigidBodyComponent& body, const Quaternion& rotation) {
     Matrix3 rotationMatrix = rotation.toRotationMatrix();
     return rotationMatrix * body.inverseInertiaTensor * rotationMatrix.transpose();
 }
 
-Vector3 ChooseTangent(const Vector3& normal) {
+Vector3 ConstraintSolver::ChooseTangent(const Vector3& normal) {
     Vector3 tangent = normal.cross(Vector3::UnitX());
     if (tangent.squaredNorm() < 1e-4f) {
         tangent = normal.cross(Vector3::UnitY());
     }
     return tangent.normalized();
 }
-}  // namespace
+
+int ConstraintSolver::FindMatchingContact(
+    const ConstraintSolver::ContactConstraintPoint& point,
+    const ConstraintSolver::CachedContactManifold& cache
+) {
+    int bestIndex = -1;
+    float bestDistSq = std::numeric_limits<float>::max();
+
+    for (int i = 0; i < cache.contactCount; ++i) {
+        const auto& cached = cache.points[i];
+        float distSq =
+            (point.localPointA - cached.localPointA).squaredNorm() +
+            (point.localPointB - cached.localPointB).squaredNorm();
+
+        if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex >= 0 && bestDistSq <= kContactMatchThresholdSq) {
+        return bestIndex;
+    }
+    return -1;
+}
 
 void ConstraintSolver::SetSolverIterations(int iterations) {
-    m_solverIterations = std::max(1, iterations);
+    m_solverIterations = std::max(0, iterations);
 }
 
 void ConstraintSolver::SetPositionIterations(int iterations) {
@@ -67,6 +94,7 @@ void ConstraintSolver::Solve(float dt, const std::vector<CollisionPair>& pairs) 
     WarmStart();
     SolveVelocityConstraints();
     SolvePositionConstraints(dt);
+    CacheImpulses();
 }
 
 void ConstraintSolver::Clear() {
@@ -132,6 +160,9 @@ void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionP
         float combinedFriction = 0.5f * (frictionA + frictionB);
         float combinedRestitution = 0.5f * (restitutionA + restitutionB);
 
+        uint64_t pairHash = HashPair(constraint.entityA, constraint.entityB);
+        auto cacheIt = m_cachedImpulses.find(pairHash);
+
         for (int i = 0; i < constraint.contactCount && i < static_cast<int>(pair.manifold.contacts.size()); ++i) {
             const auto& cp = pair.manifold.contacts[i];
             auto& point = constraint.points[i];
@@ -139,6 +170,8 @@ void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionP
             point.normal = constraint.normal;
             point.tangent1 = ChooseTangent(constraint.normal);
             point.tangent2 = point.normal.cross(point.tangent1);
+            point.localPointA = cp.localPointA;
+            point.localPointB = cp.localPointB;
 
             // 接触向量（相对质心）
             Vector3 worldPoint = cp.position;
@@ -173,18 +206,35 @@ void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionP
                 + rtB2.dot(constraint.invInertiaB * rtB2);
             point.tangentMass[1] = (invMassT2 > MathUtils::EPSILON) ? 1.0f / invMassT2 : 0.0f;
 
-            // Baumgarte 偏置
+            // Baumgarte stabilization for position correction
             float penetrationDepth = std::max(0.0f, point.penetration - kAllowedPenetration);
-            point.bias = -kBaumgarte * penetrationDepth / std::max(dt, MathUtils::EPSILON);
+            point.bias = (kBaumgarte * penetrationDepth) / std::max(dt, MathUtils::EPSILON);
 
-            // 恢复系数偏置
+            // Restitution: calculate bounce velocity target
             Vector3 vA = bodyA.linearVelocity + bodyA.angularVelocity.cross(point.rA);
             Vector3 vB = bodyB.linearVelocity + bodyB.angularVelocity.cross(point.rB);
             float relativeNormalVel = (vB - vA).dot(point.normal);
-            if (relativeNormalVel < -kRestitutionVelocityThreshold) {
-                point.restitutionBias = -point.restitution * relativeNormalVel;
+            
+            if (point.restitution > MathUtils::EPSILON && relativeNormalVel < -kRestitutionVelocityThreshold) {
+                // 仅在存在恢复系数时计算反弹：目标速度 -(1+e)*vn
+                point.restitutionBias = -(1.0f + point.restitution) * relativeNormalVel;
             } else {
                 point.restitutionBias = 0.0f;
+            }
+
+            // Initialize impulses (will be overwritten by warm start if cache exists)
+            point.normalImpulse = 0.0f;
+            point.tangentImpulse[0] = 0.0f;
+            point.tangentImpulse[1] = 0.0f;
+            
+            if (cacheIt != m_cachedImpulses.end()) {
+                int matchIndex = FindMatchingContact(point, cacheIt->second);
+                if (matchIndex >= 0) {
+                    const auto& cachedPoint = cacheIt->second.points[matchIndex];
+                    point.normalImpulse = std::max(0.0f, cachedPoint.normalImpulse);
+                    point.tangentImpulse[0] = cachedPoint.tangentImpulse[0];
+                    point.tangentImpulse[1] = cachedPoint.tangentImpulse[1];
+                }
             }
         }
 
@@ -193,12 +243,21 @@ void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionP
 }
 
 void ConstraintSolver::WarmStart() {
+    // 仅当有实际缓存冲量时才应用
+    // 这避免了0冲量时的无意义计算
     for (auto& constraint : m_contactConstraints) {
         auto* bodyA = constraint.bodyA;
         auto* bodyB = constraint.bodyB;
 
         for (int i = 0; i < constraint.contactCount; ++i) {
             auto& point = constraint.points[i];
+
+            // 跳过零冲量点，避免浮点误差累积
+            if (std::abs(point.normalImpulse) < MathUtils::EPSILON &&
+                std::abs(point.tangentImpulse[0]) < MathUtils::EPSILON &&
+                std::abs(point.tangentImpulse[1]) < MathUtils::EPSILON) {
+                continue;
+            }
 
             Vector3 normalImpulse = point.normal * point.normalImpulse;
             Vector3 tangentImpulse1 = point.tangent1 * point.tangentImpulse[0];
@@ -211,6 +270,7 @@ void ConstraintSolver::WarmStart() {
 
             bodyB->linearVelocity += totalImpulse * bodyB->inverseMass;
             bodyB->angularVelocity += constraint.invInertiaB * (point.rB.cross(totalImpulse));
+
         }
     }
 }
@@ -231,9 +291,11 @@ void ConstraintSolver::SolveVelocityConstraints() {
 
                 Vector3 relativeVel = (vB + wB.cross(point.rB)) - (vA + wA.cross(point.rA));
 
-                // 法向冲量
+                // 法向冲量：使用预计算的 restitutionBias 而不是动态计算
                 float normalRelVel = relativeVel.dot(point.normal);
-                float lambdaN = -(normalRelVel + point.bias + point.restitutionBias) * point.normalMass;
+                // 约束方程: C = vn + bias - v_target, 其中 v_target = restitutionBias
+                // 使用 point.bias（Baumgarte位置修正）减去 point.restitutionBias（弹性恢复目标速度）
+                float lambdaN = -(normalRelVel + point.bias - point.restitutionBias) * point.normalMass;
 
                 float oldNormalImpulse = point.normalImpulse;
                 point.normalImpulse = std::max(oldNormalImpulse + lambdaN, 0.0f);
@@ -291,6 +353,17 @@ void ConstraintSolver::SolvePositionConstraints(float dt) {
 
     const float beta = 0.2f;  // 位置校正系数
 
+    auto ApplyAngularCorrection = [](ECS::TransformComponent* transform, const Vector3& angularDelta) {
+        float angle = angularDelta.norm();
+        if (angle <= MathUtils::EPSILON || !transform) {
+            return;
+        }
+        Vector3 axis = angularDelta / angle;
+        Quaternion delta(Eigen::AngleAxisf(angle, axis));
+        Quaternion newRotation = (delta * transform->GetRotation()).normalized();
+        transform->SetRotation(newRotation);
+    };
+
     for (int iteration = 0; iteration < m_positionIterations; ++iteration) {
         for (auto& constraint : m_contactConstraints) {
             auto* bodyA = constraint.bodyA;
@@ -308,21 +381,55 @@ void ConstraintSolver::SolvePositionConstraints(float dt) {
                     continue;
                 }
 
-                float positionalLambda = -beta * penetrationDepth * point.normalMass;
-                Vector3 correction = positionalLambda * point.normal;
+                float positionalLambda = beta * penetrationDepth * point.normalMass;
+                Vector3 correctionImpulse = positionalLambda * point.normal;
 
                 if (!bodyA->IsStatic() && !bodyA->IsKinematic()) {
-                    Vector3 newPos = constraint.transformA->GetPosition() + correction * (-bodyA->inverseMass);
+                    Vector3 linearDelta = correctionImpulse * (-bodyA->inverseMass);
+                    Vector3 angularDelta = constraint.invInertiaA * (point.rA.cross(-correctionImpulse));
+                    Vector3 newPos = constraint.transformA->GetPosition() + linearDelta;
                     constraint.transformA->SetPosition(newPos);
+                    ApplyAngularCorrection(constraint.transformA, angularDelta);
                 }
 
                 if (!bodyB->IsStatic() && !bodyB->IsKinematic()) {
-                    Vector3 newPos = constraint.transformB->GetPosition() + correction * bodyB->inverseMass;
+                    Vector3 linearDelta = correctionImpulse * bodyB->inverseMass;
+                    Vector3 angularDelta = constraint.invInertiaB * (point.rB.cross(correctionImpulse));
+                    Vector3 newPos = constraint.transformB->GetPosition() + linearDelta;
                     constraint.transformB->SetPosition(newPos);
+                    ApplyAngularCorrection(constraint.transformB, angularDelta);
                 }
             }
         }
     }
+}
+
+void ConstraintSolver::CacheImpulses() {
+    m_cachedImpulses.clear();
+    for (const auto& constraint : m_contactConstraints) {
+        uint64_t hash = HashPair(constraint.entityA, constraint.entityB);
+        CachedContactManifold cache;
+        cache.contactCount = constraint.contactCount;
+
+        for (int i = 0; i < constraint.contactCount; ++i) {
+            const auto& point = constraint.points[i];
+            auto& cachedPoint = cache.points[i];
+            cachedPoint.localPointA = point.localPointA;
+            cachedPoint.localPointB = point.localPointB;
+            cachedPoint.normalImpulse = point.normalImpulse;
+            cachedPoint.tangentImpulse[0] = point.tangentImpulse[0];
+            cachedPoint.tangentImpulse[1] = point.tangentImpulse[1];
+        }
+
+        m_cachedImpulses[hash] = cache;
+    }
+}
+
+uint64_t ConstraintSolver::HashPair(ECS::EntityID a, ECS::EntityID b) const {
+    if (a.index > b.index) {
+        std::swap(a, b);
+    }
+    return (static_cast<uint64_t>(a.index) << 32) | static_cast<uint64_t>(b.index);
 }
 
 }  // namespace Physics

@@ -20,11 +20,15 @@
  */
 /**
  * @file test_constraint_solver.cpp
- * @brief 阶段 4.1 约束求解器框架自动化测试
+ * @brief 阶段 4.2 接触约束（序列冲量 + 弹性 + 摩擦 + Warm Start）测试
  *
- * 覆盖目标：
- * 1. Solve 在没有碰撞对时保持状态不变（框架清理正确）
- * 2. Solve 对单个接触约束能产生合理的法向、切向冲量（解算流程有效）
+ * 覆盖目标（对应 Todolist 4.2 验收）：
+ * 1. 无碰撞对时不应改写刚体状态（回归）
+ * 2. 法向约束：非穿透 & 速度从靠近转向分离
+ * 3. 切向约束：双切向摩擦有效抑制滑动
+ * 4. 弹性：恢复系数带来可观反弹速度
+ * 5. Warm Start：缓存冲量让下一帧更快收敛
+ * 6. 位置修正：堆叠场景能够把穿透推回去
  */
 
 #include "render/physics/dynamics/constraint_solver.h"
@@ -82,6 +86,90 @@ void RegisterPhysicsComponents(std::shared_ptr<World> world) {
     world->RegisterComponent<RigidBodyComponent>();
 }
 
+struct SceneContext {
+    std::shared_ptr<World> world;
+    EntityID ground;
+    EntityID body;
+    ContactManifold manifold;
+    Vector3 initialPosition;
+    Vector3 initialLinearVelocity;
+};
+
+static RigidBodyComponent MakeDynamicBox(float mass = 1.0f, float halfExtent = 0.5f) {
+    RigidBodyComponent body;
+    body.SetBodyType(RigidBodyComponent::BodyType::Dynamic);
+    body.mass = mass;
+    body.inverseMass = 1.0f / mass;
+    body.centerOfMass = Vector3::Zero();
+    float inertia = (1.0f / 12.0f) * mass * (halfExtent * halfExtent * 2.0f);
+    body.inertiaTensor = Matrix3::Identity() * inertia;
+    body.inverseInertiaTensor = Matrix3::Identity() * (1.0f / inertia);
+    return body;
+}
+
+static ColliderComponent MakeBoxCollider(float friction, float restitution, const Vector3& halfExtents) {
+    ColliderComponent collider = ColliderComponent::CreateBox(halfExtents);
+    collider.material->friction = friction;
+    collider.material->restitution = restitution;
+    return collider;
+}
+
+static SceneContext CreateGroundContactScene(
+    const Vector3& bodyPos,
+    const Vector3& initialVel,
+    float penetration,
+    float friction,
+    float restitution
+) {
+    SceneContext ctx{};
+    ctx.world = std::make_shared<World>();
+    RegisterPhysicsComponents(ctx.world);
+    ctx.world->Initialize();
+
+    ctx.ground = ctx.world->CreateEntity();
+    ctx.body = ctx.world->CreateEntity();
+
+    TransformComponent groundTransform;
+    groundTransform.SetPosition(Vector3(0, 0, 0));
+    ctx.world->AddComponent(ctx.ground, groundTransform);
+
+    TransformComponent bodyTransform;
+    bodyTransform.SetPosition(bodyPos);
+    ctx.world->AddComponent(ctx.body, bodyTransform);
+
+    RigidBodyComponent groundBody;
+    groundBody.SetBodyType(RigidBodyComponent::BodyType::Static);
+    ctx.world->AddComponent(ctx.ground, groundBody);
+
+    RigidBodyComponent fallingBody = MakeDynamicBox();
+    fallingBody.linearVelocity = initialVel;
+    fallingBody.angularVelocity = Vector3::Zero();
+    ctx.world->AddComponent(ctx.body, fallingBody);
+
+    ColliderComponent groundCollider = MakeBoxCollider(friction, restitution, Vector3(10.0f, 0.5f, 10.0f));
+    ColliderComponent bodyCollider = MakeBoxCollider(friction, restitution, Vector3(0.5f, 0.5f, 0.5f));
+    ctx.world->AddComponent(ctx.ground, groundCollider);
+    ctx.world->AddComponent(ctx.body, bodyCollider);
+
+    ctx.manifold.SetNormal(Vector3::UnitY());
+    ctx.manifold.AddContact(Vector3(0, 0.5f, 0), Vector3::Zero(), Vector3::Zero(), penetration);
+
+    ctx.initialPosition = bodyPos;
+    ctx.initialLinearVelocity = initialVel;
+    return ctx;
+}
+
+static float ComputeNormalVelocity(const RigidBodyComponent& body, const RigidBodyComponent& ground, const Vector3& normal) {
+    Vector3 rel = body.linearVelocity - ground.linearVelocity;
+    return rel.dot(normal);
+}
+
+static float ComputeTangentialSpeed(const RigidBodyComponent& body, const RigidBodyComponent& ground, const Vector3& normal) {
+    Vector3 rel = body.linearVelocity - ground.linearVelocity;
+    Vector3 tangential = rel - normal * rel.dot(normal);
+    return tangential.norm();
+}
+
 // ============================================================================
 // 用例 1：空碰撞对不应改变状态
 // ============================================================================
@@ -127,116 +215,250 @@ bool Test_ConstraintSolver_NoPairs_NoChange() {
 // ============================================================================
 
 bool Test_ConstraintSolver_ResolveContactAndFriction() {
-    auto world = std::make_shared<World>();
-    RegisterPhysicsComponents(world);
-    world->Initialize();
+    SceneContext ctx = CreateGroundContactScene(
+        Vector3(0, 0.55f, 0),
+        Vector3(0.5f, -2.0f, 0.0f),
+        0.05f,
+        0.6f,
+        0.0f
+    );
 
-    ConstraintSolver solver(world.get());
+    ConstraintSolver solver(ctx.world.get());
     solver.SetSolverIterations(10);
     solver.SetPositionIterations(2);
 
-    // 创建地面和动态刚体
-    EntityID ground = world->CreateEntity();
-    EntityID dynamicBody = world->CreateEntity();
-
-    TransformComponent groundTransform;
-    groundTransform.SetPosition(Vector3(0, 0, 0));
-    world->AddComponent(ground, groundTransform);
-
-    TransformComponent bodyTransform;
-    bodyTransform.SetPosition(Vector3(0, 0.55f, 0));  // 物体在地面上方
-    world->AddComponent(dynamicBody, bodyTransform);
-
-    // === 关键修复：正确初始化地面刚体 ===
-    RigidBodyComponent groundBody;
-    groundBody.SetBodyType(RigidBodyComponent::BodyType::Static);
-    // 静态物体的质量属性应该已经在 SetBodyType 中设置
-    // 确保 inverseMass = 0, inverseInertiaTensor = 0
-    world->AddComponent(ground, groundBody);
-
-    // === 关键修复：正确初始化动态刚体的所有物理属性 ===
-    RigidBodyComponent fallingBody;
-    fallingBody.SetBodyType(RigidBodyComponent::BodyType::Dynamic);
-    fallingBody.mass = 1.0f;
-    fallingBody.inverseMass = 1.0f;
-    fallingBody.centerOfMass = Vector3::Zero();
-    
-    // 为单位立方体设置合理的惯性张量
-    // I = (1/12) * m * (h^2 + d^2) for box
-    float boxSize = 0.5f;
-    float inertia = (1.0f / 12.0f) * fallingBody.mass * (boxSize * boxSize + boxSize * boxSize);
-    fallingBody.inertiaTensor = Matrix3::Identity() * inertia;
-    fallingBody.inverseInertiaTensor = Matrix3::Identity() * (1.0f / inertia);
-    
-    fallingBody.linearVelocity = Vector3(0.5f, -2.0f, 0.0f);  // 向下且有水平速度
-    fallingBody.angularVelocity = Vector3::Zero();
-    world->AddComponent(dynamicBody, fallingBody);
-
-    ColliderComponent groundCollider = ColliderComponent::CreateBox(Vector3(10.0f, 0.5f, 10.0f));
-    ColliderComponent bodyCollider = ColliderComponent::CreateBox(Vector3(0.5f, 0.5f, 0.5f));
-    world->AddComponent(ground, groundCollider);
-    world->AddComponent(dynamicBody, bodyCollider);
-
-    // 构造接触流形（法线指向动态体，即 +Y 方向）
-    ContactManifold manifold;
-    manifold.SetNormal(Vector3::UnitY());  // 法线向上
-    // 接触点在 y=0.5 处（地面顶部），穿透深度 0.05
-    manifold.AddContact(Vector3(0, 0.5f, 0), Vector3::Zero(), Vector3::Zero(), 0.05f);
-
     std::vector<CollisionPair> pairs;
-    pairs.emplace_back(ground, dynamicBody, manifold);
+    pairs.emplace_back(ctx.ground, ctx.body, ctx.manifold);
 
-    // 记录初始状态
-    const auto& groundBefore = world->GetComponent<RigidBodyComponent>(ground);
-    const auto& fallingBefore = world->GetComponent<RigidBodyComponent>(dynamicBody);
-    Vector3 normal = manifold.normal;
-    float initialNormalVel = (fallingBefore.linearVelocity - groundBefore.linearVelocity).dot(normal);
-    Vector3 initialRelVel = fallingBefore.linearVelocity - groundBefore.linearVelocity;
-    float initialTangentialSpeed = (initialRelVel - normal * initialNormalVel).norm();
+    const auto& groundBefore = ctx.world->GetComponent<RigidBodyComponent>(ctx.ground);
+    const auto& fallingBefore = ctx.world->GetComponent<RigidBodyComponent>(ctx.body);
+    Vector3 normal = ctx.manifold.normal;
+    float initialNormalVel = ComputeNormalVelocity(fallingBefore, groundBefore, normal);
+    float initialTangentialSpeed = ComputeTangentialSpeed(fallingBefore, groundBefore, normal);
 
-    std::cout << "初始状态:" << std::endl;
-    std::cout << "  动态体速度: (" << fallingBefore.linearVelocity.x() << ", " 
-              << fallingBefore.linearVelocity.y() << ", " 
-              << fallingBefore.linearVelocity.z() << ")" << std::endl;
-    std::cout << "  法向相对速度: " << initialNormalVel << " (负值表示接近)" << std::endl;
-    std::cout << "  切向相对速度: " << initialTangentialSpeed << std::endl;
-
-    // 执行约束求解
     solver.Solve(1.0f / 60.0f, pairs);
 
-    const auto& groundAfter = world->GetComponent<RigidBodyComponent>(ground);
-    const auto& fallingAfter = world->GetComponent<RigidBodyComponent>(dynamicBody);
+    const auto& groundAfter = ctx.world->GetComponent<RigidBodyComponent>(ctx.ground);
+    const auto& fallingAfter = ctx.world->GetComponent<RigidBodyComponent>(ctx.body);
 
     Vector3 relVel = fallingAfter.linearVelocity - groundAfter.linearVelocity;
     float solvedNormalVel = relVel.dot(normal);
     float solvedTangentialSpeed = (relVel - normal * solvedNormalVel).norm();
 
-    std::cout << "求解后状态:" << std::endl;
-    std::cout << "  动态体速度: (" << fallingAfter.linearVelocity.x() << ", " 
-              << fallingAfter.linearVelocity.y() << ", " 
-              << fallingAfter.linearVelocity.z() << ")" << std::endl;
-    std::cout << "  法向相对速度: " << solvedNormalVel << " (正值表示分离)" << std::endl;
-    std::cout << "  切向相对速度: " << solvedTangentialSpeed << std::endl;
-
-    // 测试1：法向速度应该显著改善（从穿透转为分离或接近分离）
-    // 初始法向速度是 -2.0（向下），求解后应该至少接近 0 或变正
     TEST_ASSERT(solvedNormalVel > initialNormalVel + 1.0f,
                 "法向相对速度应显著改善，从穿透转向分离");
-    
-    // 测试2：理想情况下，法向速度应该变为非负（不再穿透）
-    // 考虑到数值误差和 Baumgarte 稳定，我们接受接近 0 的值
     TEST_ASSERT(solvedNormalVel > -0.5f,
                 "求解后法向速度应接近或大于零，表示碰撞已解决");
-
-    // 测试3：摩擦应该减少切向滑动
-    TEST_ASSERT(solvedTangentialSpeed <= initialTangentialSpeed + 1e-4f,
-                "切向相对速度不应增大，应被摩擦抑制");
-    
-    // 测试4：摩擦应该产生明显效果
     TEST_ASSERT(solvedTangentialSpeed < initialTangentialSpeed * 0.9f,
                 "摩擦应该明显减少切向速度");
 
-    world->Shutdown();
+    ctx.world->Shutdown();
+    return true;
+}
+
+// ============================================================================
+// 用例 3：双切向摩擦（覆盖两个正交切向）
+// ============================================================================
+bool Test_ConstraintSolver_TwoTangentFriction() {
+    SceneContext ctx = CreateGroundContactScene(
+        Vector3(0, 0.55f, 0),
+        Vector3(1.2f, -2.5f, -0.8f),  // 同时包含 X/Z 切向分量
+        0.04f,
+        0.9f,
+        0.0f
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(12);
+    solver.SetPositionIterations(3);
+
+    std::vector<CollisionPair> pairs;
+    pairs.emplace_back(ctx.ground, ctx.body, ctx.manifold);
+
+    const auto& groundBefore = ctx.world->GetComponent<RigidBodyComponent>(ctx.ground);
+    const auto& bodyBefore = ctx.world->GetComponent<RigidBodyComponent>(ctx.body);
+    Vector3 normal = ctx.manifold.normal;
+    float initialNormalVel = ComputeNormalVelocity(bodyBefore, groundBefore, normal);
+    float initialTangentialSpeed = ComputeTangentialSpeed(bodyBefore, groundBefore, normal);
+
+    solver.Solve(1.0f / 60.0f, pairs);
+
+    const auto& groundAfter = ctx.world->GetComponent<RigidBodyComponent>(ctx.ground);
+    const auto& bodyAfter = ctx.world->GetComponent<RigidBodyComponent>(ctx.body);
+    float solvedNormalVel = ComputeNormalVelocity(bodyAfter, groundAfter, normal);
+    float solvedTangentialSpeed = ComputeTangentialSpeed(bodyAfter, groundAfter, normal);
+
+    TEST_ASSERT(solvedNormalVel > initialNormalVel + 1.2f,
+                "法向分离速度应明显提升（序列冲量生效）");
+    TEST_ASSERT(solvedTangentialSpeed < initialTangentialSpeed * 0.7f,
+                "两条切向方向的摩擦都应有效抑制滑动");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// ============================================================================
+// 用例 4：弹性恢复（高 restitution 带来反弹）
+// ============================================================================
+bool Test_ConstraintSolver_RestitutionBounce() {
+    SceneContext ctx = CreateGroundContactScene(
+        Vector3(0, 0.6f, 0),
+        Vector3(0.0f, -5.0f, 0.0f),
+        0.06f,
+        0.2f,
+        0.8f  // 高恢复
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(12);
+    solver.SetPositionIterations(3);
+
+    std::vector<CollisionPair> pairs;
+    pairs.emplace_back(ctx.ground, ctx.body, ctx.manifold);
+
+    const auto& groundBefore = ctx.world->GetComponent<RigidBodyComponent>(ctx.ground);
+    const auto& bodyBefore = ctx.world->GetComponent<RigidBodyComponent>(ctx.body);
+    Vector3 normal = ctx.manifold.normal;
+    float initialNormalVel = ComputeNormalVelocity(bodyBefore, groundBefore, normal);
+
+    std::cout << "=== Restitution Test Debug ===" << std::endl;
+    std::cout << "Initial velocity: " << bodyBefore.linearVelocity.transpose() << std::endl;
+    std::cout << "Initial normal velocity: " << initialNormalVel << std::endl;
+    std::cout << "Restitution: 0.8" << std::endl;
+    std::cout << "Normal: " << normal.transpose() << std::endl;
+
+    solver.Solve(1.0f / 60.0f, pairs);
+
+    const auto& groundAfter = ctx.world->GetComponent<RigidBodyComponent>(ctx.ground);
+    const auto& bodyAfter = ctx.world->GetComponent<RigidBodyComponent>(ctx.body);
+    float solvedNormalVel = ComputeNormalVelocity(bodyAfter, groundAfter, normal);
+
+    std::cout << "After solve velocity: " << bodyAfter.linearVelocity.transpose() << std::endl;
+    std::cout << "After solve normal velocity: " << solvedNormalVel << std::endl;
+    std::cout << "Expected: > 1.5" << std::endl;
+    std::cout << "==============================" << std::endl;
+
+    TEST_ASSERT(solvedNormalVel > 1.5f,
+                "高恢复系数应产生明显向上的反弹速度");
+    TEST_ASSERT(solvedNormalVel > initialNormalVel + 5.0f,
+                "反弹幅度应远大于入射速度的负向值");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// ============================================================================
+// 用例 5：Warm Start 复用上一帧冲量，加快收敛
+// ============================================================================
+bool Test_ConstraintSolver_WarmStart_CachesImpulses() {
+    // 策略：使用0次迭代，只依靠Warm Start本身的效果
+    // Warm solver应该在WarmStart阶段就改变速度
+    // Cold solver 0次迭代不会有任何效果
+    SceneContext warmCtx = CreateGroundContactScene(
+        Vector3(0, 0.5f, 0),
+        Vector3(0.0f, -3.0f, 0.0f),
+        0.08f,
+        0.5f,
+        0.0f
+    );
+
+    ConstraintSolver warmSolver(warmCtx.world.get());
+    warmSolver.SetSolverIterations(15);
+    warmSolver.SetPositionIterations(2);
+
+    std::vector<CollisionPair> pairsWarm;
+    pairsWarm.emplace_back(warmCtx.ground, warmCtx.body, warmCtx.manifold);
+    warmSolver.Solve(1.0f / 60.0f, pairsWarm);
+
+    std::cout << "=== Warm Start Test Debug ===" << std::endl;
+    const auto& bodyAfterFirstSolve = warmCtx.world->GetComponent<RigidBodyComponent>(warmCtx.body);
+    std::cout << "After first solve (15 iter): " << bodyAfterFirstSolve.linearVelocity.transpose() << std::endl;
+
+    auto& warmBody = warmCtx.world->GetComponent<RigidBodyComponent>(warmCtx.body);
+    auto& warmTransform = warmCtx.world->GetComponent<TransformComponent>(warmCtx.body);
+    warmBody.linearVelocity = warmCtx.initialLinearVelocity;
+    warmBody.angularVelocity = Vector3::Zero();
+    warmTransform.SetPosition(warmCtx.initialPosition);
+
+    std::cout << "Reset to initial state: " << warmBody.linearVelocity.transpose() << std::endl;
+
+    // 关键：0次迭代，只有WarmStart会执行（位置迭代也设为0以完全隔离）
+    warmSolver.SetSolverIterations(0);
+    warmSolver.SetPositionIterations(0);
+    warmSolver.Solve(1.0f / 60.0f, pairsWarm);
+    const auto& warmBodyAfter = warmCtx.world->GetComponent<RigidBodyComponent>(warmCtx.body);
+    float warmNormalVel = ComputeNormalVelocity(warmBodyAfter, warmCtx.world->GetComponent<RigidBodyComponent>(warmCtx.ground), warmCtx.manifold.normal);
+
+    std::cout << "Warm solve (0 iter): " << warmBodyAfter.linearVelocity.transpose() << std::endl;
+    std::cout << "Warm normal velocity: " << warmNormalVel << std::endl;
+
+    // Cold solver: 0次迭代不应改变任何东西
+    SceneContext coldCtx = CreateGroundContactScene(
+        warmCtx.initialPosition,
+        warmCtx.initialLinearVelocity,
+        0.08f,
+        0.5f,
+        0.0f
+    );
+    ConstraintSolver coldSolver(coldCtx.world.get());
+    coldSolver.SetSolverIterations(0);
+    coldSolver.SetPositionIterations(0);  // 也设为0
+    std::vector<CollisionPair> pairsCold;
+    pairsCold.emplace_back(coldCtx.ground, coldCtx.body, coldCtx.manifold);
+    coldSolver.Solve(1.0f / 60.0f, pairsCold);
+    const auto& coldBodyAfter = coldCtx.world->GetComponent<RigidBodyComponent>(coldCtx.body);
+    float coldNormalVel = ComputeNormalVelocity(coldBodyAfter, coldCtx.world->GetComponent<RigidBodyComponent>(coldCtx.ground), coldCtx.manifold.normal);
+
+    std::cout << "Cold solve (0 iter): " << coldBodyAfter.linearVelocity.transpose() << std::endl;
+    std::cout << "Cold normal velocity: " << coldNormalVel << std::endl;
+    std::cout << "Difference: " << (warmNormalVel - coldNormalVel) << std::endl;
+    std::cout << "Expected: > 1.0" << std::endl;
+    std::cout << "==============================" << std::endl;
+
+    TEST_ASSERT(std::abs(coldNormalVel - (-3.0f)) < 0.01f,
+                "Cold solver 0次迭代不应改变速度");
+    TEST_ASSERT(warmNormalVel > coldNormalVel + 1.0f,
+                "Warm Start 应在0次迭代时利用缓存冲量显著改善速度");
+
+    warmCtx.world->Shutdown();
+    coldCtx.world->Shutdown();
+    return true;
+}
+
+// ============================================================================
+// 用例 6：位置修正保证堆叠不穿透
+// ============================================================================
+bool Test_ConstraintSolver_PositionCorrection_Stacking() {
+    SceneContext ctx = CreateGroundContactScene(
+        Vector3(0, 0.9f, 0),    // 轻微穿透
+        Vector3(0.0f, 0.0f, 0.0f),
+        0.03f,
+        0.6f,
+        0.0f
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(8);
+    solver.SetPositionIterations(6);
+
+    std::vector<CollisionPair> pairs;
+    pairs.emplace_back(ctx.ground, ctx.body, ctx.manifold);
+
+    float yBefore = ctx.initialPosition.y();
+    solver.Solve(1.0f / 60.0f, pairs);
+
+    const auto& groundAfter = ctx.world->GetComponent<RigidBodyComponent>(ctx.ground);
+    const auto& bodyAfterRB = ctx.world->GetComponent<RigidBodyComponent>(ctx.body);
+    const auto& bodyAfterTr = ctx.world->GetComponent<TransformComponent>(ctx.body);
+    float yAfter = bodyAfterTr.GetPosition().y();
+    float solvedNormalVel = ComputeNormalVelocity(bodyAfterRB, groundAfter, ctx.manifold.normal);
+
+    TEST_ASSERT(yAfter >= yBefore,
+                "位置迭代应避免进一步下沉，堆叠应朝分离方向校正");
+    TEST_ASSERT(solvedNormalVel >= -0.05f,
+                "位置解算后法向速度不应继续指向穿透（应接近静止/分离）");
+
+    ctx.world->Shutdown();
     return true;
 }
 
@@ -247,6 +469,10 @@ bool Test_ConstraintSolver_ResolveContactAndFriction() {
 int main() {
     RUN_TEST(Test_ConstraintSolver_NoPairs_NoChange);
     RUN_TEST(Test_ConstraintSolver_ResolveContactAndFriction);
+    RUN_TEST(Test_ConstraintSolver_TwoTangentFriction);
+    RUN_TEST(Test_ConstraintSolver_RestitutionBounce);
+    RUN_TEST(Test_ConstraintSolver_WarmStart_CachesImpulses);
+    RUN_TEST(Test_ConstraintSolver_PositionCorrection_Stacking);
 
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "测试总数: " << g_testCount << std::endl;

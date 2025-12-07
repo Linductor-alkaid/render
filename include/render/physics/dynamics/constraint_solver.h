@@ -24,6 +24,8 @@
 #include "render/ecs/entity.h"
 #include <array>
 #include <vector>
+#include <unordered_map>
+#include <cstdint>
 
 namespace Render {
 namespace ECS {
@@ -72,6 +74,8 @@ private:
         Vector3 normal = Vector3::UnitY();
         Vector3 tangent1 = Vector3::UnitX();
         Vector3 tangent2 = Vector3::UnitZ();
+        Vector3 localPointA = Vector3::Zero();
+        Vector3 localPointB = Vector3::Zero();
 
         float penetration = 0.0f;
         float friction = 0.5f;
@@ -102,14 +106,34 @@ private:
         std::array<ContactConstraintPoint, 4> points{};
     };
 
+    struct CachedContactPoint {
+        Vector3 localPointA = Vector3::Zero();
+        Vector3 localPointB = Vector3::Zero();
+        float normalImpulse = 0.0f;
+        float tangentImpulse[2]{0.0f, 0.0f};
+    };
+
+    struct CachedContactManifold {
+        int contactCount = 0;
+        std::array<CachedContactPoint, 4> points{};
+    };
+
     void PrepareConstraints(float dt, const std::vector<CollisionPair>& pairs);
     void WarmStart();
     void SolveVelocityConstraints();
     void SolvePositionConstraints(float dt);
+    void CacheImpulses();
+    uint64_t HashPair(ECS::EntityID a, ECS::EntityID b) const;
+
+    // 工具函数（保持在类内，便于访问私有类型）
+    static Matrix3 ComputeWorldInvInertia(const RigidBodyComponent& body, const Quaternion& rotation);
+    static Vector3 ChooseTangent(const Vector3& normal);
+    static int FindMatchingContact(const ContactConstraintPoint& point, const CachedContactManifold& cache);
 
 private:
     ECS::World* m_world = nullptr;
     std::vector<ContactConstraint> m_contactConstraints;
+    std::unordered_map<uint64_t, CachedContactManifold> m_cachedImpulses;
     int m_solverIterations = 10;
     int m_positionIterations = 4;
 };
