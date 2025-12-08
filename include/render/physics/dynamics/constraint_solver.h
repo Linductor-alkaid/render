@@ -123,6 +123,7 @@ private:
     void SolveVelocityConstraints();
     void SolvePositionConstraints(float dt);
     void CacheImpulses();
+    void SolveInternal(float dt, const std::vector<CollisionPair>& pairs);
     uint64_t HashPair(ECS::EntityID a, ECS::EntityID b) const;
 
     // 工具函数（保持在类内，便于访问私有类型）

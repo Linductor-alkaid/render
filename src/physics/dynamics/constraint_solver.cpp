@@ -36,6 +36,67 @@ constexpr float kBaumgarte = 0.2f;
 constexpr float kAllowedPenetration = 0.01f;
 constexpr float kRestitutionVelocityThreshold = 1.0f;
 constexpr float kContactMatchThresholdSq = 1e-4f;
+constexpr float kCFM = 1e-8f;  // CFM (Constraint Force Mixing) 软化，防止有效质量接近零
+constexpr float kMaxTimeStep = 1.0f / 30.0f;  // 最大时间步长 33ms
+constexpr float kImpulseDecayFactor = 0.95f;  // Warm Start 冲量衰减因子
+constexpr float kMaxCachedImpulse = 1e4f;  // 最大缓存冲量（超过视为异常）
+constexpr float kMaxVelocity = 100.0f;  // 最大速度 100 m/s，防止爆炸
+constexpr float kMaxAcceleration = 100.0f * 9.81f;  // 最大加速度 100g
+
+/**
+ * @brief 计算自适应 Baumgarte 系数
+ * @param penetration 穿透深度
+ * @param dt 时间步长
+ * @return 自适应的 beta 值
+ */
+float ComputeAdaptiveBaumgarte(float penetration, float dt) {
+    // 浅穿透使用标准值，深穿透降低β避免过度修正
+    if (penetration < 0.1f) return 0.2f;
+    if (penetration > 0.5f) return 0.1f;
+    return MathUtils::Lerp(0.2f, 0.1f, (penetration - 0.1f) / 0.4f);
+}
+
+/**
+ * @brief 计算最大允许冲量（基于质量和时间步）
+ * @param body 刚体
+ * @param dt 时间步长
+ * @return 最大冲量值
+ */
+float ComputeMaxImpulse(const RigidBodyComponent& body, float dt) {
+    float mass = body.inverseMass > MathUtils::EPSILON ? 1.0f / body.inverseMass : 1e10f;
+    return mass * kMaxAcceleration * dt;
+}
+
+/**
+ * @brief 检查并修正速度爆炸
+ * @param body 刚体
+ * @return 是否发生了速度爆炸
+ */
+bool CheckAndClampVelocity(RigidBodyComponent* body) {
+    if (!body || body->IsStatic() || body->IsKinematic()) {
+        return false;
+    }
+    
+    bool hadExplosion = false;
+    
+    // 检查线速度
+    float linearSpeed = body->linearVelocity.norm();
+    if (linearSpeed > kMaxVelocity) {
+        body->linearVelocity *= (kMaxVelocity / linearSpeed);
+        hadExplosion = true;
+    }
+    
+    // 检查角速度（限制为每秒10圈）
+    constexpr float kMaxAngularVelocity = 2.0f * MathUtils::PI * 10.0f;
+    float angularSpeed = body->angularVelocity.norm();
+    if (angularSpeed > kMaxAngularVelocity) {
+        body->angularVelocity *= (kMaxAngularVelocity / angularSpeed);
+        hadExplosion = true;
+    }
+    
+    return hadExplosion;
+}
+
 }  // namespace
 
 Matrix3 ConstraintSolver::ComputeWorldInvInertia(const RigidBodyComponent& body, const Quaternion& rotation) {
@@ -89,12 +150,42 @@ void ConstraintSolver::Solve(float dt, const std::vector<CollisionPair>& pairs) 
         return;
     }
 
+    // 时间步长保护：如果dt过大，分解为多个子步
+    if (dt > kMaxTimeStep) {
+        int subSteps = static_cast<int>(std::ceil(dt / kMaxTimeStep));
+        float subDt = dt / static_cast<float>(subSteps);
+        for (int i = 0; i < subSteps; ++i) {
+            SolveInternal(subDt, pairs);
+        }
+        return;
+    }
+
+    SolveInternal(dt, pairs);
+}
+
+void ConstraintSolver::SolveInternal(float dt, const std::vector<CollisionPair>& pairs) {
     Clear();
     PrepareConstraints(dt, pairs);
     WarmStart();
     SolveVelocityConstraints();
     SolvePositionConstraints(dt);
     CacheImpulses();
+    
+    // 速度爆炸检测与修正
+    bool hadExplosion = false;
+    for (auto& constraint : m_contactConstraints) {
+        if (CheckAndClampVelocity(constraint.bodyA)) {
+            hadExplosion = true;
+        }
+        if (CheckAndClampVelocity(constraint.bodyB)) {
+            hadExplosion = true;
+        }
+    }
+    
+    // 如果发生速度爆炸，清空所有缓存冲量（下一帧从头开始）
+    if (hadExplosion) {
+        m_cachedImpulses.clear();
+    }
 }
 
 void ConstraintSolver::Clear() {
@@ -183,32 +274,36 @@ void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionP
             point.friction = combinedFriction;
             point.restitution = combinedRestitution;
 
-            // 有效质量：包含线性和角项
+            // 有效质量：包含线性和角项，添加CFM软化防止除零
             Vector3 rnA = point.rA.cross(point.normal);
             Vector3 rnB = point.rB.cross(point.normal);
             float invMass = bodyA.inverseMass + bodyB.inverseMass
                 + rnA.dot(constraint.invInertiaA * rnA)
-                + rnB.dot(constraint.invInertiaB * rnB);
-            point.normalMass = (invMass > MathUtils::EPSILON) ? 1.0f / invMass : 0.0f;
+                + rnB.dot(constraint.invInertiaB * rnB)
+                + kCFM;  // CFM软化，防止有效质量接近零
+            point.normalMass = 1.0f / invMass;
 
-            // 切向有效质量
+            // 切向有效质量，添加CFM软化
             Vector3 rtA1 = point.rA.cross(point.tangent1);
             Vector3 rtB1 = point.rB.cross(point.tangent1);
             float invMassT1 = bodyA.inverseMass + bodyB.inverseMass
                 + rtA1.dot(constraint.invInertiaA * rtA1)
-                + rtB1.dot(constraint.invInertiaB * rtB1);
-            point.tangentMass[0] = (invMassT1 > MathUtils::EPSILON) ? 1.0f / invMassT1 : 0.0f;
+                + rtB1.dot(constraint.invInertiaB * rtB1)
+                + kCFM;
+            point.tangentMass[0] = 1.0f / invMassT1;
 
             Vector3 rtA2 = point.rA.cross(point.tangent2);
             Vector3 rtB2 = point.rB.cross(point.tangent2);
             float invMassT2 = bodyA.inverseMass + bodyB.inverseMass
                 + rtA2.dot(constraint.invInertiaA * rtA2)
-                + rtB2.dot(constraint.invInertiaB * rtB2);
-            point.tangentMass[1] = (invMassT2 > MathUtils::EPSILON) ? 1.0f / invMassT2 : 0.0f;
+                + rtB2.dot(constraint.invInertiaB * rtB2)
+                + kCFM;
+            point.tangentMass[1] = 1.0f / invMassT2;
 
-            // Baumgarte stabilization for position correction
+            // 自适应 Baumgarte stabilization for position correction
             float penetrationDepth = std::max(0.0f, point.penetration - kAllowedPenetration);
-            point.bias = (kBaumgarte * penetrationDepth) / std::max(dt, MathUtils::EPSILON);
+            float adaptiveBeta = ComputeAdaptiveBaumgarte(penetrationDepth, dt);
+            point.bias = (adaptiveBeta * penetrationDepth) / std::max(dt, MathUtils::EPSILON);
 
             // Restitution: calculate bounce velocity target
             Vector3 vA = bodyA.linearVelocity + bodyA.angularVelocity.cross(point.rA);
@@ -231,9 +326,21 @@ void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionP
                 int matchIndex = FindMatchingContact(point, cacheIt->second);
                 if (matchIndex >= 0) {
                     const auto& cachedPoint = cacheIt->second.points[matchIndex];
-                    point.normalImpulse = std::max(0.0f, cachedPoint.normalImpulse);
-                    point.tangentImpulse[0] = cachedPoint.tangentImpulse[0];
-                    point.tangentImpulse[1] = cachedPoint.tangentImpulse[1];
+                    // 应用衰减因子，防止过时冲量累积
+                    float decayedNormal = cachedPoint.normalImpulse * kImpulseDecayFactor;
+                    float decayedTangent1 = cachedPoint.tangentImpulse[0] * kImpulseDecayFactor;
+                    float decayedTangent2 = cachedPoint.tangentImpulse[1] * kImpulseDecayFactor;
+                    
+                    // 重置异常值
+                    if (std::abs(decayedNormal) < kMaxCachedImpulse) {
+                        point.normalImpulse = std::max(0.0f, decayedNormal);
+                    }
+                    if (std::abs(decayedTangent1) < kMaxCachedImpulse) {
+                        point.tangentImpulse[0] = decayedTangent1;
+                    }
+                    if (std::abs(decayedTangent2) < kMaxCachedImpulse) {
+                        point.tangentImpulse[1] = decayedTangent2;
+                    }
                 }
             }
         }
@@ -296,6 +403,12 @@ void ConstraintSolver::SolveVelocityConstraints() {
                 // 约束方程: C = vn + bias - v_target, 其中 v_target = restitutionBias
                 // 使用 point.bias（Baumgarte位置修正）减去 point.restitutionBias（弹性恢复目标速度）
                 float lambdaN = -(normalRelVel + point.bias - point.restitutionBias) * point.normalMass;
+
+                // 冲量钳位，防止数值爆炸
+                float maxImpulseA = ComputeMaxImpulse(*bodyA, 1.0f / 60.0f);  // 假设60fps
+                float maxImpulseB = ComputeMaxImpulse(*bodyB, 1.0f / 60.0f);
+                float maxImpulse = std::max(maxImpulseA, maxImpulseB);
+                lambdaN = MathUtils::Clamp(lambdaN, -maxImpulse, maxImpulse);
 
                 float oldNormalImpulse = point.normalImpulse;
                 point.normalImpulse = std::max(oldNormalImpulse + lambdaN, 0.0f);
