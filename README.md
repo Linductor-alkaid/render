@@ -90,6 +90,34 @@
 
 使用 Visual Studio 2022:
 
+#### 方式一：使用自动化脚本（推荐）
+
+使用自动化脚本一键设置所有依赖：
+
+```powershell
+# 运行依赖设置脚本（自动下载和配置所有第三方库）
+PowerShell -ExecutionPolicy Bypass -File ".\setup-dependencies.ps1"
+
+# 编译 Release 版本
+mkdir build; cd build; cmake ..; cd ..
+cmake --build build --config Release
+
+# 运行示例
+.\build\bin\Release\01_basic_window.exe
+```
+
+**脚本功能**：
+- 自动克隆所有必需的第三方库
+- 自动运行 Get-GitModules.ps1 脚本
+- 自动复制 SDL3_ttf 所需的 cmake 文件
+- 自动下载并解压 Eigen3
+- 智能检测已存在的库，避免重复下载
+- 支持选择性跳过某些库（使用 `-SkipEigen`、`-SkipSDL` 等参数）
+
+#### 方式二：手动设置
+
+如果需要手动控制每个步骤，可以按照以下步骤操作：
+
 ```batch
 # 获取第三方库
 cd third_party
@@ -124,6 +152,8 @@ cmake --build build --config Release
 # 运行示例
 .\build\bin\Release\01_basic_window.exe
 ```
+
+**注意**: 如果 SDL3_ttf-3.2.2 目录不存在，请先手动下载并解压到 `third_party/` 目录。
 
 ### 构建选项
 - `BUILD_EXAMPLES=ON` 构建示例程序（默认开启）
