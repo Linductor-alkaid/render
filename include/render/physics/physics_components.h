@@ -22,6 +22,8 @@
 
 #include "render/types.h"
 #include "render/ecs/entity.h"
+#include "render/physics/dynamics/joint_component.h"
+#include <variant>
 #include <memory>
 #include <limits>
 
@@ -833,6 +835,64 @@ struct ForceFieldComponent {
      */
     bool AffectsLayer(uint32_t layer) const {
         return (affectLayers & (1u << layer)) != 0;
+    }
+};
+
+// ============================================================================
+// 关节组件
+// ============================================================================
+
+/**
+ * @brief 物理关节组件
+ * 
+ * 包含关节基础信息和类型特定的数据
+ * 
+ * @note 包含 Eigen 类型，需要对齐
+ */
+struct PhysicsJointComponent {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    
+    JointComponent base;
+    
+    // 使用 variant 存储不同类型关节的专用数据
+    std::variant<
+        FixedJointData,
+        HingeJointData,
+        DistanceJointData,
+        SpringJointData,
+        SliderJointData
+    > data;
+    
+    // 运行时数据（缓存）
+    struct RuntimeData {
+        Vector3 rA = Vector3::Zero();
+        Vector3 rB = Vector3::Zero();
+        Vector3 worldAxis = Vector3::UnitZ();
+        Matrix3 invInertiaA = Matrix3::Zero();
+        Matrix3 invInertiaB = Matrix3::Zero();
+        
+        // 累积冲量（用于 Warm Start）
+        Vector3 accumulatedLinearImpulse = Vector3::Zero();
+        Vector3 accumulatedAngularImpulse = Vector3::Zero();
+        float accumulatedLimitImpulse = 0.0f;
+        float accumulatedMotorImpulse = 0.0f;
+    } runtime;
+    
+    /**
+     * @brief 默认构造函数
+     */
+    PhysicsJointComponent() {
+        base.type = JointComponent::JointType::Fixed;
+        data = FixedJointData();
+        runtime.rA.setZero();
+        runtime.rB.setZero();
+        runtime.worldAxis = Vector3::UnitZ();
+        runtime.invInertiaA.setZero();
+        runtime.invInertiaB.setZero();
+        runtime.accumulatedLinearImpulse.setZero();
+        runtime.accumulatedAngularImpulse.setZero();
+        runtime.accumulatedLimitImpulse = 0.0f;
+        runtime.accumulatedMotorImpulse = 0.0f;
     }
 };
 

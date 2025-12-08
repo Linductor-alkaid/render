@@ -22,11 +22,13 @@
 
 #include "render/physics/physics_systems.h"
 #include "render/physics/physics_components.h"
+#include "render/physics/dynamics/joint_component.h"
 #include "render/ecs/world.h"
 #include "render/ecs/components.h"
 #include "render/math_utils.h"
 #include <algorithm>
 #include <limits>
+#include <cmath>
 
 namespace Render {
 namespace Physics {
@@ -190,6 +192,7 @@ void ConstraintSolver::SolveInternal(float dt, const std::vector<CollisionPair>&
 
 void ConstraintSolver::Clear() {
     m_contactConstraints.clear();
+    m_jointConstraints.clear();
 }
 
 void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionPair>& pairs) {
@@ -373,10 +376,12 @@ void ConstraintSolver::WarmStart() {
 
             // 应用到速度
             bodyA->linearVelocity -= totalImpulse * bodyA->inverseMass;
-            bodyA->angularVelocity -= constraint.invInertiaA * (point.rA.cross(totalImpulse));
+            Vector3 torqueA = point.rA.cross(totalImpulse);
+            bodyA->angularVelocity -= constraint.invInertiaA * torqueA;
 
             bodyB->linearVelocity += totalImpulse * bodyB->inverseMass;
-            bodyB->angularVelocity += constraint.invInertiaB * (point.rB.cross(totalImpulse));
+            Vector3 torqueB = point.rB.cross(totalImpulse);
+            bodyB->angularVelocity += constraint.invInertiaB * torqueB;
 
         }
     }
@@ -416,9 +421,11 @@ void ConstraintSolver::SolveVelocityConstraints() {
 
                 Vector3 impulseN = appliedNormal * point.normal;
                 bodyA->linearVelocity -= impulseN * bodyA->inverseMass;
-                bodyA->angularVelocity -= constraint.invInertiaA * (point.rA.cross(impulseN));
+                Vector3 torqueNA = point.rA.cross(impulseN);
+                bodyA->angularVelocity -= constraint.invInertiaA * torqueNA;
                 bodyB->linearVelocity += impulseN * bodyB->inverseMass;
-                bodyB->angularVelocity += constraint.invInertiaB * (point.rB.cross(impulseN));
+                Vector3 torqueNB = point.rB.cross(impulseN);
+                bodyB->angularVelocity += constraint.invInertiaB * torqueNB;
 
                 // 更新相对速度用于摩擦
                 vA = bodyA->linearVelocity;
@@ -438,9 +445,11 @@ void ConstraintSolver::SolveVelocityConstraints() {
 
                 Vector3 impulseT1 = appliedT1 * point.tangent1;
                 bodyA->linearVelocity -= impulseT1 * bodyA->inverseMass;
-                bodyA->angularVelocity -= constraint.invInertiaA * (point.rA.cross(impulseT1));
+                Vector3 torqueT1A = point.rA.cross(impulseT1);
+                bodyA->angularVelocity -= constraint.invInertiaA * torqueT1A;
                 bodyB->linearVelocity += impulseT1 * bodyB->inverseMass;
-                bodyB->angularVelocity += constraint.invInertiaB * (point.rB.cross(impulseT1));
+                Vector3 torqueT1B = point.rB.cross(impulseT1);
+                bodyB->angularVelocity += constraint.invInertiaB * torqueT1B;
 
                 // 切向 2
                 float tangentRelVel2 = relativeVel.dot(point.tangent2);
@@ -451,9 +460,11 @@ void ConstraintSolver::SolveVelocityConstraints() {
 
                 Vector3 impulseT2 = appliedT2 * point.tangent2;
                 bodyA->linearVelocity -= impulseT2 * bodyA->inverseMass;
-                bodyA->angularVelocity -= constraint.invInertiaA * (point.rA.cross(impulseT2));
+                Vector3 torqueT2A = point.rA.cross(impulseT2);
+                bodyA->angularVelocity -= constraint.invInertiaA * torqueT2A;
                 bodyB->linearVelocity += impulseT2 * bodyB->inverseMass;
-                bodyB->angularVelocity += constraint.invInertiaB * (point.rB.cross(impulseT2));
+                Vector3 torqueT2B = point.rB.cross(impulseT2);
+                bodyB->angularVelocity += constraint.invInertiaB * torqueT2B;
             }
         }
     }
@@ -499,7 +510,9 @@ void ConstraintSolver::SolvePositionConstraints(float dt) {
 
                 if (!bodyA->IsStatic() && !bodyA->IsKinematic()) {
                     Vector3 linearDelta = correctionImpulse * (-bodyA->inverseMass);
-                    Vector3 angularDelta = constraint.invInertiaA * (point.rA.cross(-correctionImpulse));
+                    Vector3 negativeImpulse = -correctionImpulse;
+                    Vector3 torqueA = point.rA.cross(negativeImpulse);
+                    Vector3 angularDelta = constraint.invInertiaA * torqueA;
                     Vector3 newPos = constraint.transformA->GetPosition() + linearDelta;
                     constraint.transformA->SetPosition(newPos);
                     ApplyAngularCorrection(constraint.transformA, angularDelta);
@@ -507,7 +520,8 @@ void ConstraintSolver::SolvePositionConstraints(float dt) {
 
                 if (!bodyB->IsStatic() && !bodyB->IsKinematic()) {
                     Vector3 linearDelta = correctionImpulse * bodyB->inverseMass;
-                    Vector3 angularDelta = constraint.invInertiaB * (point.rB.cross(correctionImpulse));
+                    Vector3 torqueB = point.rB.cross(correctionImpulse);
+                    Vector3 angularDelta = constraint.invInertiaB * torqueB;
                     Vector3 newPos = constraint.transformB->GetPosition() + linearDelta;
                     constraint.transformB->SetPosition(newPos);
                     ApplyAngularCorrection(constraint.transformB, angularDelta);
@@ -543,6 +557,232 @@ uint64_t ConstraintSolver::HashPair(ECS::EntityID a, ECS::EntityID b) const {
         std::swap(a, b);
     }
     return (static_cast<uint64_t>(a.index) << 32) | static_cast<uint64_t>(b.index);
+}
+
+void ConstraintSolver::SolveWithJoints(
+    float dt,
+    const std::vector<CollisionPair>& pairs,
+    const std::vector<ECS::EntityID>& jointEntities
+) {
+    if (!m_world) {
+        return;
+    }
+
+    // 时间步长保护：如果dt过大，分解为多个子步
+    if (dt > kMaxTimeStep) {
+        int subSteps = static_cast<int>(std::ceil(dt / kMaxTimeStep));
+        float subDt = dt / static_cast<float>(subSteps);
+        for (int i = 0; i < subSteps; ++i) {
+            // 递归调用，但使用子时间步
+            SolveWithJoints(subDt, pairs, jointEntities);
+        }
+        return;
+    }
+
+    // 内部实现：直接调用求解逻辑
+    Clear();
+    
+    // 准备约束
+    PrepareConstraints(dt, pairs);
+    PrepareJointConstraints(dt, jointEntities);
+    
+    // Warm Start
+    WarmStart();
+    WarmStartJoints();
+    
+    // 速度约束迭代（交替求解接触和关节）
+    for (int i = 0; i < m_solverIterations; ++i) {
+        SolveVelocityConstraints();
+        SolveJointVelocityConstraints(dt);
+    }
+    
+    // 位置修正
+    SolvePositionConstraints(dt);
+    SolveJointPositionConstraints(dt);
+    
+    // 缓存冲量
+    CacheImpulses();
+    CacheJointImpulses();
+    
+    // 检测断裂
+    CheckJointBreakage(dt);
+    
+    // 速度爆炸检测与修正
+    bool hadExplosion = false;
+    for (auto& constraint : m_contactConstraints) {
+        if (CheckAndClampVelocity(constraint.bodyA)) {
+            hadExplosion = true;
+        }
+        if (CheckAndClampVelocity(constraint.bodyB)) {
+            hadExplosion = true;
+        }
+    }
+    for (auto& constraint : m_jointConstraints) {
+        if (CheckAndClampVelocity(constraint.bodyA)) {
+            hadExplosion = true;
+        }
+        if (CheckAndClampVelocity(constraint.bodyB)) {
+            hadExplosion = true;
+        }
+    }
+    
+    // 如果发生速度爆炸，清空所有缓存冲量（下一帧从头开始）
+    if (hadExplosion) {
+        m_cachedImpulses.clear();
+        for (auto& constraint : m_jointConstraints) {
+            if (constraint.joint) {
+                constraint.joint->runtime.accumulatedLinearImpulse = Vector3::Zero();
+                constraint.joint->runtime.accumulatedAngularImpulse = Vector3::Zero();
+                constraint.joint->runtime.accumulatedLimitImpulse = 0.0f;
+                constraint.joint->runtime.accumulatedMotorImpulse = 0.0f;
+            }
+        }
+    }
+}
+
+
+void ConstraintSolver::PrepareJointConstraints(
+    float dt,
+    const std::vector<ECS::EntityID>& jointEntities
+) {
+    m_jointConstraints.clear();
+    m_jointConstraints.reserve(jointEntities.size());
+    
+    for (auto entityID : jointEntities) {
+        if (!m_world->HasComponent<PhysicsJointComponent>(entityID)) {
+            continue;
+        }
+        
+        auto& jointComp = m_world->GetComponent<PhysicsJointComponent>(entityID);
+        
+        // 跳过禁用或已断裂的关节
+        if (!jointComp.base.isEnabled || jointComp.base.isBroken) {
+            continue;
+        }
+        
+        auto& base = jointComp.base;
+        auto connectedBody = base.connectedBody;
+        
+        // 验证连接的刚体存在
+        if (!m_world->IsValidEntity(entityID) || 
+            !m_world->IsValidEntity(connectedBody)) {
+            continue;
+        }
+        
+        if (!m_world->HasComponent<RigidBodyComponent>(entityID) ||
+            !m_world->HasComponent<RigidBodyComponent>(connectedBody) ||
+            !m_world->HasComponent<ECS::TransformComponent>(entityID) ||
+            !m_world->HasComponent<ECS::TransformComponent>(connectedBody)) {
+            continue;
+        }
+        
+        auto& bodyA = m_world->GetComponent<RigidBodyComponent>(entityID);
+        auto& bodyB = m_world->GetComponent<RigidBodyComponent>(connectedBody);
+        
+        // 静态-静态不需要求解
+        if ((bodyA.IsStatic() || bodyA.IsKinematic()) &&
+            (bodyB.IsStatic() || bodyB.IsKinematic())) {
+            continue;
+        }
+        
+        JointConstraint constraint;
+        constraint.jointEntity = entityID;
+        constraint.entityA = entityID;
+        constraint.entityB = connectedBody;
+        constraint.joint = &jointComp;
+        constraint.bodyA = &bodyA;
+        constraint.bodyB = &bodyB;
+        constraint.transformA = &m_world->GetComponent<ECS::TransformComponent>(entityID);
+        constraint.transformB = &m_world->GetComponent<ECS::TransformComponent>(connectedBody);
+        
+        // 预计算世界空间逆惯性张量
+        jointComp.runtime.invInertiaA = ComputeWorldInvInertia(
+            bodyA, constraint.transformA->GetRotation());
+        jointComp.runtime.invInertiaB = ComputeWorldInvInertia(
+            bodyB, constraint.transformB->GetRotation());
+        
+        // 计算世界空间锚点和相对向量
+        Vector3 comA = constraint.transformA->GetPosition() + bodyA.centerOfMass;
+        Vector3 comB = constraint.transformB->GetPosition() + bodyB.centerOfMass;
+        Vector3 worldAnchorA = constraint.transformA->GetPosition() 
+            + constraint.transformA->GetRotation() * base.localAnchorA;
+        Vector3 worldAnchorB = constraint.transformB->GetPosition() 
+            + constraint.transformB->GetRotation() * base.localAnchorB;
+        jointComp.runtime.rA = worldAnchorA - comA;
+        jointComp.runtime.rB = worldAnchorB - comB;
+        
+        m_jointConstraints.push_back(constraint);
+    }
+}
+
+void ConstraintSolver::WarmStartJoints() {
+    constexpr float decayFactor = 0.95f;
+    constexpr float maxCachedImpulse = 1e4f;
+    
+    for (auto& constraint : m_jointConstraints) {
+        auto& joint = *constraint.joint;
+        auto& bodyA = *constraint.bodyA;
+        auto& bodyB = *constraint.bodyB;
+        
+        // 衰减因子（防止过时冲量累积）
+        joint.runtime.accumulatedLinearImpulse *= decayFactor;
+        joint.runtime.accumulatedAngularImpulse *= decayFactor;
+        
+        // 重置异常值
+        if (joint.runtime.accumulatedLinearImpulse.norm() > maxCachedImpulse) {
+            joint.runtime.accumulatedLinearImpulse = Vector3::Zero();
+        }
+        if (joint.runtime.accumulatedAngularImpulse.norm() > maxCachedImpulse) {
+            joint.runtime.accumulatedAngularImpulse = Vector3::Zero();
+        }
+        
+        // 应用缓存的线性冲量
+        Vector3 linearImpulse = joint.runtime.accumulatedLinearImpulse;
+        bodyA.linearVelocity -= linearImpulse * bodyA.inverseMass;
+        bodyB.linearVelocity += linearImpulse * bodyB.inverseMass;
+        
+        // 应用缓存的角冲量
+        Vector3 angularImpulse = joint.runtime.accumulatedAngularImpulse;
+        bodyA.angularVelocity -= joint.runtime.invInertiaA * angularImpulse;
+        bodyB.angularVelocity += joint.runtime.invInertiaB * angularImpulse;
+    }
+}
+
+void ConstraintSolver::SolveJointVelocityConstraints(float dt) {
+    // 目前为空实现，后续阶段会添加具体关节类型的求解逻辑
+    // 阶段1.3将实现Fixed Joint，阶段1.4将实现Distance Joint
+}
+
+void ConstraintSolver::SolveJointPositionConstraints(float dt) {
+    // 目前为空实现，后续阶段会添加具体关节类型的位置修正逻辑
+}
+
+void ConstraintSolver::CacheJointImpulses() {
+    // 冲量已在求解过程中累积，无需额外操作
+    // 如果需要衰减，可以在此处理
+}
+
+void ConstraintSolver::CheckJointBreakage(float dt) {
+    if (dt <= MathUtils::EPSILON) {
+        return;
+    }
+    
+    for (auto& constraint : m_jointConstraints) {
+        auto& joint = *constraint.joint;
+        
+        // 计算本帧施加的力（从累积冲量估算）
+        // 注意：这里使用简化的估算，实际应该记录每帧的力
+        Vector3 force = joint.runtime.accumulatedLinearImpulse / dt;
+        Vector3 torque = joint.runtime.accumulatedAngularImpulse / dt;
+        
+        if (force.norm() > joint.base.breakForce ||
+            torque.norm() > joint.base.breakTorque) {
+            joint.base.isBroken = true;
+            
+            // 触发断裂事件（如果需要，可以在这里添加事件系统调用）
+            // m_world->GetEventBus()->Emit<JointBrokenEvent>(...);
+        }
+    }
 }
 
 }  // namespace Physics

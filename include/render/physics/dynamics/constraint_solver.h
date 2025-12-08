@@ -38,6 +38,7 @@ namespace Physics {
 struct CollisionPair;
 struct RigidBodyComponent;
 struct ColliderComponent;
+struct PhysicsJointComponent;
 
 /**
  * @brief 约束求解器（阶段 4.1 框架）
@@ -61,6 +62,18 @@ public:
      * @param pairs 碰撞对列表
      */
     void Solve(float dt, const std::vector<CollisionPair>& pairs);
+    
+    /**
+     * @brief 带关节的求解接口
+     * @param dt 固定时间步
+     * @param pairs 碰撞对列表
+     * @param jointEntities 关节实体列表
+     */
+    void SolveWithJoints(
+        float dt,
+        const std::vector<CollisionPair>& pairs,
+        const std::vector<ECS::EntityID>& jointEntities
+    );
 
     /**
      * @brief 清理内部缓存
@@ -117,6 +130,18 @@ private:
         int contactCount = 0;
         std::array<CachedContactPoint, 4> points{};
     };
+    
+    // 关节约束数据结构
+    struct JointConstraint {
+        ECS::EntityID jointEntity;
+        ECS::EntityID entityA;
+        ECS::EntityID entityB;
+        PhysicsJointComponent* joint = nullptr;
+        RigidBodyComponent* bodyA = nullptr;
+        RigidBodyComponent* bodyB = nullptr;
+        ECS::TransformComponent* transformA = nullptr;
+        ECS::TransformComponent* transformB = nullptr;
+    };
 
     void PrepareConstraints(float dt, const std::vector<CollisionPair>& pairs);
     void WarmStart();
@@ -125,6 +150,14 @@ private:
     void CacheImpulses();
     void SolveInternal(float dt, const std::vector<CollisionPair>& pairs);
     uint64_t HashPair(ECS::EntityID a, ECS::EntityID b) const;
+    
+    // 关节约束相关
+    void PrepareJointConstraints(float dt, const std::vector<ECS::EntityID>& jointEntities);
+    void WarmStartJoints();
+    void SolveJointVelocityConstraints(float dt);
+    void SolveJointPositionConstraints(float dt);
+    void CacheJointImpulses();
+    void CheckJointBreakage(float dt);
 
     // 工具函数（保持在类内，便于访问私有类型）
     static Matrix3 ComputeWorldInvInertia(const RigidBodyComponent& body, const Quaternion& rotation);
@@ -135,6 +168,7 @@ private:
     ECS::World* m_world = nullptr;
     std::vector<ContactConstraint> m_contactConstraints;
     std::unordered_map<uint64_t, CachedContactManifold> m_cachedImpulses;
+    std::vector<JointConstraint> m_jointConstraints;
     int m_solverIterations = 10;
     int m_positionIterations = 4;
 };
