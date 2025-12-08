@@ -91,27 +91,38 @@
 使用 Visual Studio 2022:
 
 ```batch
+# 获取第三方库
+cd third_party
+git clone https://github.com/libsdl-org/SDL.git
+git clone https://github.com/libsdl-org/SDL_image.git
+cd SDL_image\external
+PowerShell -ExecutionPolicy Bypass -File ".\Get-GitModules.ps1"
+cd ..\..\SDL3_ttf-3.2.2\external
+PowerShell -ExecutionPolicy Bypass -File ".\Get-GitModules.ps1"
+cd ..\..
+git clone https://github.com/nlohmann/json.git
+git clone https://github.com/assimp/assimp.git
+git clone https://github.com/zeux/meshoptimizer.git
+
+# 复制 SDL3_ttf 所需的 cmake 文件
+copy "third_party\SDL\cmake\GetGitRevisionDescription.cmake" "third_party\SDL3_ttf-3.2.2\cmake\GetGitRevisionDescription.cmake"
+copy "third_party\SDL\cmake\PkgConfigHelper.cmake" "third_party\SDL3_ttf-3.2.2\cmake\PkgConfigHelper.cmake"
+copy "third_party\SDL\cmake\sdlcpu.cmake" "third_party\SDL3_ttf-3.2.2\cmake\sdlcpu.cmake"
+copy "third_party\SDL\cmake\sdlplatform.cmake" "third_party\SDL3_ttf-3.2.2\cmake\sdlplatform.cmake"
+copy "third_party\SDL\cmake\sdlmanpages.cmake" "third_party\SDL3_ttf-3.2.2\cmake\sdlmanpages.cmake"
+copy "third_party\SDL_image\cmake\PrivateSdlFunctions.cmake" "third_party\SDL3_ttf-3.2.2\cmake\PrivateSdlFunctions.cmake"
+
+# 获取eigen
+wget "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip" -OutFile "eigen-3.4.0.zip"
+Expand-Archive -Path "eigen-3.4.0.zip" -DestinationPath "."
+
 # 编译 Release 版本
+cd .. # 回到主目录
+mkdir build; cd build; cmake ..; cd ..
 cmake --build build --config Release
 
 # 运行示例
 .\build\bin\Release\01_basic_window.exe
-```
-
-### Linux/macOS
-
-```bash
-# 创建构建目录
-mkdir build && cd build
-
-# 配置项目
-cmake -DCMAKE_BUILD_TYPE=Release ..
-
-# 编译
-cmake --build . -j$(nproc)
-
-# 运行示例
-./bin/01_basic_window
 ```
 
 ### 构建选项
@@ -121,7 +132,7 @@ cmake --build . -j$(nproc)
 
 ## 示例程序
 
-项目包含 **61 个完整示例程序**，覆盖引擎的各个功能模块：
+项目包含 **62 个完整示例程序**，覆盖引擎的各个功能模块：
 
 ### 基础渲染示例
 ```batch
