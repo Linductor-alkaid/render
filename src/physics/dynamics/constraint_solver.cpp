@@ -23,6 +23,7 @@
 #include "render/physics/physics_systems.h"
 #include "render/physics/physics_components.h"
 #include "render/physics/dynamics/joint_component.h"
+#include "render/physics/dynamics/symplectic_euler_integrator.h"
 #include "render/ecs/world.h"
 #include "render/ecs/components.h"
 #include "render/math_utils.h"
@@ -51,7 +52,7 @@ constexpr float kMaxAcceleration = 100.0f * 9.81f;  // 最大加速度 100g
  * @param dt 时间步长
  * @return 自适应的 beta 值
  */
-float ComputeAdaptiveBaumgarte(float penetration, float dt) {
+float ComputeAdaptiveBaumgarte(float penetration, float /* dt */) {
     // 浅穿透使用标准值，深穿透降低β避免过度修正
     if (penetration < 0.1f) return 0.2f;
     if (penetration > 0.5f) return 0.1f;
@@ -586,9 +587,17 @@ void ConstraintSolver::SolveWithJoints(
     PrepareConstraints(dt, pairs);
     PrepareJointConstraints(dt, jointEntities);
     
-    // Warm Start
+    // Warm Start（在重置之前，从 joint.runtime 读取上一帧的累积冲量）
     WarmStart();
     WarmStartJoints();
+    
+    // 在 Warm Start 之后，重置本帧的累积冲量（将在求解过程中重新累积）
+    for (auto& constraint : m_jointConstraints) {
+        if (constraint.joint) {
+            constraint.joint->runtime.accumulatedLinearImpulse = Vector3::Zero();
+            constraint.joint->runtime.accumulatedAngularImpulse = Vector3::Zero();
+        }
+    }
     
     // 速度约束迭代（交替求解接触和关节）
     for (int i = 0; i < m_solverIterations; ++i) {
@@ -596,11 +605,57 @@ void ConstraintSolver::SolveWithJoints(
         SolveJointVelocityConstraints(dt);
     }
     
-    // 位置修正
+    // 使用积分器更新位置（将速度积分到位置）
+    // 注意：在约束求解后，速度已经被修正，现在需要将速度积分到位置
+    SymplecticEulerIntegrator integrator;
+    for (auto& constraint : m_jointConstraints) {
+        if (constraint.bodyA && constraint.transformA) {
+            integrator.IntegratePosition(*constraint.bodyA, *constraint.transformA, dt);
+        }
+        if (constraint.bodyB && constraint.transformB) {
+            integrator.IntegratePosition(*constraint.bodyB, *constraint.transformB, dt);
+        }
+    }
+    // 也更新接触约束中的刚体位置
+    for (auto& constraint : m_contactConstraints) {
+        if (constraint.bodyA && constraint.transformA) {
+            integrator.IntegratePosition(*constraint.bodyA, *constraint.transformA, dt);
+        }
+        if (constraint.bodyB && constraint.transformB) {
+            integrator.IntegratePosition(*constraint.bodyB, *constraint.transformB, dt);
+        }
+    }
+    
+    // 位置修正（修正积分后的位置误差）
     SolvePositionConstraints(dt);
     SolveJointPositionConstraints(dt);
     
-    // 缓存冲量
+    // 如果初始状态违反约束，进行额外的位置修正
+    // 这处理了测试中初始位置不满足约束的情况
+    // 检查位置误差，如果误差较大，进行额外的修正迭代
+    bool needsInitialCorrection = false;
+    for (const auto& constraint : m_jointConstraints) {
+        if (constraint.joint && constraint.transformA && constraint.transformB) {
+            // 检查位置误差
+            Vector3 worldAnchorA = constraint.transformA->GetPosition() 
+                + constraint.transformA->GetRotation() * constraint.joint->base.localAnchorA;
+            Vector3 worldAnchorB = constraint.transformB->GetPosition() 
+                + constraint.transformB->GetRotation() * constraint.joint->base.localAnchorB;
+            Vector3 separation = worldAnchorB - worldAnchorA;
+            if (separation.norm() > 0.1f) {  // 如果误差较大，需要初始修正
+                needsInitialCorrection = true;
+                break;
+            }
+        }
+    }
+    if (needsInitialCorrection) {
+        // 进行额外的位置修正迭代
+        for (int i = 0; i < m_positionIterations; ++i) {
+            SolveJointPositionConstraints(dt);
+        }
+    }
+    
+    // 缓存冲量（当前帧的累积冲量将用于下一帧的 Warm Start）
     CacheImpulses();
     CacheJointImpulses();
     
@@ -642,7 +697,7 @@ void ConstraintSolver::SolveWithJoints(
 
 
 void ConstraintSolver::PrepareJointConstraints(
-    float dt,
+    float /* dt */,
     const std::vector<ECS::EntityID>& jointEntities
 ) {
     m_jointConstraints.clear();
@@ -711,6 +766,20 @@ void ConstraintSolver::PrepareJointConstraints(
         jointComp.runtime.rA = worldAnchorA - comA;
         jointComp.runtime.rB = worldAnchorB - comB;
         
+        // 为 Fixed Joint 初始化相对旋转（如果尚未初始化）
+        if (base.type == JointComponent::JointType::Fixed) {
+            auto& fixedData = std::get<FixedJointData>(jointComp.data);
+            // 如果相对旋转为单位四元数（默认值），则根据当前状态初始化
+            // 使用小阈值检查是否为单位四元数
+            if (std::abs(fixedData.relativeRotation.w() - 1.0f) < MathUtils::EPSILON &&
+                fixedData.relativeRotation.vec().norm() < MathUtils::EPSILON) {
+                // 初始化相对旋转：q_relative = qB * qA^-1
+                Quaternion qA = constraint.transformA->GetRotation();
+                Quaternion qB = constraint.transformB->GetRotation();
+                fixedData.relativeRotation = qB * qA.conjugate();
+            }
+        }
+        
         m_jointConstraints.push_back(constraint);
     }
 }
@@ -720,41 +789,312 @@ void ConstraintSolver::WarmStartJoints() {
     constexpr float maxCachedImpulse = 1e4f;
     
     for (auto& constraint : m_jointConstraints) {
+        if (!constraint.joint) {
+            continue;
+        }
+        
         auto& joint = *constraint.joint;
         auto& bodyA = *constraint.bodyA;
         auto& bodyB = *constraint.bodyB;
         
+        // 从 joint.runtime 读取上一帧的累积冲量（此时还没有被重置）
+        Vector3 cachedLinearImpulse = joint.runtime.accumulatedLinearImpulse;
+        Vector3 cachedAngularImpulse = joint.runtime.accumulatedAngularImpulse;
+        
         // 衰减因子（防止过时冲量累积）
-        joint.runtime.accumulatedLinearImpulse *= decayFactor;
-        joint.runtime.accumulatedAngularImpulse *= decayFactor;
+        cachedLinearImpulse *= decayFactor;
+        cachedAngularImpulse *= decayFactor;
         
         // 重置异常值
-        if (joint.runtime.accumulatedLinearImpulse.norm() > maxCachedImpulse) {
-            joint.runtime.accumulatedLinearImpulse = Vector3::Zero();
+        if (cachedLinearImpulse.norm() > maxCachedImpulse) {
+            cachedLinearImpulse = Vector3::Zero();
         }
-        if (joint.runtime.accumulatedAngularImpulse.norm() > maxCachedImpulse) {
-            joint.runtime.accumulatedAngularImpulse = Vector3::Zero();
+        if (cachedAngularImpulse.norm() > maxCachedImpulse) {
+            cachedAngularImpulse = Vector3::Zero();
         }
         
-        // 应用缓存的线性冲量
-        Vector3 linearImpulse = joint.runtime.accumulatedLinearImpulse;
-        bodyA.linearVelocity -= linearImpulse * bodyA.inverseMass;
-        bodyB.linearVelocity += linearImpulse * bodyB.inverseMass;
+        // 只有当冲量足够大时才应用（避免浮点误差累积）
+        if (cachedLinearImpulse.norm() > MathUtils::EPSILON) {
+            bodyA.linearVelocity -= cachedLinearImpulse * bodyA.inverseMass;
+            bodyB.linearVelocity += cachedLinearImpulse * bodyB.inverseMass;
+        }
         
-        // 应用缓存的角冲量
-        Vector3 angularImpulse = joint.runtime.accumulatedAngularImpulse;
-        bodyA.angularVelocity -= joint.runtime.invInertiaA * angularImpulse;
-        bodyB.angularVelocity += joint.runtime.invInertiaB * angularImpulse;
+        if (cachedAngularImpulse.norm() > MathUtils::EPSILON) {
+            bodyA.angularVelocity -= joint.runtime.invInertiaA * cachedAngularImpulse;
+            bodyB.angularVelocity += joint.runtime.invInertiaB * cachedAngularImpulse;
+        }
+    }
+}
+
+void ConstraintSolver::SolveFixedJointVelocity(
+    JointConstraint& constraint,
+    float dt
+) {
+    auto* joint = constraint.joint;
+    auto& bodyA = *constraint.bodyA;
+    auto& bodyB = *constraint.bodyB;
+    auto& transformA = *constraint.transformA;
+    auto& transformB = *constraint.transformB;
+    
+    // 获取 Fixed Joint 数据
+    auto& fixedData = std::get<FixedJointData>(joint->data);
+    
+    // 1. 位置约束 - 使用统一方向向量约束位置误差
+    // 计算世界空间锚点位置
+    Vector3 worldAnchorA = transformA.GetPosition() 
+        + transformA.GetRotation() * joint->base.localAnchorA;
+    Vector3 worldAnchorB = transformB.GetPosition() 
+        + transformB.GetRotation() * joint->base.localAnchorB;
+    
+    Vector3 C_pos = worldAnchorB - worldAnchorA;
+    float separation = C_pos.norm();
+    
+    // 只有当分离距离足够大时才进行约束
+    if (separation > MathUtils::EPSILON) {
+        Vector3 direction = C_pos / separation;
+        
+        // 相对速度
+        Vector3 vA = bodyA.linearVelocity + bodyA.angularVelocity.cross(joint->runtime.rA);
+        Vector3 vB = bodyB.linearVelocity + bodyB.angularVelocity.cross(joint->runtime.rB);
+        float JV = (vB - vA).dot(direction);
+        
+        // 自适应 Baumgarte 稳定化
+        float adaptiveBeta = ComputeAdaptiveBaumgarte(separation, dt);
+        float bias = (adaptiveBeta / dt) * separation;
+        
+        // 有效质量（添加CFM软化防止除零）
+        Vector3 rnA = joint->runtime.rA.cross(direction);
+        Vector3 rnB = joint->runtime.rB.cross(direction);
+        float K = bodyA.inverseMass + bodyB.inverseMass
+                + rnA.dot(joint->runtime.invInertiaA * rnA)
+                + rnB.dot(joint->runtime.invInertiaB * rnB)
+                + kCFM;  // CFM软化
+        float effectiveMass = 1.0f / K;
+        
+        // 计算冲量
+        float lambda = -(JV + bias) * effectiveMass;
+        
+        // 冲量钳位，防止数值爆炸
+        float maxImpulseA = ComputeMaxImpulse(bodyA, dt);
+        float maxImpulseB = ComputeMaxImpulse(bodyB, dt);
+        float maxImpulse = std::max(maxImpulseA, maxImpulseB);
+        lambda = MathUtils::Clamp(lambda, -maxImpulse, maxImpulse);
+        
+        Vector3 impulse = lambda * direction;
+        
+        // 应用冲量
+        bodyA.linearVelocity -= impulse * bodyA.inverseMass;
+        bodyA.angularVelocity -= joint->runtime.invInertiaA * joint->runtime.rA.cross(impulse);
+        bodyB.linearVelocity += impulse * bodyB.inverseMass;
+        bodyB.angularVelocity += joint->runtime.invInertiaB * joint->runtime.rB.cross(impulse);
+        
+        // 累积冲量（用于Warm Start）
+        joint->runtime.accumulatedLinearImpulse += impulse;
+    }
+    
+    // 2. 旋转约束 - 约束3个旋转自由度
+    // 计算旋转误差
+    Quaternion qA = transformA.GetRotation();
+    Quaternion qB = transformB.GetRotation();
+    // 正确的相对旋转误差：q_error = q_relative^-1 * (qB * qA^-1)
+    // 即：期望的 qB * qA^-1 = q_relative，所以误差 = (qB * qA^-1) * q_relative^-1
+    Quaternion currentRelative = qB * qA.conjugate();
+    Quaternion q_error = currentRelative * fixedData.relativeRotation.conjugate();
+    
+    // 将四元数误差转换为轴角表示（小角度近似）
+    // q_error = [w, x, y, z]，对于小角度，误差轴角 ≈ 2 * [x, y, z]
+    // 需要确保四元数归一化
+    q_error.normalize();
+    Vector3 C_rot = 2.0f * Vector3(q_error.x(), q_error.y(), q_error.z());
+    float rotError = C_rot.norm();
+    
+    // 只有当旋转误差足够大时才进行约束
+    if (rotError > MathUtils::EPSILON) {
+        // 对每个旋转轴进行约束（使用世界坐标系）
+        for (int axis = 0; axis < 3; ++axis) {
+            Vector3 rotAxis = Vector3::Zero();
+            rotAxis[axis] = 1.0f;
+            
+            float C = C_rot.dot(rotAxis);
+            if (std::abs(C) < MathUtils::EPSILON * 0.1f) {
+                continue;
+            }
+            
+            // 相对角速度
+            float JV = (bodyB.angularVelocity - bodyA.angularVelocity).dot(rotAxis);
+            
+            // 自适应 Baumgarte 稳定化
+            float adaptiveBeta = ComputeAdaptiveBaumgarte(std::abs(C), dt);
+            float bias = (adaptiveBeta / dt) * C;
+            
+            // 有效质量（添加CFM软化）
+            float K = rotAxis.dot((joint->runtime.invInertiaA + joint->runtime.invInertiaB) * rotAxis)
+                    + kCFM;  // CFM软化
+            float effectiveMass = 1.0f / K;
+            
+            // 计算角冲量
+            float lambda = -(JV + bias) * effectiveMass;
+            
+            // 角冲量钳位（基于角速度限制）
+            constexpr float kMaxAngularVelocity = 2.0f * MathUtils::PI * 10.0f;  // 每秒10圈
+            float maxAngularImpulse = kMaxAngularVelocity * dt;
+            lambda = MathUtils::Clamp(lambda, -maxAngularImpulse, maxAngularImpulse);
+            
+            Vector3 angularImpulse = lambda * rotAxis;
+            
+            // 应用角冲量
+            bodyA.angularVelocity -= joint->runtime.invInertiaA * angularImpulse;
+            bodyB.angularVelocity += joint->runtime.invInertiaB * angularImpulse;
+            
+            // 累积角冲量
+            joint->runtime.accumulatedAngularImpulse += angularImpulse;
+        }
+    }
+    
+    // 速度限制检查（防止爆炸）
+    CheckAndClampVelocity(&bodyA);
+    CheckAndClampVelocity(&bodyB);
+}
+
+void ConstraintSolver::SolveFixedJointPosition(
+    JointConstraint& constraint,
+    float dt
+) {
+    constexpr float beta = 0.2f;  // 位置校正系数
+    
+    auto* joint = constraint.joint;
+    auto& bodyA = *constraint.bodyA;
+    auto& bodyB = *constraint.bodyB;
+    
+    // 跳过静态/运动学物体
+    if (bodyA.IsStatic() || bodyA.IsKinematic()) {
+        return;
+    }
+    if (bodyB.IsStatic() || bodyB.IsKinematic()) {
+        return;
+    }
+    
+    // 计算世界空间锚点位置
+    Vector3 worldAnchorA = constraint.transformA->GetPosition() 
+        + constraint.transformA->GetRotation() * joint->base.localAnchorA;
+    Vector3 worldAnchorB = constraint.transformB->GetPosition() 
+        + constraint.transformB->GetRotation() * joint->base.localAnchorB;
+    
+    Vector3 C_pos = worldAnchorB - worldAnchorA;
+    float penetration = C_pos.norm();
+    
+    if (penetration <= MathUtils::EPSILON) {
+        return;
+    }
+    
+    Vector3 n = C_pos / penetration;
+    
+    // 有效质量（添加CFM软化）
+    Vector3 rnA = joint->runtime.rA.cross(n);
+    Vector3 rnB = joint->runtime.rB.cross(n);
+    float K = bodyA.inverseMass + bodyB.inverseMass
+            + rnA.dot(joint->runtime.invInertiaA * rnA)
+            + rnB.dot(joint->runtime.invInertiaB * rnB)
+            + kCFM;  // CFM软化
+    float effectiveMass = 1.0f / K;
+    
+    float positionalLambda = beta * penetration * effectiveMass;
+    Vector3 correctionImpulse = positionalLambda * n;
+    
+    // 应用位置修正
+    Vector3 linearDeltaA = -correctionImpulse * bodyA.inverseMass;
+    constraint.transformA->SetPosition(
+        constraint.transformA->GetPosition() + linearDeltaA);
+    
+    Vector3 linearDeltaB = correctionImpulse * bodyB.inverseMass;
+    constraint.transformB->SetPosition(
+        constraint.transformB->GetPosition() + linearDeltaB);
+    
+    // 旋转约束的位置修正
+    auto& fixedData = std::get<FixedJointData>(joint->data);
+    Quaternion qA = constraint.transformA->GetRotation();
+    Quaternion qB = constraint.transformB->GetRotation();
+    Quaternion currentRelative = qB * qA.conjugate();
+    Quaternion q_error = currentRelative * fixedData.relativeRotation.conjugate();
+    q_error.normalize();
+    
+    // 将四元数误差转换为轴角
+    Vector3 rotError = 2.0f * Vector3(q_error.x(), q_error.y(), q_error.z());
+    float rotErrorMag = rotError.norm();
+    
+    if (rotErrorMag > MathUtils::EPSILON) {
+        Vector3 rotAxis = rotError / rotErrorMag;
+        float rotAngle = rotErrorMag;
+        
+        // 有效质量（添加CFM软化）
+        float K = rotAxis.dot((joint->runtime.invInertiaA + joint->runtime.invInertiaB) * rotAxis)
+                + kCFM;
+        float effectiveMass = 1.0f / K;
+        
+        float angularLambda = beta * rotAngle * effectiveMass;
+        Vector3 angularCorrection = angularLambda * rotAxis;
+        
+        // 应用旋转修正
+        Vector3 angularDeltaA = -joint->runtime.invInertiaA * angularCorrection;
+        Vector3 angularDeltaB = joint->runtime.invInertiaB * angularCorrection;
+        
+        // 将角修正转换为四元数并应用
+        auto ApplyAngularCorrection = [](ECS::TransformComponent* transform, const Vector3& angularDelta) {
+            float angle = angularDelta.norm();
+            if (angle <= MathUtils::EPSILON || !transform) {
+                return;
+            }
+            Vector3 axis = angularDelta / angle;
+            Quaternion delta(Eigen::AngleAxisf(angle, axis));
+            Quaternion newRotation = (delta * transform->GetRotation()).normalized();
+            transform->SetRotation(newRotation);
+        };
+        
+        ApplyAngularCorrection(constraint.transformA, angularDeltaA);
+        ApplyAngularCorrection(constraint.transformB, angularDeltaB);
     }
 }
 
 void ConstraintSolver::SolveJointVelocityConstraints(float dt) {
-    // 目前为空实现，后续阶段会添加具体关节类型的求解逻辑
-    // 阶段1.3将实现Fixed Joint，阶段1.4将实现Distance Joint
+    for (auto& constraint : m_jointConstraints) {
+        if (!constraint.joint) {
+            continue;
+        }
+        
+        switch (constraint.joint->base.type) {
+            case JointComponent::JointType::Fixed:
+                SolveFixedJointVelocity(constraint, dt);
+                break;
+            // 其他类型将在后续阶段实现
+            case JointComponent::JointType::Hinge:
+            case JointComponent::JointType::Distance:
+            case JointComponent::JointType::Spring:
+            case JointComponent::JointType::Slider:
+                // 暂未实现
+                break;
+        }
+    }
 }
 
 void ConstraintSolver::SolveJointPositionConstraints(float dt) {
-    // 目前为空实现，后续阶段会添加具体关节类型的位置修正逻辑
+    for (auto& constraint : m_jointConstraints) {
+        if (!constraint.joint) {
+            continue;
+        }
+        
+        switch (constraint.joint->base.type) {
+            case JointComponent::JointType::Fixed:
+                SolveFixedJointPosition(constraint, dt);
+                break;
+            // 其他类型将在后续阶段实现
+            case JointComponent::JointType::Hinge:
+            case JointComponent::JointType::Distance:
+            case JointComponent::JointType::Spring:
+            case JointComponent::JointType::Slider:
+                // 暂未实现
+                break;
+        }
+    }
 }
 
 void ConstraintSolver::CacheJointImpulses() {

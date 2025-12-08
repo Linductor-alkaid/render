@@ -25,7 +25,11 @@
  * 验证：
  * 1) 固定时间步长稳定性与累计行为；
  * 2) 渲染帧率变化不影响物理解算结果；
- * 3) 插值在高帧率下使运动平滑。
+ * 3) 插值在高帧率下使运动平滑；
+ * 4) 角速度积分与旋转积分正确性；
+ * 5) 线性阻尼与角阻尼效果；
+ * 6) 位置锁定与旋转锁定约束；
+ * 7) 最大速度限制约束。
  */
 
 #include "render/physics/physics_systems.h"
@@ -304,6 +308,394 @@ static bool Test_RenderScenario_FrameDropInterpolationAndAABB() {
     return true;
 }
 
+// 验证角速度积分：旋转应正确积分
+static bool Test_AngularVelocity_Integration() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    TransformComponent transform;
+    transform.SetPosition(Vector3::Zero());
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.0f;
+    body.useGravity = false;
+    // 设置绕 Y 轴旋转的角速度：1 rad/s
+    body.angularVelocity = Vector3(0.0f, 1.0f, 0.0f);
+    // 设置单位惯性张量（简化计算）
+    body.inverseInertiaTensor = Matrix3::Identity();
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+    auto& updatedTransform = world->GetComponent<TransformComponent>(entity);
+
+    // 验证角速度保持不变（无扭矩）
+    TEST_ASSERT(updatedBody.angularVelocity.isApprox(Vector3(0.0f, 1.0f, 0.0f), 1e-6f),
+                "无扭矩时角速度应保持不变");
+
+    // 验证旋转已更新（不应是单位四元数）
+    Quaternion rotation = updatedTransform.GetRotation();
+    TEST_ASSERT(!rotation.isApprox(Quaternion::Identity(), 1e-6f),
+                "角速度积分应导致旋转变化");
+
+    // 验证 previousRotation 已记录
+    TEST_ASSERT(updatedBody.previousRotation.isApprox(Quaternion::Identity(), 1e-6f),
+                "previousRotation 应记录积分前的旋转");
+
+    // 验证旋转角度：绕 Y 轴旋转 fixedDt 弧度
+    // 从单位四元数旋转到新四元数，角度应为 fixedDt
+    float angle = 2.0f * std::acos(std::max(-1.0f, std::min(1.0f, rotation.w())));
+    TEST_ASSERT(std::abs(angle - fixedDt) < 1e-4f,
+                "旋转角度应等于角速度乘以时间步长");
+
+    world->Shutdown();
+    return true;
+}
+
+// 验证角加速度积分：扭矩应产生角加速度
+static bool Test_AngularAcceleration_Integration() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    TransformComponent transform;
+    transform.SetPosition(Vector3::Zero());
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.0f;
+    body.useGravity = false;
+    body.angularVelocity = Vector3::Zero();
+    // 设置单位惯性张量（简化计算：I^-1 = I）
+    body.inverseInertiaTensor = Matrix3::Identity();
+    // 施加绕 Y 轴的扭矩：1 N·m
+    body.torque = Vector3(0.0f, 1.0f, 0.0f);
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+
+    // 验证角速度已更新：ω = ω0 + α * dt，α = I^-1 * τ
+    // 对于单位惯性张量：α = τ，所以 ω = 0 + 1 * dt = dt
+    Vector3 expectedAngularVelocity(0.0f, fixedDt, 0.0f);
+    TEST_ASSERT(updatedBody.angularVelocity.isApprox(expectedAngularVelocity, 1e-5f),
+                "角速度积分应包含扭矩影响：ω = ω0 + (I^-1 * τ) * dt");
+
+    // 验证扭矩已清零
+    TEST_ASSERT(updatedBody.torque.isZero(1e-6f),
+                "积分后扭矩应被清零");
+
+    world->Shutdown();
+    return true;
+}
+
+// 验证线性阻尼：速度应按阻尼因子衰减
+static bool Test_LinearDamping_VelocityDecay() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    TransformComponent transform;
+    transform.SetPosition(Vector3::Zero());
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.1f; // 10% 阻尼
+    body.angularDamping = 0.0f;
+    body.useGravity = false;
+    body.linearVelocity = Vector3(10.0f, 0.0f, 0.0f); // 初始速度 10 m/s
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+
+    // 验证速度已衰减：v = v0 * pow(1 - damping, dt)
+    // 对于 damping = 0.1，dt = 1/60：v = 10 * pow(0.9, 1/60) ≈ 10 * 0.9983 ≈ 9.983
+    float dampingFactor = std::pow(1.0f - body.linearDamping, fixedDt);
+    Vector3 expectedVelocity = Vector3(10.0f, 0.0f, 0.0f) * dampingFactor;
+    TEST_ASSERT(updatedBody.linearVelocity.isApprox(expectedVelocity, 1e-4f),
+                "线性阻尼应使速度按 pow(1 - damping, dt) 衰减");
+
+    world->Shutdown();
+    return true;
+}
+
+// 验证角阻尼：角速度应按阻尼因子衰减
+static bool Test_AngularDamping_VelocityDecay() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    TransformComponent transform;
+    transform.SetPosition(Vector3::Zero());
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.15f; // 15% 角阻尼
+    body.useGravity = false;
+    body.angularVelocity = Vector3(0.0f, 5.0f, 0.0f); // 初始角速度 5 rad/s
+    body.inverseInertiaTensor = Matrix3::Identity();
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+
+    // 验证角速度已衰减：ω = ω0 * pow(1 - damping, dt)
+    float dampingFactor = std::pow(1.0f - body.angularDamping, fixedDt);
+    Vector3 expectedAngularVelocity = Vector3(0.0f, 5.0f, 0.0f) * dampingFactor;
+    TEST_ASSERT(updatedBody.angularVelocity.isApprox(expectedAngularVelocity, 1e-4f),
+                "角阻尼应使角速度按 pow(1 - damping, dt) 衰减");
+
+    world->Shutdown();
+    return true;
+}
+
+// 验证位置锁定：锁定的轴不应移动
+static bool Test_PositionLock_Constraint() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    Vector3 initialPos(1.0f, 2.0f, 3.0f);
+    TransformComponent transform;
+    transform.SetPosition(initialPos);
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.0f;
+    body.useGravity = false;
+    body.linearVelocity = Vector3(5.0f, 10.0f, 15.0f); // 三个方向都有速度
+    // 锁定 Y 轴
+    body.lockPosition[1] = true;
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+    auto& updatedTransform = world->GetComponent<TransformComponent>(entity);
+
+    // 验证 Y 轴位置未改变
+    TEST_ASSERT(std::abs(updatedTransform.GetPosition().y() - initialPos.y()) < 1e-6f,
+                "锁定 Y 轴后，Y 位置不应改变");
+
+    // 验证 X 和 Z 轴位置已更新
+    Vector3 expectedPos = initialPos + Vector3(5.0f, 0.0f, 15.0f) * fixedDt;
+    TEST_ASSERT(std::abs(updatedTransform.GetPosition().x() - expectedPos.x()) < 1e-5f &&
+                std::abs(updatedTransform.GetPosition().z() - expectedPos.z()) < 1e-5f,
+                "未锁定的轴应正常积分");
+
+    // 验证 Y 轴速度被清零
+    TEST_ASSERT(std::abs(updatedBody.linearVelocity.y()) < 1e-6f,
+                "锁定轴的速度应被清零");
+
+    world->Shutdown();
+    return true;
+}
+
+// 验证旋转锁定：锁定的轴不应旋转
+static bool Test_RotationLock_Constraint() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    TransformComponent transform;
+    transform.SetPosition(Vector3::Zero());
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.0f;
+    body.useGravity = false;
+    body.angularVelocity = Vector3(1.0f, 2.0f, 3.0f); // 三个方向都有角速度
+    body.inverseInertiaTensor = Matrix3::Identity();
+    // 锁定 Y 轴旋转
+    body.lockRotation[1] = true;
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+
+    // 验证 Y 轴角速度被清零
+    TEST_ASSERT(std::abs(updatedBody.angularVelocity.y()) < 1e-6f,
+                "锁定旋转轴后，该轴角速度应被清零");
+
+    // 验证 X 和 Z 轴角速度保持不变（无扭矩）
+    TEST_ASSERT(std::abs(updatedBody.angularVelocity.x() - 1.0f) < 1e-5f &&
+                std::abs(updatedBody.angularVelocity.z() - 3.0f) < 1e-5f,
+                "未锁定的旋转轴应正常保持角速度");
+
+    world->Shutdown();
+    return true;
+}
+
+// 验证最大线速度限制：超过限制的速度应被限制
+static bool Test_MaxLinearSpeed_Constraint() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    TransformComponent transform;
+    transform.SetPosition(Vector3::Zero());
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.0f;
+    body.useGravity = false;
+    // 设置超过限制的速度
+    body.linearVelocity = Vector3(100.0f, 0.0f, 0.0f); // 100 m/s
+    body.maxLinearSpeed = 50.0f; // 限制为 50 m/s
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+
+    // 验证速度已被限制
+    float speed = updatedBody.linearVelocity.norm();
+    TEST_ASSERT(speed <= body.maxLinearSpeed + 1e-5f,
+                "线速度不应超过 maxLinearSpeed");
+
+    // 验证速度方向保持不变
+    Vector3 normalized = updatedBody.linearVelocity.normalized();
+    Vector3 expectedDirection = Vector3(1.0f, 0.0f, 0.0f);
+    TEST_ASSERT(normalized.isApprox(expectedDirection, 1e-5f),
+                "速度限制应保持方向不变");
+
+    world->Shutdown();
+    return true;
+}
+
+// 验证最大角速度限制：超过限制的角速度应被限制
+static bool Test_MaxAngularSpeed_Constraint() {
+    auto world = std::make_shared<World>();
+    RegisterPhysicsComponents(world);
+    world->Initialize();
+
+    auto* system = world->RegisterSystem<PhysicsUpdateSystem>();
+    const float fixedDt = 1.0f / 60.0f;
+    system->SetFixedDeltaTime(fixedDt);
+    system->SetGravity(Vector3::Zero());
+
+    EntityID entity = world->CreateEntity();
+
+    TransformComponent transform;
+    transform.SetPosition(Vector3::Zero());
+    transform.SetRotation(Quaternion::Identity());
+    world->AddComponent(entity, transform);
+
+    RigidBodyComponent body;
+    body.SetMass(1.0f);
+    body.linearDamping = 0.0f;
+    body.angularDamping = 0.0f;
+    body.useGravity = false;
+    // 设置超过限制的角速度
+    body.angularVelocity = Vector3(0.0f, 20.0f, 0.0f); // 20 rad/s
+    body.maxAngularSpeed = 10.0f; // 限制为 10 rad/s
+    body.inverseInertiaTensor = Matrix3::Identity();
+    world->AddComponent(entity, body);
+
+    // 执行一次固定步更新
+    system->Update(fixedDt);
+
+    auto& updatedBody = world->GetComponent<RigidBodyComponent>(entity);
+
+    // 验证角速度已被限制
+    float angularSpeed = updatedBody.angularVelocity.norm();
+    TEST_ASSERT(angularSpeed <= body.maxAngularSpeed + 1e-5f,
+                "角速度不应超过 maxAngularSpeed");
+
+    // 验证角速度方向保持不变
+    Vector3 normalized = updatedBody.angularVelocity.normalized();
+    Vector3 expectedDirection = Vector3(0.0f, 1.0f, 0.0f);
+    TEST_ASSERT(normalized.isApprox(expectedDirection, 1e-5f),
+                "角速度限制应保持方向不变");
+
+    world->Shutdown();
+    return true;
+}
+
 // ============================================================================
 // 主入口
 // ============================================================================
@@ -314,6 +706,16 @@ int main() {
     RUN_TEST(Test_RenderInterpolation_SmoothMotion);
     RUN_TEST(Test_PhysicsUpdate_Flow_GravityAndAABB);
     RUN_TEST(Test_RenderScenario_FrameDropInterpolationAndAABB);
+    
+    // 积分系统完整性测试
+    RUN_TEST(Test_AngularVelocity_Integration);
+    RUN_TEST(Test_AngularAcceleration_Integration);
+    RUN_TEST(Test_LinearDamping_VelocityDecay);
+    RUN_TEST(Test_AngularDamping_VelocityDecay);
+    RUN_TEST(Test_PositionLock_Constraint);
+    RUN_TEST(Test_RotationLock_Constraint);
+    RUN_TEST(Test_MaxLinearSpeed_Constraint);
+    RUN_TEST(Test_MaxAngularSpeed_Constraint);
 
     std::cout << "==============================" << std::endl;
     std::cout << "测试用例: " << g_testCount << std::endl;

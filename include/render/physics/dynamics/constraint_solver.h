@@ -158,6 +158,10 @@ private:
     void SolveJointPositionConstraints(float dt);
     void CacheJointImpulses();
     void CheckJointBreakage(float dt);
+    
+    // Fixed Joint 求解函数
+    void SolveFixedJointVelocity(JointConstraint& constraint, float dt);
+    void SolveFixedJointPosition(JointConstraint& constraint, float dt);
 
     // 工具函数（保持在类内，便于访问私有类型）
     static Matrix3 ComputeWorldInvInertia(const RigidBodyComponent& body, const Quaternion& rotation);
