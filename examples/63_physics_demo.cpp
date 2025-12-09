@@ -296,6 +296,13 @@ LightingEntities CreateScene(World& world, const Ref<Mesh>& groundMesh, const Re
     config.solverIterations = 20;  // 增加迭代次数，提高稳定性
     config.positionIterations = 8;  // 增加位置迭代次数，减少穿透
     
+    // 启用 CCD（连续碰撞检测）
+    config.enableCCD = true;
+    config.ccdVelocityThreshold = 10.0f;       // 速度阈值 10 m/s
+    config.ccdDisplacementThreshold = 0.5f;    // 位移阈值（相对尺寸比例）
+    config.maxCCDObjects = 50;                  // 每帧最大 CCD 对象数
+    config.enableBroadPhaseCCD = true;          // 启用 Broad Phase 加速
+    
     PhysicsWorld physicsWorld(&world, config);
 
     // 注册物理系统
@@ -306,6 +313,7 @@ LightingEntities CreateScene(World& world, const Ref<Mesh>& groundMesh, const Re
     auto* physicsSystem = world.RegisterSystem<PhysicsUpdateSystem>();
     physicsSystem->SetGravity(config.gravity);
     physicsSystem->SetFixedDeltaTime(config.fixedDeltaTime);
+    physicsSystem->SetConfig(config);  // 应用 CCD 配置
 
     world.RegisterSystem<TransformSystem>();
     world.RegisterSystem<CameraSystem>();
@@ -366,6 +374,8 @@ LightingEntities CreateScene(World& world, const Ref<Mesh>& groundMesh, const Re
         // 初始化previousPosition用于插值
         fallingSphereBody.previousPosition = randomPos;
         fallingSphereBody.previousRotation = fallingSphereTransform.GetRotation();
+        // 启用 CCD（高速下落物体）
+        fallingSphereBody.useCCD = true;
         world.AddComponent(fallingSphere, fallingSphereBody);
         
         Logger::GetInstance().InfoFormat(

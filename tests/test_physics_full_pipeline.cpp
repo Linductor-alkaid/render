@@ -6,6 +6,7 @@
 
  #include "render/physics/physics_systems.h"
  #include "render/physics/physics_components.h"
+ #include "render/physics/physics_config.h"
  #include "render/physics/collision/broad_phase.h"
  #include "render/ecs/world.h"
  #include "render/ecs/components.h"
@@ -681,6 +682,15 @@ static bool Test_SphereVsBox_Collision() {
     physicsSystem->SetSolverIterations(10);
     physicsSystem->SetPositionIterations(4);
     
+    // 启用 CCD（连续碰撞检测）
+    PhysicsConfig config;
+    config.enableCCD = true;
+    config.ccdVelocityThreshold = 10.0f;
+    config.ccdDisplacementThreshold = 0.5f;
+    config.maxCCDObjects = 50;
+    config.enableBroadPhaseCCD = true;
+    physicsSystem->SetConfig(config);
+    
     auto* collisionSystem = world->RegisterSystem<CollisionDetectionSystem>();
     collisionSystem->SetBroadPhase(std::make_unique<SpatialHashBroadPhase>(10.0f));
     
@@ -761,6 +771,15 @@ static bool Test_SphereVsCapsule_Collision() {
     physicsSystem->SetFixedDeltaTime(1.0f / 60.0f);
     physicsSystem->SetSolverIterations(10);
     physicsSystem->SetPositionIterations(4);
+    
+    // 启用 CCD（连续碰撞检测）
+    PhysicsConfig config;
+    config.enableCCD = true;
+    config.ccdVelocityThreshold = 10.0f;
+    config.ccdDisplacementThreshold = 0.5f;
+    config.maxCCDObjects = 50;
+    config.enableBroadPhaseCCD = true;
+    physicsSystem->SetConfig(config);
     
     auto* collisionSystem = world->RegisterSystem<CollisionDetectionSystem>();
     collisionSystem->SetBroadPhase(std::make_unique<SpatialHashBroadPhase>(10.0f));
@@ -843,6 +862,15 @@ static bool Test_BoxVsBox_Collision() {
     physicsSystem->SetFixedDeltaTime(1.0f / 60.0f);
     physicsSystem->SetSolverIterations(10);
     physicsSystem->SetPositionIterations(4);
+    
+    // 启用 CCD（连续碰撞检测）
+    PhysicsConfig config;
+    config.enableCCD = true;
+    config.ccdVelocityThreshold = 10.0f;
+    config.ccdDisplacementThreshold = 0.5f;
+    config.maxCCDObjects = 50;
+    config.enableBroadPhaseCCD = true;
+    physicsSystem->SetConfig(config);
     
     auto* collisionSystem = world->RegisterSystem<CollisionDetectionSystem>();
     collisionSystem->SetBroadPhase(std::make_unique<SpatialHashBroadPhase>(10.0f));
@@ -927,6 +955,15 @@ static bool Test_CapsuleVsCapsule_Collision() {
     physicsSystem->SetSolverIterations(10);
     physicsSystem->SetPositionIterations(4);
     
+    // 启用 CCD（连续碰撞检测）
+    PhysicsConfig config;
+    config.enableCCD = true;
+    config.ccdVelocityThreshold = 10.0f;
+    config.ccdDisplacementThreshold = 0.5f;
+    config.maxCCDObjects = 50;
+    config.enableBroadPhaseCCD = true;
+    physicsSystem->SetConfig(config);
+    
     auto* collisionSystem = world->RegisterSystem<CollisionDetectionSystem>();
     collisionSystem->SetBroadPhase(std::make_unique<SpatialHashBroadPhase>(10.0f));
     
@@ -1009,6 +1046,15 @@ static bool Test_CapsuleVsBox_Collision() {
     physicsSystem->SetFixedDeltaTime(1.0f / 60.0f);
     physicsSystem->SetSolverIterations(10);
     physicsSystem->SetPositionIterations(4);
+    
+    // 启用 CCD（连续碰撞检测）
+    PhysicsConfig config;
+    config.enableCCD = true;
+    config.ccdVelocityThreshold = 10.0f;
+    config.ccdDisplacementThreshold = 0.5f;
+    config.maxCCDObjects = 50;
+    config.enableBroadPhaseCCD = true;
+    physicsSystem->SetConfig(config);
     
     auto* collisionSystem = world->RegisterSystem<CollisionDetectionSystem>();
     collisionSystem->SetBroadPhase(std::make_unique<SpatialHashBroadPhase>(10.0f));
