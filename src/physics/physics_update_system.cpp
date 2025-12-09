@@ -66,7 +66,8 @@ void PhysicsUpdateSystem::Update(float deltaTime) {
     // 缓存物理解算后的真实状态（供下帧恢复）
     CacheSimulatedTransforms();
     
-    // 注意：插值现在由 PhysicsWorld 统一处理，通过 PhysicsTransformSync
+    // 应用插值（用于测试和直接调用 Update 的场景）
+    ApplyInterpolation();
 }
 
 void PhysicsUpdateSystem::FixedUpdate(float dt) {
@@ -508,6 +509,19 @@ void PhysicsUpdateSystem::UpdateSleepingState(float dt) {
                 if (activeB && bodyA.IsDynamic() && bodyA.isSleeping) {
                     wakeSeeds.insert(pair.entityA);
                 }
+                
+                // 检查：如果物体已经在 ResolveCollisions 中被唤醒（isSleeping == false），
+                // 且对方是活跃的，且 sleepTimer 为 0（说明刚被唤醒），
+                // 应该标记为唤醒以确保 sleepTimer 被重置为 0
+                // 注意：这里检查 sleepTimer == 0.0f，对于新创建的刚体，它们不在碰撞对中，
+                // 所以这个检查是安全的；对于已经在运行一段时间的活跃刚体，它们的 sleepTimer 
+                // 可能已经累积，所以不会被误判
+                if (activeA && bodyB.IsDynamic() && !bodyB.isSleeping && bodyB.sleepTimer == 0.0f) {
+                    wokenThisFrame.insert(pair.entityB);
+                }
+                if (activeB && bodyA.IsDynamic() && !bodyA.isSleeping && bodyA.sleepTimer == 0.0f) {
+                    wokenThisFrame.insert(pair.entityA);
+                }
             } catch (...) {
                 // 忽略组件访问错误
             }
@@ -630,6 +644,7 @@ void PhysicsUpdateSystem::UpdateSleepingState(float dt) {
             if (wokeThisFrame) {
                 body.isSleeping = false;
                 body.sleepTimer = 0.0f;
+                // 确保计时器保持为 0，即使后续逻辑也不会修改
                 continue;
             }
 
@@ -774,6 +789,75 @@ void PhysicsUpdateSystem::ApplyAngularImpulse(ECS::EntityID entity, const Vector
         body.WakeUp();  // 唤醒刚体
     } catch (...) {
         // 忽略错误
+    }
+}
+
+void PhysicsUpdateSystem::ApplyInterpolation() {
+    if (!m_world) {
+        return;
+    }
+    
+    float alpha = GetInterpolationAlpha();
+    float t = std::clamp(alpha, 0.0f, 1.0f);
+    
+    // 如果 alpha 接近 1.0，不需要插值，直接使用物理解算结果
+    if (t >= 1.0f - 1e-6f) {
+        return;
+    }
+    
+    // 查询所有具有 RigidBodyComponent 和 TransformComponent 的实体
+    auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
+    
+    for (ECS::EntityID entity : entities) {
+        if (!m_world->HasComponent<ECS::TransformComponent>(entity) ||
+            !m_world->HasComponent<RigidBodyComponent>(entity)) {
+            continue;
+        }
+        
+        try {
+            auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
+            auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+            
+            // 只处理动态物体（Kinematic/Static 不需要插值）
+            if (!body.IsDynamic()) {
+                continue;
+            }
+            
+            // 只处理根对象（无父实体的对象）
+            if (transform.GetParentEntity().IsValid()) {
+                continue;
+            }
+            
+            // 获取上一帧和当前帧的状态
+            // previousPosition 在 IntegratePosition 中被设置为积分前的位置
+            Vector3 previousPos = body.previousPosition;
+            Quaternion previousRot = body.previousRotation;
+            
+            // 从缓存获取当前物理解算后的状态
+            Vector3 currentPos;
+            Quaternion currentRot;
+            
+            auto it = m_simulatedTransforms.find(entity);
+            if (it != m_simulatedTransforms.end()) {
+                currentPos = it->second.position;
+                currentRot = it->second.rotation;
+            } else {
+                // 如果没有缓存，使用当前 Transform（这种情况不应该发生）
+                currentPos = transform.GetPosition();
+                currentRot = transform.GetRotation();
+            }
+            
+            // 进行插值：在 previousPosition 和 currentPosition 之间插值
+            Vector3 interpolatedPos = previousPos + (currentPos - previousPos) * t;
+            Quaternion interpolatedRot = previousRot.slerp(t, currentRot);
+            
+            // 更新 Transform
+            transform.SetPosition(interpolatedPos);
+            transform.SetRotation(interpolatedRot);
+            
+        } catch (...) {
+            // 忽略组件访问错误
+        }
     }
 }
 

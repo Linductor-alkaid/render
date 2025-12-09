@@ -305,6 +305,11 @@ private:
      */
     void UpdateSleepingState(float dt);
     
+    /**
+     * @brief 应用插值（用于测试和直接调用 Update 的场景）
+     */
+    void ApplyInterpolation();
+    
     Vector3 m_gravity = Vector3(0.0f, -9.81f, 0.0f);  // 全局重力
     float m_fixedDeltaTime = 1.0f / 60.0f;            // 固定时间步长
     float m_accumulator = 0.0f;                       // 时间累积器

@@ -26,10 +26,14 @@ namespace Physics {
 void SpatialHashBroadPhase::Update(const std::vector<std::pair<ECS::EntityID, AABB>>& entities) {
     // 清空旧数据
     m_spatialHash.clear();
+    m_aabbMap.clear();
     m_objectCount = entities.size();
     
-    // 将每个实体插入到对应的格子中
+    // 将每个实体插入到对应的格子中，并保存 AABB 映射
     for (const auto& [entityId, aabb] : entities) {
+        // 保存 AABB 映射（用于后续预检测）
+        m_aabbMap[entityId] = aabb;
+        
         // 计算 AABB 覆盖的格子范围
         CellCoord minCell = WorldToCell(aabb.min);
         CellCoord maxCell = WorldToCell(aabb.max);
@@ -61,9 +65,25 @@ std::vector<SpatialHashBroadPhase::EntityPair> SpatialHashBroadPhase::DetectPair
                 
                 // 去重：同一对物体可能在多个格子中
                 uint64_t pairHash = HashPair(entityA, entityB);
-                if (processedPairs.insert(pairHash).second) {
-                    pairs.push_back({entityA, entityB});
+                if (processedPairs.find(pairHash) != processedPairs.end()) {
+                    continue;  // 已处理过，跳过
                 }
+                
+                // AABB 快速预检测：如果 AABB 不相交，跳过细检测
+                auto itA = m_aabbMap.find(entityA);
+                auto itB = m_aabbMap.find(entityB);
+                if (itA == m_aabbMap.end() || itB == m_aabbMap.end()) {
+                    continue;  // AABB 映射缺失，跳过
+                }
+                
+                if (!itA->second.Intersects(itB->second)) {
+                    processedPairs.insert(pairHash);  // 标记为已处理，避免重复检测
+                    continue;  // AABB 不相交，跳过
+                }
+                
+                // AABB 相交，添加到候选对列表
+                processedPairs.insert(pairHash);
+                pairs.push_back({entityA, entityB});
             }
         }
     }
@@ -73,6 +93,7 @@ std::vector<SpatialHashBroadPhase::EntityPair> SpatialHashBroadPhase::DetectPair
 
 void SpatialHashBroadPhase::Clear() {
     m_spatialHash.clear();
+    m_aabbMap.clear();
     m_objectCount = 0;
 }
 
@@ -163,9 +184,19 @@ void OctreeBroadPhase::OctreeNode::QueryPairs(std::vector<EntityPair>& pairs,
             ECS::EntityID b = objects[j].first;
             
             uint64_t pairHash = OctreeBroadPhase::HashPair(a, b);
-            if (processed.insert(pairHash).second) {
-                pairs.push_back({a, b});
+            if (processed.find(pairHash) != processed.end()) {
+                continue;  // 已处理过，跳过
             }
+            
+            // AABB 快速预检测：如果 AABB 不相交，跳过细检测
+            if (!objects[i].second.Intersects(objects[j].second)) {
+                processed.insert(pairHash);  // 标记为已处理，避免重复检测
+                continue;  // AABB 不相交，跳过
+            }
+            
+            // AABB 相交，添加到候选对列表
+            processed.insert(pairHash);
+            pairs.push_back({a, b});
         }
         
         // 检查当前节点物体与子节点中物体的碰撞
@@ -176,9 +207,19 @@ void OctreeBroadPhase::OctreeNode::QueryPairs(std::vector<EntityPair>& pairs,
                     ECS::EntityID b = childEntity;
                     
                     uint64_t pairHash = OctreeBroadPhase::HashPair(a, b);
-                    if (processed.insert(pairHash).second) {
-                        pairs.push_back({a, b});
+                    if (processed.find(pairHash) != processed.end()) {
+                        continue;  // 已处理过，跳过
                     }
+                    
+                    // AABB 快速预检测：如果 AABB 不相交，跳过细检测
+                    if (!objects[i].second.Intersects(childAABB)) {
+                        processed.insert(pairHash);  // 标记为已处理，避免重复检测
+                        continue;  // AABB 不相交，跳过
+                    }
+                    
+                    // AABB 相交，添加到候选对列表
+                    processed.insert(pairHash);
+                    pairs.push_back({a, b});
                 }
             }
         }

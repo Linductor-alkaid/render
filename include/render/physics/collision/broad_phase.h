@@ -118,6 +118,9 @@ private:
     /// 空间哈希表：格子哈希 -> 实体列表
     std::unordered_map<uint64_t, std::vector<ECS::EntityID>> m_spatialHash;
     
+    /// AABB 映射表：实体ID -> AABB（用于快速预检测）
+    std::unordered_map<ECS::EntityID, AABB, ECS::EntityID::Hash> m_aabbMap;
+    
     /// 物体总数
     size_t m_objectCount = 0;
     

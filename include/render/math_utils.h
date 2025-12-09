@@ -36,6 +36,8 @@ constexpr float HALF_PI = 1.57079632679489661923f;
 constexpr float DEG2RAD = 0.01745329251994329577f;  // PI / 180
 constexpr float RAD2DEG = 57.2957795130823208768f;  // 180 / PI
 constexpr float EPSILON = 1e-6f;
+constexpr float COLLISION_EPSILON = 1e-4f;  // 碰撞检测专用容差
+constexpr float PENETRATION_SLOP = 0.01f;   // 允许的轻微穿透深度
 
 // ============================================================================
 // 角度转换

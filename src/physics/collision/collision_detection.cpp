@@ -37,8 +37,8 @@ bool CollisionDetector::SphereVsSphere(
     float radiusSum = radiusA + radiusB;
     float radiusSumSq = radiusSum * radiusSum;
     
-    // 检测是否相交
-    if (distSq >= radiusSumSq) {
+    // 检测是否相交（使用碰撞检测专用容差）
+    if (distSq >= radiusSumSq + MathUtils::COLLISION_EPSILON) {
         return false;  // 不相交
     }
     
@@ -57,8 +57,11 @@ bool CollisionDetector::SphereVsSphere(
     Vector3 normal = delta / dist;
     manifold.SetNormal(normal);
     
-    // 穿透深度
+    // 穿透深度（保证最小穿透深度以提高稳定性）
     float penetration = radiusSum - dist;
+    if (penetration < MathUtils::PENETRATION_SLOP) {
+        penetration = MathUtils::PENETRATION_SLOP;
+    }
     manifold.penetration = penetration;
     
     // 接触点（在两球表面之间）
@@ -77,13 +80,13 @@ bool CollisionDetector::SphereVsBox(
     // 计算球心在盒子局部空间中的最近点
     Vector3 closestPoint = ClosestPointOnOBB(sphereCenter, boxCenter, boxHalfExtents, boxRotation);
     
-    // 检测距离
+    // 检测距离（使用碰撞检测专用容差）
     Vector3 delta = sphereCenter - closestPoint;
     float distSq = delta.squaredNorm();
     float radiusSq = sphereRadius * sphereRadius;
     
-    if (distSq >= radiusSq) {
-        return false;  // 不相交
+    if (distSq >= radiusSq + MathUtils::COLLISION_EPSILON) {
+        return false;  // 明确不相交
     }
     
     float dist = std::sqrt(distSq);
@@ -134,13 +137,17 @@ bool CollisionDetector::SphereVsBox(
     Vector3 normal = delta / dist;
     manifold.SetNormal(normal);
     
-    // 穿透深度
-    manifold.penetration = sphereRadius - dist;
+    // 穿透深度（保证最小穿透深度以提高稳定性）
+    float penetration = sphereRadius - dist;
+    if (penetration < MathUtils::PENETRATION_SLOP) {
+        penetration = MathUtils::PENETRATION_SLOP;
+    }
+    manifold.penetration = penetration;
     
-    // 接触点：在盒子表面和球表面之间取中点
-    // 或者更准确地说，在盒子的 closestPoint 位置
-    Vector3 contactPoint = closestPoint;
-    manifold.AddContact(contactPoint, manifold.penetration);
+    // 接触点：在球体表面上，沿法线方向（从球心指向盒子）
+    // 这样接触点距离球心正好是 sphereRadius
+    Vector3 contactPoint = sphereCenter - normal * sphereRadius;
+    manifold.AddContact(contactPoint, penetration);
     
     return true;
 }
@@ -162,14 +169,14 @@ bool CollisionDetector::SphereVsCapsule(
     // 计算球心到线段的最近点
     Vector3 closestPoint = ClosestPointOnSegment(sphereCenter, segmentA, segmentB);
     
-    // 检测距离
+    // 检测距离（使用碰撞检测专用容差）
     Vector3 delta = sphereCenter - closestPoint;
     float distSq = delta.squaredNorm();
     float radiusSum = sphereRadius + capsuleRadius;
     float radiusSumSq = radiusSum * radiusSum;
     
-    if (distSq >= radiusSumSq) {
-        return false;
+    if (distSq >= radiusSumSq + MathUtils::COLLISION_EPSILON) {
+        return false;  // 明确不相交
     }
     
     float dist = std::sqrt(distSq);
@@ -183,8 +190,14 @@ bool CollisionDetector::SphereVsCapsule(
     
     Vector3 normal = delta / dist;
     manifold.SetNormal(normal);
-    manifold.penetration = radiusSum - dist;
-    manifold.AddContact(closestPoint + normal * capsuleRadius, manifold.penetration);
+    
+    // 穿透深度（保证最小穿透深度以提高稳定性）
+    float penetration = radiusSum - dist;
+    if (penetration < MathUtils::PENETRATION_SLOP) {
+        penetration = MathUtils::PENETRATION_SLOP;
+    }
+    manifold.penetration = penetration;
+    manifold.AddContact(closestPoint + normal * capsuleRadius, penetration);
     
     return true;
 }
@@ -232,8 +245,14 @@ bool CollisionDetector::BoxVsBox(
         normal[minAxis] = (delta[minAxis] > 0) ? 1.0f : -1.0f;
         
         manifold.SetNormal(normal);
-        manifold.penetration = minOverlap;
-        manifold.AddContact(centerA + delta * 0.5f, minOverlap);
+        
+        // 穿透深度（保证最小穿透深度以提高稳定性）
+        float penetration = minOverlap;
+        if (penetration < MathUtils::PENETRATION_SLOP) {
+            penetration = MathUtils::PENETRATION_SLOP;
+        }
+        manifold.penetration = penetration;
+        manifold.AddContact(centerA + delta * 0.5f, penetration);
         
         return true;
     }
@@ -287,9 +306,9 @@ bool CollisionDetector::BoxVsBox(
         // 中心距离在该轴上的投影
         float distance = std::abs(t.dot(normalizedAxis));
         
-        // 检测分离
-        if (distance > ra + rb) {
-            return false;  // 找到分离轴，不相交
+        // 检测分离（使用碰撞检测专用容差）
+        if (distance > ra + rb + MathUtils::COLLISION_EPSILON) {
+            return false;  // 找到分离轴，明确不相交
         }
         
         // 记录最小穿透
@@ -336,10 +355,16 @@ bool CollisionDetector::BoxVsBox(
     }
     
     manifold.SetNormal(minAxis);
-    manifold.penetration = minPenetration;
+    
+    // 穿透深度（保证最小穿透深度以提高稳定性）
+    float penetration = minPenetration;
+    if (penetration < MathUtils::PENETRATION_SLOP) {
+        penetration = MathUtils::PENETRATION_SLOP;
+    }
+    manifold.penetration = penetration;
     
     // 简化的接触点（中心点）
-    manifold.AddContact(centerA + t * 0.5f, minPenetration);
+    manifold.AddContact(centerA + t * 0.5f, penetration);
     
     return true;
 }
@@ -373,14 +398,14 @@ bool CollisionDetector::CapsuleVsCapsule(
     Vector3 c1, c2;
     ClosestPointsBetweenSegments(p1, q1, p2, q2, s, t, c1, c2);
     
-    // 检测距离
+    // 检测距离（使用碰撞检测专用容差）
     Vector3 delta = c2 - c1;
     float distSq = delta.squaredNorm();
     float radiusSum = radiusA + radiusB;
     float radiusSumSq = radiusSum * radiusSum;
     
-    if (distSq >= radiusSumSq) {
-        return false;
+    if (distSq >= radiusSumSq + MathUtils::COLLISION_EPSILON) {
+        return false;  // 明确不相交
     }
     
     float dist = std::sqrt(distSq);
@@ -394,8 +419,14 @@ bool CollisionDetector::CapsuleVsCapsule(
     
     Vector3 normal = delta / dist;
     manifold.SetNormal(normal);
-    manifold.penetration = radiusSum - dist;
-    manifold.AddContact(c1 + normal * radiusA, manifold.penetration);
+    
+    // 穿透深度（保证最小穿透深度以提高稳定性）
+    float penetration = radiusSum - dist;
+    if (penetration < MathUtils::PENETRATION_SLOP) {
+        penetration = MathUtils::PENETRATION_SLOP;
+    }
+    manifold.penetration = penetration;
+    manifold.AddContact(c1 + normal * radiusA, penetration);
     
     return true;
 }
@@ -447,10 +478,10 @@ bool CollisionDetector::CapsuleVsBox(
         }
     }
     
-    // 检测是否碰撞
+    // 检测是否碰撞（使用碰撞检测专用容差）
     float radiusSq = capsuleRadius * capsuleRadius;
-    if (minDistSq >= radiusSq) {
-        return false;
+    if (minDistSq >= radiusSq + MathUtils::COLLISION_EPSILON) {
+        return false;  // 明确不相交
     }
     
     float dist = std::sqrt(minDistSq);
@@ -467,8 +498,14 @@ bool CollisionDetector::CapsuleVsBox(
     // 计算碰撞法线和穿透深度
     Vector3 normal = (closestSegmentPoint - closestBoxPoint) / dist;
     manifold.SetNormal(normal);
-    manifold.penetration = capsuleRadius - dist;
-    manifold.AddContact(closestBoxPoint, manifold.penetration);
+    
+    // 穿透深度（保证最小穿透深度以提高稳定性）
+    float penetration = capsuleRadius - dist;
+    if (penetration < MathUtils::PENETRATION_SLOP) {
+        penetration = MathUtils::PENETRATION_SLOP;
+    }
+    manifold.penetration = penetration;
+    manifold.AddContact(closestBoxPoint, penetration);
     
     return true;
 }
@@ -590,15 +627,13 @@ bool CollisionDispatcher::Detect(
             manifold, false
         );
     } else if (typeB == ShapeType::Sphere) {
-        bool hit = DispatchSphere(
+        // 当 typeB 是 Sphere 时，调用 DispatchSphere(shapeB, shapeA, swapped=true)
+        // DispatchSphere 内部已经正确处理了法线方向（从A指向B）
+        return DispatchSphere(
             static_cast<const SphereShape*>(shapeB), posB, scaleB,
             shapeA, posA, rotA, scaleA,
             manifold, true
         );
-        if (hit) {
-            manifold.SetNormal(-manifold.normal);  // 翻转法线
-        }
-        return hit;
     }
     
     // Box 分发
@@ -609,15 +644,12 @@ bool CollisionDispatcher::Detect(
             manifold, false
         );
     } else if (typeB == ShapeType::Box) {
-        bool hit = DispatchBox(
+        // DispatchBox 内部已经正确处理了法线方向（从A指向B）
+        return DispatchBox(
             static_cast<const BoxShape*>(shapeB), posB, rotB, scaleB,
             shapeA, posA, rotA, scaleA,
             manifold, true
         );
-        if (hit) {
-            manifold.SetNormal(-manifold.normal);
-        }
-        return hit;
     }
     
     // Capsule 分发
@@ -643,6 +675,7 @@ bool CollisionDispatcher::DispatchSphere(
         case ShapeType::Sphere: {
             const SphereShape* otherSphere = static_cast<const SphereShape*>(other);
             float otherRadius = otherSphere->GetRadius() * otherScale.maxCoeff();
+            // SphereVsSphere 返回的法线已经是从A指向B，无需修改
             return CollisionDetector::SphereVsSphere(
                 pos, sphereRadius,
                 otherPos, otherRadius,
@@ -653,22 +686,40 @@ bool CollisionDispatcher::DispatchSphere(
         case ShapeType::Box: {
             const BoxShape* box = static_cast<const BoxShape*>(other);
             Vector3 boxHalfExtents = box->GetHalfExtents().cwiseProduct(otherScale);
-            return CollisionDetector::SphereVsBox(
+            // SphereVsBox 返回的法线是从盒子指向球
+            bool result = CollisionDetector::SphereVsBox(
                 pos, sphereRadius,
                 otherPos, boxHalfExtents, otherRot,
                 manifold
             );
+            if (result) {
+                // 当 swapped=false 时，需要反转为从A（球）指向B（盒子）
+                // 当 swapped=true 时，法线已经是从A指向B，不需要翻转
+                if (!swapped) {
+                    manifold.SetNormal(-manifold.normal);
+                }
+            }
+            return result;
         }
         
         case ShapeType::Capsule: {
             const CapsuleShape* capsule = static_cast<const CapsuleShape*>(other);
             float capsuleRadius = capsule->GetRadius() * otherScale.maxCoeff();
             float capsuleHeight = capsule->GetHeight() * otherScale.y();
-            return CollisionDetector::SphereVsCapsule(
+            // SphereVsCapsule 返回的法线是从胶囊指向球
+            bool result = CollisionDetector::SphereVsCapsule(
                 pos, sphereRadius,
                 otherPos, capsuleRadius, capsuleHeight, otherRot,
                 manifold
             );
+            if (result) {
+                // 当 swapped=false 时，需要反转为从A（球）指向B（胶囊）
+                // 当 swapped=true 时，法线已经是从A指向B，不需要翻转
+                if (!swapped) {
+                    manifold.SetNormal(-manifold.normal);
+                }
+            }
+            return result;
         }
         
         default:
@@ -698,11 +749,20 @@ bool CollisionDispatcher::DispatchBox(
             const CapsuleShape* capsule = static_cast<const CapsuleShape*>(other);
             float capsuleRadius = capsule->GetRadius() * otherScale.maxCoeff();
             float capsuleHeight = capsule->GetHeight() * otherScale.y();
-            return CollisionDetector::CapsuleVsBox(
+            // CapsuleVsBox 返回的法线是从盒子指向胶囊
+            bool result = CollisionDetector::CapsuleVsBox(
                 otherPos, capsuleRadius, capsuleHeight, otherRot,
                 pos, boxHalfExtents, rot,
                 manifold
             );
+            if (result) {
+                // 当 swapped=false 时，CapsuleVsBox(capsule, box) 返回的法线是从盒子到胶囊，即从B到A，需要反转为从A到B
+                // 当 swapped=true 时，CapsuleVsBox(capsule, box) 返回的法线是从盒子到胶囊，即从A到B，不需要翻转
+                if (!swapped) {
+                    manifold.SetNormal(-manifold.normal);
+                }
+            }
+            return result;
         }
         
         default:
