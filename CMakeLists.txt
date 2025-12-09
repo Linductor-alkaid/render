@@ -254,6 +254,7 @@ set(RENDER_SOURCES
     src/physics/collision/collision_detection.cpp
     src/physics/collision/gjk.cpp
     src/physics/collision/ccd_detector.cpp
+    src/physics/collision/ccd_broad_phase.cpp
     
     # Rendering
     src/rendering/shader.cpp

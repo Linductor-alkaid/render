@@ -22,6 +22,7 @@
 #include "render/physics/physics_utils.h"
 #include "render/physics/dynamics/force_accumulator.h"
 #include "render/physics/collision/ccd_detector.h"
+#include "render/physics/collision/ccd_broad_phase.h"
 #include "render/physics/collision/collision_shapes.h"
 #include "render/math_utils.h"
 #include "render/ecs/world.h"
@@ -892,20 +893,36 @@ std::vector<ECS::EntityID> PhysicsUpdateSystem::DetectCCDCandidates(float dt) {
         }
         
         if (!m_world->HasComponent<RigidBodyComponent>(entity) ||
-            !m_world->HasComponent<ColliderComponent>(entity)) {
+            !m_world->HasComponent<ColliderComponent>(entity) ||
+            !m_world->HasComponent<ECS::TransformComponent>(entity)) {
             continue;
         }
         
         try {
             auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
             auto& collider = m_world->GetComponent<ColliderComponent>(entity);
+            auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
             
-            // 使用 CCDCandidateDetector 判断是否需要 CCD
-            if (CCDCandidateDetector::ShouldUseCCD(
+            bool shouldUseCCD = false;
+            
+            // 策略 1: 用户强制启用
+            if (body.useCCD) {
+                shouldUseCCD = true;
+            }
+            // 策略 2: 使用 CCDCandidateDetector 判断（速度/位移阈值）
+            else if (CCDCandidateDetector::ShouldUseCCD(
                 body, collider, dt,
                 m_config.ccdVelocityThreshold,
                 m_config.ccdDisplacementThreshold
             )) {
+                shouldUseCCD = true;
+            }
+            // 策略 3: 薄片物体检测（地面、墙壁等容易穿透的物体）
+            else if (CCDBroadPhase::IsThinObject(collider, transform)) {
+                shouldUseCCD = true;
+            }
+            
+            if (shouldUseCCD) {
                 candidates.push_back(entity);
                 count++;
             }
@@ -922,8 +939,25 @@ void PhysicsUpdateSystem::IntegrateWithCCD(float dt, const std::vector<ECS::Enti
         return;
     }
     
-    // 创建形状缓存（避免重复创建）
+    // 创建形状缓存（避免重复创建，性能优化）
     std::unordered_map<ECS::EntityID, std::unique_ptr<CollisionShape>, ECS::EntityID::Hash> shapeCache;
+    
+    // 预创建所有候选物体的形状（缓存优化）
+    for (ECS::EntityID candidateEntity : candidates) {
+        if (!m_world->HasComponent<ColliderComponent>(candidateEntity)) {
+            continue;
+        }
+        
+        try {
+            auto& collider = m_world->GetComponent<ColliderComponent>(candidateEntity);
+            std::unique_ptr<CollisionShape> shape = CreateShapeFromCollider(collider);
+            if (shape) {
+                shapeCache[candidateEntity] = std::move(shape);
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
     
     // 对所有 CCD 候选物体进行检测
     for (ECS::EntityID candidateEntity : candidates) {
@@ -942,13 +976,21 @@ void PhysicsUpdateSystem::IntegrateWithCCD(float dt, const std::vector<ECS::Enti
             body.previousPosition = transform.GetPosition();
             body.previousRotation = transform.GetRotation();
             
-            // 创建候选物体的形状
-            std::unique_ptr<CollisionShape> candidateShape = CreateShapeFromCollider(collider);
-            if (!candidateShape) {
-                // 不支持该形状类型，使用标准积分
-                IntegratePositionToTime(candidateEntity, dt);
-                continue;
+            // 从缓存获取候选物体的形状（性能优化）
+            auto shapeIt = shapeCache.find(candidateEntity);
+            if (shapeIt == shapeCache.end()) {
+                // 缓存中没有，创建新的
+                std::unique_ptr<CollisionShape> newShape = CreateShapeFromCollider(collider);
+                if (!newShape) {
+                    // 不支持该形状类型，使用标准积分
+                    IntegratePositionToTime(candidateEntity, dt);
+                    continue;
+                }
+                shapeCache[candidateEntity] = std::move(newShape);
+                shapeIt = shapeCache.find(candidateEntity);
             }
+            
+            CollisionShape* candidateShape = shapeIt->second.get();
             
             // 获取候选物体的初始状态
             Vector3 posA0 = body.previousPosition;
@@ -962,12 +1004,27 @@ void PhysicsUpdateSystem::IntegrateWithCCD(float dt, const std::vector<ECS::Enti
                 ECS::EntityID otherEntity;
             };
             std::vector<CollisionInfo> collisions;
-            auto allEntities = m_world->Query<ECS::TransformComponent, RigidBodyComponent, ColliderComponent>();
             
-            for (ECS::EntityID otherEntity : allEntities) {
-                if (otherEntity == candidateEntity) {
-                    continue;
+            // 使用 Broad Phase CCD 筛选潜在碰撞对（如果启用）
+            std::vector<ECS::EntityID> candidateList = {candidateEntity};
+            std::vector<std::pair<ECS::EntityID, ECS::EntityID>> ccdPairs;
+            
+            if (m_config.enableBroadPhaseCCD) {
+                // 使用 Broad Phase 快速筛选
+                ccdPairs = CCDBroadPhase::FilterCCDPairs(candidateList, m_world, dt);
+            } else {
+                // 不使用 Broad Phase，检测所有物体
+                auto allEntities = m_world->Query<ECS::TransformComponent, RigidBodyComponent, ColliderComponent>();
+                for (ECS::EntityID otherEntity : allEntities) {
+                    if (otherEntity != candidateEntity) {
+                        ccdPairs.push_back({candidateEntity, otherEntity});
+                    }
                 }
+            }
+            
+            // 对筛选后的对进行精确 CCD 检测
+            for (const auto& pair : ccdPairs) {
+                ECS::EntityID otherEntity = (pair.first == candidateEntity) ? pair.second : pair.first;
                 
                 if (!m_world->HasComponent<RigidBodyComponent>(otherEntity) ||
                     !m_world->HasComponent<ColliderComponent>(otherEntity) ||
@@ -980,10 +1037,24 @@ void PhysicsUpdateSystem::IntegrateWithCCD(float dt, const std::vector<ECS::Enti
                     auto& otherCollider = m_world->GetComponent<ColliderComponent>(otherEntity);
                     auto& otherTransform = m_world->GetComponent<ECS::TransformComponent>(otherEntity);
                     
-                    // 创建其他物体的形状
-                    std::unique_ptr<CollisionShape> otherShape = CreateShapeFromCollider(otherCollider);
-                    if (!otherShape) {
+                    // 使用选择性 CCD 策略：检查是否应该进行 CCD
+                    if (!CCDBroadPhase::ShouldPerformCCD(candidateEntity, otherEntity, m_world)) {
                         continue;
+                    }
+                    
+                    // 从缓存获取其他物体的形状（性能优化）
+                    CollisionShape* otherShape = nullptr;
+                    auto otherShapeIt = shapeCache.find(otherEntity);
+                    if (otherShapeIt == shapeCache.end()) {
+                        // 缓存中没有，创建新的并缓存
+                        std::unique_ptr<CollisionShape> newShape = CreateShapeFromCollider(otherCollider);
+                        if (!newShape) {
+                            continue;
+                        }
+                        otherShape = newShape.get();
+                        shapeCache[otherEntity] = std::move(newShape);
+                    } else {
+                        otherShape = otherShapeIt->second.get();
                     }
                     
                     // 获取其他物体的状态
@@ -997,8 +1068,8 @@ void PhysicsUpdateSystem::IntegrateWithCCD(float dt, const std::vector<ECS::Enti
                     // 执行 CCD 检测
                     CCDResult result;
                     if (CCDDetector::Detect(
-                        candidateShape.get(), posA0, velA, rotA0, angularVelA,
-                        otherShape.get(), posB0, velB, rotB0, angularVelB,
+                        candidateShape, posA0, velA, rotA0, angularVelA,
+                        otherShape, posB0, velB, rotB0, angularVelB,
                         dt, result
                     )) {
                         CollisionInfo info;
