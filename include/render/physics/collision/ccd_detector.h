@@ -99,6 +99,78 @@ public:
         CCDResult& result
     );
     
+    // ============================================================================
+    // 具体的形状组合算法（公共接口，用于测试和直接调用）
+    // ============================================================================
+    
+    /**
+     * @brief Sphere vs Sphere CCD 检测
+     */
+    static bool SphereVsSphereCCD(
+        const Vector3& posA0, float radiusA, const Vector3& velA,
+        const Vector3& posB0, float radiusB, const Vector3& velB,
+        float dt,
+        CCDResult& result
+    );
+    
+    /**
+     * @brief Sphere vs Box CCD 检测
+     */
+    static bool SphereVsBoxCCD(
+        const Vector3& spherePos0, float sphereRadius, const Vector3& sphereVel,
+        const Vector3& boxCenter, const Vector3& boxHalfExtents,
+        const Quaternion& boxRotation, const Vector3& boxVel,
+        float dt,
+        CCDResult& result
+    );
+    
+    /**
+     * @brief Sphere vs Capsule CCD 检测
+     */
+    static bool SphereVsCapsuleCCD(
+        const Vector3& spherePos0, float sphereRadius, const Vector3& sphereVel,
+        const Vector3& capsuleCenter, float capsuleRadius, float capsuleHeight,
+        const Quaternion& capsuleRotation, const Vector3& capsuleVel,
+        float dt,
+        CCDResult& result
+    );
+    
+    /**
+     * @brief Box vs Box CCD 检测（简化版）
+     */
+    static bool BoxVsBoxCCD(
+        const Vector3& boxA0, const Vector3& boxAHalfExtents, 
+        const Quaternion& boxARot0, const Vector3& boxAVel, const Vector3& boxAAngularVel,
+        const Vector3& boxB0, const Vector3& boxBHalfExtents,
+        const Quaternion& boxBRot0, const Vector3& boxBVel, const Vector3& boxBAngularVel,
+        float dt,
+        CCDResult& result
+    );
+    
+    /**
+     * @brief Capsule vs Capsule CCD 检测
+     */
+    static bool CapsuleVsCapsuleCCD(
+        const Vector3& capsuleA0, float capsuleARadius, float capsuleAHeight,
+        const Quaternion& capsuleARot0, const Vector3& capsuleAVel, const Vector3& capsuleAAngularVel,
+        const Vector3& capsuleB0, float capsuleBRadius, float capsuleBHeight,
+        const Quaternion& capsuleBRot0, const Vector3& capsuleBVel, const Vector3& capsuleBAngularVel,
+        float dt,
+        CCDResult& result
+    );
+    
+    /**
+     * @brief Capsule vs Box CCD 检测
+     */
+    static bool CapsuleVsBoxCCD(
+        const Vector3& capsuleCenter, float capsuleRadius, float capsuleHeight,
+        const Quaternion& capsuleRotation, const Vector3& capsuleVel, const Vector3& capsuleAngularVel,
+        const Vector3& boxCenter, const Vector3& boxHalfExtents,
+        const Quaternion& boxRotation, const Vector3& boxVel, const Vector3& boxAngularVel,
+        float dt,
+        CCDResult& result
+    );
+    
 private:
     /**
      * @brief 分发到具体的形状组合算法
@@ -114,64 +186,7 @@ private:
         CCDResult& result
     );
     
-    // 具体的形状组合算法（将在后续阶段实现）
-    // 目前只声明接口，具体实现在 ccd_shapes.cpp 中
-    
-    // Sphere vs Sphere
-    static bool SphereVsSphereCCD(
-        const Vector3& posA0, float radiusA, const Vector3& velA,
-        const Vector3& posB0, float radiusB, const Vector3& velB,
-        float dt,
-        CCDResult& result
-    );
-    
-    // Sphere vs Box
-    static bool SphereVsBoxCCD(
-        const Vector3& spherePos0, float sphereRadius, const Vector3& sphereVel,
-        const Vector3& boxCenter, const Vector3& boxHalfExtents,
-        const Quaternion& boxRotation, const Vector3& boxVel,
-        float dt,
-        CCDResult& result
-    );
-    
-    // Sphere vs Capsule
-    static bool SphereVsCapsuleCCD(
-        const Vector3& spherePos0, float sphereRadius, const Vector3& sphereVel,
-        const Vector3& capsuleCenter, float capsuleRadius, float capsuleHeight,
-        const Quaternion& capsuleRotation, const Vector3& capsuleVel,
-        float dt,
-        CCDResult& result
-    );
-    
-    // Box vs Box（简化版）
-    static bool BoxVsBoxCCD(
-        const Vector3& boxA0, const Vector3& boxAHalfExtents, 
-        const Quaternion& boxARot0, const Vector3& boxAVel, const Vector3& boxAAngularVel,
-        const Vector3& boxB0, const Vector3& boxBHalfExtents,
-        const Quaternion& boxBRot0, const Vector3& boxBVel, const Vector3& boxBAngularVel,
-        float dt,
-        CCDResult& result
-    );
-    
-    // Capsule vs Capsule
-    static bool CapsuleVsCapsuleCCD(
-        const Vector3& capsuleA0, float capsuleARadius, float capsuleAHeight,
-        const Quaternion& capsuleARot0, const Vector3& capsuleAVel, const Vector3& capsuleAAngularVel,
-        const Vector3& capsuleB0, float capsuleBRadius, float capsuleBHeight,
-        const Quaternion& capsuleBRot0, const Vector3& capsuleBVel, const Vector3& capsuleBAngularVel,
-        float dt,
-        CCDResult& result
-    );
-    
-    // Capsule vs Box
-    static bool CapsuleVsBoxCCD(
-        const Vector3& capsuleCenter, float capsuleRadius, float capsuleHeight,
-        const Quaternion& capsuleRotation, const Vector3& capsuleVel, const Vector3& capsuleAngularVel,
-        const Vector3& boxCenter, const Vector3& boxHalfExtents,
-        const Quaternion& boxRotation, const Vector3& boxVel, const Vector3& boxAngularVel,
-        float dt,
-        CCDResult& result
-    );
+    // 注意：具体的算法实现在 public 部分，以便测试和直接调用
 };
 
 /**

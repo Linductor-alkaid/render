@@ -21,6 +21,7 @@
 
 #include "render/physics/collision/ccd_detector.h"
 #include "render/physics/physics_components.h"
+#include "render/physics/collision/collision_shapes.h"
 #include "render/math_utils.h"
 #include <algorithm>
 #include <cmath>
@@ -91,20 +92,35 @@ bool CCDDetector::Dispatch(
     // TODO: 在阶段 2-3 中实现具体的 CCD 算法
     // Sphere vs Sphere
     if (typeA == ShapeType::Sphere && typeB == ShapeType::Sphere) {
-        // 将在阶段 2 实现
-        return false;
+        const SphereShape* sphereA = static_cast<const SphereShape*>(shapeA);
+        const SphereShape* sphereB = static_cast<const SphereShape*>(shapeB);
+        return SphereVsSphereCCD(
+            posA0, sphereA->GetRadius(), velA,
+            posB0, sphereB->GetRadius(), velB,
+            dt, result
+        );
     }
     
     // Sphere vs Box
     if (typeA == ShapeType::Sphere && typeB == ShapeType::Box) {
-        // 将在阶段 2 实现
-        return false;
+        const SphereShape* sphere = static_cast<const SphereShape*>(shapeA);
+        const BoxShape* box = static_cast<const BoxShape*>(shapeB);
+        return SphereVsBoxCCD(
+            posA0, sphere->GetRadius(), velA,
+            posB0, box->GetHalfExtents(), rotB0, velB,
+            dt, result
+        );
     }
     
     // Sphere vs Capsule
     if (typeA == ShapeType::Sphere && typeB == ShapeType::Capsule) {
-        // 将在阶段 2 实现
-        return false;
+        const SphereShape* sphere = static_cast<const SphereShape*>(shapeA);
+        const CapsuleShape* capsule = static_cast<const CapsuleShape*>(shapeB);
+        return SphereVsCapsuleCCD(
+            posA0, sphere->GetRadius(), velA,
+            posB0, capsule->GetRadius(), capsule->GetHeight(), rotB0, velB,
+            dt, result
+        );
     }
     
     // Box vs Box
@@ -140,12 +156,87 @@ bool CCDDetector::SphereVsSphereCCD(
     float dt,
     CCDResult& result
 ) {
-    // 将在阶段 2 实现
-    (void)posA0; (void)radiusA; (void)velA;
-    (void)posB0; (void)radiusB; (void)velB;
-    (void)dt;
     result.Reset();
-    return false;
+    
+    // 相对位置和速度
+    Vector3 p0 = posA0 - posB0;
+    Vector3 v = velA - velB;
+    
+    float rSum = radiusA + radiusB;
+    float rSumSq = rSum * rSum;
+    
+    // 检查初始状态：如果已经相交，TOI = 0
+    float distSq0 = p0.squaredNorm();
+    if (distSq0 <= rSumSq) {
+        float dist0 = std::sqrt(distSq0);
+        result.collided = true;
+        result.toi = 0.0f;
+        if (dist0 > MathUtils::EPSILON) {
+            result.collisionNormal = p0 / dist0;
+        } else {
+            // 如果两球完全重叠，使用默认法线
+            result.collisionNormal = Vector3::UnitY();
+        }
+        result.collisionPoint = posB0 + result.collisionNormal * radiusB;
+        result.penetration = rSum - dist0;
+        return true;
+    }
+    
+    // 二次方程：|p0 + v*t|² = rSum²
+    // 展开：(p0·p0) + 2*(p0·v)*t + (v·v)*t² = rSum²
+    // 即：at² + bt + c = 0
+    float a = v.squaredNorm();
+    
+    // 如果速度为零或很小，不会碰撞
+    if (a < MathUtils::EPSILON) {
+        return false;
+    }
+    
+    float b = 2.0f * p0.dot(v);
+    float c = distSq0 - rSumSq;
+    
+    // 求解判别式
+    float discriminant = b * b - 4.0f * a * c;
+    
+    if (discriminant < 0.0f) {
+        return false;  // 无解，不相交
+    }
+    
+    float sqrtD = std::sqrt(discriminant);
+    float t1 = (-b - sqrtD) / (2.0f * a);
+    float t2 = (-b + sqrtD) / (2.0f * a);
+    
+    // 选择 [0, dt] 范围内的最早碰撞时刻
+    float toi = -1.0f;
+    if (t1 >= 0.0f && t1 <= dt) {
+        toi = t1;
+    } else if (t2 >= 0.0f && t2 <= dt) {
+        toi = t2;
+    }
+    
+    if (toi < 0.0f) {
+        return false;  // 碰撞发生在时间范围外
+    }
+    
+    // 计算碰撞时的位置和法线
+    Vector3 pAtTOI = posA0 + velA * toi;
+    Vector3 pBtTOI = posB0 + velB * toi;
+    Vector3 delta = pAtTOI - pBtTOI;
+    float dist = delta.norm();
+    
+    if (dist < MathUtils::EPSILON) {
+        // 如果距离为零（理论上不应该发生），使用默认法线
+        result.collisionNormal = Vector3::UnitY();
+    } else {
+        result.collisionNormal = delta / dist;
+    }
+    
+    result.collided = true;
+    result.toi = toi / dt;  // 归一化到 [0, 1]
+    result.collisionPoint = pBtTOI + result.collisionNormal * radiusB;
+    result.penetration = 0.0f;  // CCD 在接触时刻停止，无穿透
+    
+    return true;
 }
 
 bool CCDDetector::SphereVsBoxCCD(
@@ -155,12 +246,89 @@ bool CCDDetector::SphereVsBoxCCD(
     float dt,
     CCDResult& result
 ) {
-    // 将在阶段 2 实现
-    (void)spherePos0; (void)sphereRadius; (void)sphereVel;
-    (void)boxCenter; (void)boxHalfExtents; (void)boxRotation; (void)boxVel;
-    (void)dt;
     result.Reset();
-    return false;
+    
+    // 扩大盒体（各轴加上球半径）
+    Vector3 expandedHalfExtents = boxHalfExtents + Vector3::Ones() * sphereRadius;
+    
+    // 球心轨迹线段
+    Vector3 segmentStart = spherePos0;
+    Vector3 segmentEnd = spherePos0 + sphereVel * dt;
+    
+    // 转换到盒体局部空间
+    Matrix3 rotMatrix = boxRotation.toRotationMatrix();
+    Matrix3 rotMatrixInv = rotMatrix.transpose();
+    
+    Vector3 localStart = rotMatrixInv * (segmentStart - boxCenter);
+    Vector3 localEnd = rotMatrixInv * (segmentEnd - boxCenter);
+    Vector3 localVel = rotMatrixInv * (sphereVel - boxVel);
+    
+    // 检测线段与 AABB 的碰撞
+    Vector3 normal = Vector3::Zero();
+    bool foundCollision = false;
+    float tEnterMax = 0.0f;
+    float tExitMin = dt;
+    
+    // 对每个轴进行检测
+    for (int axis = 0; axis < 3; ++axis) {
+        float axisMin = -expandedHalfExtents[axis];
+        float axisMax = expandedHalfExtents[axis];
+        
+        float startVal = localStart[axis];
+        float endVal = localEnd[axis];
+        
+        // 如果线段完全在盒体外，跳过
+        if ((startVal < axisMin && endVal < axisMin) ||
+            (startVal > axisMax && endVal > axisMax)) {
+            return false;  // 完全不相交
+        }
+        
+        // 计算进入和离开时间
+        float tEnter = 0.0f;
+        float tExit = dt;
+        
+        if (std::abs(localVel[axis]) > MathUtils::EPSILON) {
+            tEnter = (axisMin - startVal) / localVel[axis];
+            tExit = (axisMax - startVal) / localVel[axis];
+            
+            if (tEnter > tExit) std::swap(tEnter, tExit);
+        } else {
+            // 速度为零，检查是否在范围内
+            if (startVal < axisMin || startVal > axisMax) {
+                return false;  // 不在范围内
+            }
+            // 在范围内，tEnter = 0, tExit = dt
+        }
+        
+        // 更新全局的进入/离开时间
+        if (tEnter > tEnterMax) {
+            tEnterMax = tEnter;
+            // 确定碰撞法线
+            normal = Vector3::Zero();
+            normal[axis] = (startVal < 0.0f) ? -1.0f : 1.0f;
+            foundCollision = true;
+        }
+        if (tExit < tExitMin) {
+            tExitMin = tExit;
+        }
+    }
+    
+    // 检查是否有效碰撞
+    if (!foundCollision || tEnterMax > tExitMin || tEnterMax < 0.0f || tEnterMax > dt) {
+        return false;
+    }
+    
+    // 转换法线到世界空间
+    normal = rotMatrix * normal;
+    normal.normalize();
+    
+    result.collided = true;
+    result.toi = tEnterMax / dt;  // 归一化到 [0, 1]
+    result.collisionPoint = spherePos0 + sphereVel * tEnterMax - normal * sphereRadius;
+    result.collisionNormal = normal;
+    result.penetration = 0.0f;
+    
+    return true;
 }
 
 bool CCDDetector::SphereVsCapsuleCCD(
@@ -170,13 +338,115 @@ bool CCDDetector::SphereVsCapsuleCCD(
     float dt,
     CCDResult& result
 ) {
-    // 将在阶段 2 实现
-    (void)spherePos0; (void)sphereRadius; (void)sphereVel;
-    (void)capsuleCenter; (void)capsuleRadius; (void)capsuleHeight;
-    (void)capsuleRotation; (void)capsuleVel;
-    (void)dt;
     result.Reset();
-    return false;
+    
+    // 获取胶囊体中心线段
+    Matrix3 rotMatrix = capsuleRotation.toRotationMatrix();
+    Vector3 capsuleAxis = rotMatrix * Vector3::UnitY();
+    float halfHeight = capsuleHeight * 0.5f;
+    
+    Vector3 capsuleSegStart = capsuleCenter - capsuleAxis * halfHeight;
+    Vector3 capsuleSegEnd = capsuleCenter + capsuleAxis * halfHeight;
+    
+    // 球心轨迹
+    Vector3 sphereStart = spherePos0;
+    Vector3 sphereEnd = spherePos0 + sphereVel * dt;
+    
+    // 计算两条线段之间的最近距离
+    // 使用参数化表示：
+    // 胶囊线段：p(s) = capsuleSegStart + s * (capsuleSegEnd - capsuleSegStart)
+    // 球心线段：q(t) = sphereStart + t * (sphereEnd - sphereStart)
+    
+    Vector3 d1 = capsuleSegEnd - capsuleSegStart;
+    Vector3 d2 = sphereEnd - sphereStart;
+    Vector3 r = sphereStart - capsuleSegStart;
+    
+    float a = d1.squaredNorm();
+    float e = d2.squaredNorm();
+    float f = d2.dot(r);
+    
+    float s = 0.0f, t = 0.0f;
+    
+    if (a > MathUtils::EPSILON && e > MathUtils::EPSILON) {
+        float b = d1.dot(d2);
+        float denom = a * e - b * b;
+        
+        if (std::abs(denom) > MathUtils::EPSILON) {
+            s = MathUtils::Clamp((b * f - r.dot(d2) * e) / denom, 0.0f, 1.0f);
+            t = (b * s + f) / e;
+            
+            if (t < 0.0f) {
+                t = 0.0f;
+                s = MathUtils::Clamp(-r.dot(d1) / a, 0.0f, 1.0f);
+            } else if (t > 1.0f) {
+                t = 1.0f;
+                s = MathUtils::Clamp((b - r.dot(d1)) / a, 0.0f, 1.0f);
+            }
+        }
+    } else if (a <= MathUtils::EPSILON) {
+        // 胶囊体退化为点
+        s = 0.0f;
+        t = MathUtils::Clamp(f / e, 0.0f, 1.0f);
+    } else {
+        // 球心轨迹退化为点
+        t = 0.0f;
+        s = MathUtils::Clamp(-r.dot(d1) / a, 0.0f, 1.0f);
+    }
+    
+    // 计算最近点
+    Vector3 closestOnCapsule = capsuleSegStart + d1 * s;
+    Vector3 closestOnSphere = sphereStart + d2 * t;
+    Vector3 delta = closestOnSphere - closestOnCapsule;
+    float dist = delta.norm();
+    
+    float radiusSum = sphereRadius + capsuleRadius;
+    
+    if (dist >= radiusSum) {
+        // 检查是否会在 [0, dt] 内碰撞
+        // 需要计算距离变化率
+        Vector3 relativeVel = sphereVel - capsuleVel;
+        Vector3 deltaNorm;
+        if (dist > MathUtils::EPSILON) {
+            deltaNorm = delta / dist;
+        } else {
+            deltaNorm = Vector3::UnitY();
+        }
+        float approachRate = -deltaNorm.dot(relativeVel);
+        
+        if (approachRate <= 0.0f) {
+            return false;  // 正在远离
+        }
+        
+        // 计算碰撞时间
+        float toi = (dist - radiusSum) / approachRate;
+        
+        if (toi < 0.0f || toi > dt) {
+            return false;
+        }
+        
+        result.collided = true;
+        result.toi = toi / dt;  // 归一化到 [0, 1]
+        result.collisionPoint = closestOnCapsule + deltaNorm * capsuleRadius;
+        result.collisionNormal = deltaNorm;
+        result.penetration = 0.0f;
+        
+        return true;
+    }
+    
+    // 已经相交，TOI = 0
+    Vector3 deltaNorm;
+    if (dist > MathUtils::EPSILON) {
+        deltaNorm = delta / dist;
+    } else {
+        deltaNorm = Vector3::UnitY();
+    }
+    result.collided = true;
+    result.toi = 0.0f;
+    result.collisionPoint = closestOnCapsule + deltaNorm * capsuleRadius;
+    result.collisionNormal = deltaNorm;
+    result.penetration = radiusSum - dist;
+    
+    return true;
 }
 
 bool CCDDetector::BoxVsBoxCCD(

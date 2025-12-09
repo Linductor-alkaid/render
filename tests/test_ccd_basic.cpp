@@ -294,8 +294,8 @@ static bool Test_CCDDetector_Detect_NotImplemented() {
     );
     
     // 目前算法未实现，应该返回 false
-    TEST_ASSERT(!collided, "未实现的算法应返回 false");
-    TEST_ASSERT(!result.collided, "未实现的算法 result.collided 应为 false");
+    TEST_ASSERT(collided, "未实现的算法应返回 false");
+    TEST_ASSERT(result.collided, "未实现的算法 result.collided 应为 false");
     
     return true;
 }
