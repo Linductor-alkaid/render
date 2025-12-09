@@ -122,7 +122,11 @@ bool CollisionDetector::SphereVsBox(
     Vector3 normal = delta / dist;
     manifold.SetNormal(normal);
     manifold.penetration = sphereRadius - dist;
-    manifold.AddContact(closestPoint, manifold.penetration);
+    
+    // 接触点应该在球体表面上，而不是盒体上
+    // 使用球心到盒体最近点的方向，在球体表面上找到接触点
+    Vector3 contactPoint = sphereCenter - normal * sphereRadius;
+    manifold.AddContact(contactPoint, manifold.penetration);
     
     return true;
 }

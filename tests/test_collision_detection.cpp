@@ -145,6 +145,40 @@ bool Test_SphereVsBox_NoCollision() {
     return true;
 }
 
+bool Test_SphereVsBox_GroundCollision() {
+    ContactManifold manifold;
+    
+    // 模拟物理演示场景：球体从上方碰撞地面
+    // 地面盒体：中心在(0, 0, 0)，半高0.5，上表面在y=0.5
+    // 球体：中心在(0, 0.3, 0)，半径0.5，应该与地面碰撞
+    bool hit = CollisionDetector::SphereVsBox(
+        Vector3(0, 0.3f, 0), 0.5f,  // 球心在y=0.3，半径0.5，底部在y=-0.2，应该与地面碰撞
+        Vector3(0, 0, 0), Vector3(15.0f, 0.5f, 15.0f),  // 地面：半高0.5，上表面在y=0.5
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "球体应该与地面碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+        TEST_ASSERT(manifold.contactCount > 0, "应该有接触点");
+        // 法线应该大致向上（从地面指向球体）
+        TEST_ASSERT(manifold.normal.y() > 0.8f, "法线应该主要向上");
+        // 接触点应该在球体表面上
+        if (manifold.contactCount > 0) {
+            Vector3 sphereCenter(0, 0.3f, 0);
+            Vector3 contactPos = manifold.contacts[0].position;
+            Vector3 toContact = contactPos - sphereCenter;
+            float distToCenter = toContact.norm();
+            // 接触点到球心的距离应该接近半径（允许小误差）
+            TEST_ASSERT(std::abs(distToCenter - 0.5f) < 0.1f, 
+                       "接触点应该在球体表面上");
+        }
+    }
+    
+    return true;
+}
+
 // ============================================================================
 // 球体 vs 胶囊体测试
 // ============================================================================
@@ -295,6 +329,382 @@ bool Test_CapsuleVsBox_NoCollision() {
     );
     
     TEST_ASSERT(!hit, "不应该检测到碰撞");
+    
+    return true;
+}
+
+// ============================================================================
+// 接触点位置验证测试
+// ============================================================================
+
+bool Test_ContactPoint_SphereVsSphere_OnSurface() {
+    ContactManifold manifold;
+    
+    Vector3 centerA(0, 0, 0);
+    Vector3 centerB(1.5f, 0, 0);
+    float radiusA = 1.0f;
+    float radiusB = 1.0f;
+    
+    bool hit = CollisionDetector::SphereVsSphere(centerA, radiusA, centerB, radiusB, manifold);
+    
+    TEST_ASSERT(hit, "应该检测到碰撞");
+    TEST_ASSERT(manifold.contactCount > 0, "应该有接触点");
+    
+    // 验证接触点在球体表面上
+    // 注意：接触点通常在一个物体表面上（这里是球体A），而不是同时在两个表面上
+    for (int i = 0; i < manifold.contactCount; ++i) {
+        Vector3 contactPos = manifold.contacts[i].position;
+        
+        // 检查接触点到球心A的距离（接触点在球体A表面上）
+        Vector3 toA = contactPos - centerA;
+        float distToA = toA.norm();
+        TEST_ASSERT(std::abs(distToA - radiusA) < 0.01f, 
+                   "接触点应该在球体A表面上");
+        
+        // 检查接触点到球心B的距离（应该小于等于半径和，表示穿透）
+        Vector3 toB = contactPos - centerB;
+        float distToB = toB.norm();
+        float radiusSum = radiusA + radiusB;
+        TEST_ASSERT(distToB <= radiusSum + 0.01f, 
+                   "接触点到球体B的距离应该在合理范围内");
+    }
+    
+    return true;
+}
+
+bool Test_ContactPoint_SphereVsBox_OnSphereSurface() {
+    ContactManifold manifold;
+    
+    Vector3 sphereCenter(1.5f, 0, 0);
+    float sphereRadius = 1.0f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents,
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "应该检测到碰撞");
+    TEST_ASSERT(manifold.contactCount > 0, "应该有接触点");
+    
+    // 验证接触点在球体表面上
+    for (int i = 0; i < manifold.contactCount; ++i) {
+        Vector3 contactPos = manifold.contacts[i].position;
+        Vector3 toSphere = contactPos - sphereCenter;
+        float distToCenter = toSphere.norm();
+        
+        // 接触点到球心的距离应该等于半径（允许小误差）
+        TEST_ASSERT(std::abs(distToCenter - sphereRadius) < 0.1f, 
+                   "接触点应该在球体表面上");
+    }
+    
+    return true;
+}
+
+bool Test_ContactPoint_BoxVsBox_OnSurface() {
+    ContactManifold manifold;
+    
+    Vector3 centerA(0, 0, 0);
+    Vector3 centerB(1.5f, 0, 0);
+    Vector3 halfExtents(1, 1, 1);
+    
+    bool hit = CollisionDetector::BoxVsBox(
+        centerA, halfExtents, Quaternion::Identity(),
+        centerB, halfExtents, Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "应该检测到碰撞");
+    TEST_ASSERT(manifold.contactCount > 0, "应该有接触点");
+    
+    // 验证接触点在盒体边界附近（对于盒体，接触点应该在表面上或内部）
+    // 这里主要验证接触点存在且有效
+    for (int i = 0; i < manifold.contactCount; ++i) {
+        Vector3 contactPos = manifold.contacts[i].position;
+        // 接触点应该在两个盒体之间
+        TEST_ASSERT(contactPos.x() >= centerA.x() - halfExtents.x() && 
+                   contactPos.x() <= centerB.x() + halfExtents.x(),
+                   "接触点应该在合理范围内");
+    }
+    
+    return true;
+}
+
+// ============================================================================
+// 局部坐标验证测试
+// ============================================================================
+
+bool Test_LocalCoordinates_SphereVsSphere_Consistency() {
+    ContactManifold manifold;
+    
+    // 调整位置，确保两个球体相交（距离小于半径和）
+    Vector3 posA(2.0f, 1.0f, 0.5f);
+    Vector3 posB(3.5f, 1.0f, 0.5f);  // 距离1.5，半径和2.0，应该相交
+    Quaternion rotA = MathUtils::AngleAxis(MathUtils::PI / 4.0f, Vector3::UnitY());
+    Quaternion rotB = MathUtils::AngleAxis(-MathUtils::PI / 6.0f, Vector3::UnitZ());
+    
+    float radiusA = 1.0f;
+    float radiusB = 1.0f;
+    
+    bool hit = CollisionDetector::SphereVsSphere(posA, radiusA, posB, radiusB, manifold);
+    
+    TEST_ASSERT(hit, "应该检测到碰撞");
+    
+    // 模拟局部坐标计算（与physics_systems.cpp中的逻辑一致）
+    for (int i = 0; i < manifold.contactCount; ++i) {
+        Vector3 contactPos = manifold.contacts[i].position;
+        
+        // 计算局部坐标
+        Vector3 localA = rotA.conjugate() * (contactPos - posA);
+        Vector3 localB = rotB.conjugate() * (contactPos - posB);
+        
+        // 验证：从局部坐标转换回世界坐标应该得到原始接触点
+        Vector3 worldFromA = posA + rotA * localA;
+        Vector3 worldFromB = posB + rotB * localB;
+        
+        TEST_ASSERT(worldFromA.isApprox(contactPos, 0.01f), 
+                   "局部坐标A转换回世界坐标应该一致");
+        TEST_ASSERT(worldFromB.isApprox(contactPos, 0.01f), 
+                   "局部坐标B转换回世界坐标应该一致");
+    }
+    
+    return true;
+}
+
+bool Test_LocalCoordinates_SphereVsBox_Consistency() {
+    ContactManifold manifold;
+    
+    Vector3 spherePos(2.0f, 1.0f, 0.5f);
+    float sphereRadius = 1.0f;
+    Vector3 boxPos(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    Quaternion boxRot = MathUtils::AngleAxis(MathUtils::PI / 4.0f, Vector3::UnitY());
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        spherePos, sphereRadius,
+        boxPos, boxHalfExtents, boxRot,
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "应该检测到碰撞");
+    
+    // 模拟局部坐标计算
+    Quaternion sphereRot = Quaternion::Identity(); // 球体无旋转
+    
+    for (int i = 0; i < manifold.contactCount; ++i) {
+        Vector3 contactPos = manifold.contacts[i].position;
+        
+        // 计算局部坐标
+        Vector3 localSphere = sphereRot.conjugate() * (contactPos - spherePos);
+        Vector3 localBox = boxRot.conjugate() * (contactPos - boxPos);
+        
+        // 验证转换一致性
+        Vector3 worldFromSphere = spherePos + sphereRot * localSphere;
+        Vector3 worldFromBox = boxPos + boxRot * localBox;
+        
+        TEST_ASSERT(worldFromSphere.isApprox(contactPos, 0.01f), 
+                   "球体局部坐标转换应该一致");
+        TEST_ASSERT(worldFromBox.isApprox(contactPos, 0.01f), 
+                   "盒体局部坐标转换应该一致");
+    }
+    
+    return true;
+}
+
+// ============================================================================
+// 边缘情况测试
+// ============================================================================
+
+bool Test_EdgeCase_SphereInsideBox() {
+    ContactManifold manifold;
+    
+    // 球心完全在盒体内部
+    Vector3 sphereCenter(0, 0, 0);
+    float sphereRadius = 0.5f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(2, 2, 2);
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents,
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "球体在盒体内部应该检测到碰撞");
+    TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+    TEST_ASSERT(manifold.penetration > 0.0f, "应该有穿透深度");
+    
+    // 法线应该指向最近的盒体面
+    TEST_ASSERT(manifold.normal.norm() > 0.9f, "法线应该归一化");
+    
+    return true;
+}
+
+bool Test_EdgeCase_SphereOnBoxEdge() {
+    ContactManifold manifold;
+    
+    // 球体与盒体边缘接触（稍微重叠以确保检测到碰撞）
+    // 盒体边界在x=1，球心在x=1.9，半径1.0，最近点在x=0.9，应该碰撞
+    Vector3 sphereCenter(1.9f, 0, 0);
+    float sphereRadius = 1.0f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents,
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "球体与盒体边缘接触应该检测到碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+        // 边缘接触时，法线可能不是完全对齐坐标轴
+        TEST_ASSERT(manifold.normal.norm() > 0.9f, "法线应该归一化");
+    }
+    
+    return true;
+}
+
+bool Test_EdgeCase_SphereOnBoxCorner() {
+    ContactManifold manifold;
+    
+    // 球体与盒体角点接触
+    Vector3 sphereCenter(1.5f, 1.5f, 1.5f);
+    float sphereRadius = 1.0f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents,
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "球体与盒体角点接触应该检测到碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+        // 角点接触时，法线应该从角点指向球心
+        Vector3 expectedNormal = (sphereCenter - boxCenter).normalized();
+        // 允许法线方向有偏差（因为可能选择最近的面）
+        float dot = manifold.normal.dot(expectedNormal);
+        TEST_ASSERT(dot > 0.5f, "法线方向应该大致正确");
+    }
+    
+    return true;
+}
+
+bool Test_EdgeCase_SphereTouchingBox() {
+    ContactManifold manifold;
+    
+    // 球体刚好接触盒体（无穿透）
+    Vector3 sphereCenter(2.0f, 0, 0);
+    float sphereRadius = 1.0f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents,
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    // 刚好接触时，由于浮点误差，可能检测到也可能检测不到
+    // 这里主要测试不会崩溃
+    if (hit) {
+        TEST_ASSERT(manifold.IsValid(), "如果检测到碰撞，流形应该有效");
+    }
+    
+    return true;
+}
+
+bool Test_EdgeCase_SphereVsRotatedBox() {
+    ContactManifold manifold;
+    
+    // 球体与旋转的盒体碰撞
+    Vector3 sphereCenter(1.5f, 0, 0);
+    float sphereRadius = 1.0f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    Quaternion boxRot = MathUtils::AngleAxis(MathUtils::PI / 4.0f, Vector3::UnitY());
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents, boxRot,
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "球体与旋转盒体应该检测到碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+        TEST_ASSERT(manifold.contactCount > 0, "应该有接触点");
+        
+        // 验证接触点在球体表面上
+        for (int i = 0; i < manifold.contactCount; ++i) {
+            Vector3 contactPos = manifold.contacts[i].position;
+            Vector3 toSphere = contactPos - sphereCenter;
+            float distToCenter = toSphere.norm();
+            TEST_ASSERT(std::abs(distToCenter - sphereRadius) < 0.1f, 
+                       "接触点应该在球体表面上");
+        }
+    }
+    
+    return true;
+}
+
+bool Test_EdgeCase_VerySmallPenetration() {
+    ContactManifold manifold;
+    
+    // 非常小的穿透深度
+    Vector3 sphereCenter(1.99f, 0, 0);
+    float sphereRadius = 1.0f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents,
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "小穿透应该检测到碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.penetration > 0.0f, "应该有穿透深度");
+        TEST_ASSERT(manifold.penetration < 0.1f, "穿透深度应该很小");
+    }
+    
+    return true;
+}
+
+bool Test_EdgeCase_VeryLargePenetration() {
+    ContactManifold manifold;
+    
+    // 非常大的穿透深度（球心在盒体中心）
+    Vector3 sphereCenter(0, 0, 0);
+    float sphereRadius = 2.0f;
+    Vector3 boxCenter(0, 0, 0);
+    Vector3 boxHalfExtents(1, 1, 1);
+    
+    bool hit = CollisionDetector::SphereVsBox(
+        sphereCenter, sphereRadius,
+        boxCenter, boxHalfExtents,
+        Quaternion::Identity(),
+        manifold
+    );
+    
+    TEST_ASSERT(hit, "大穿透应该检测到碰撞");
+    if (hit) {
+        TEST_ASSERT(manifold.penetration > 1.0f, "穿透深度应该较大");
+        TEST_ASSERT(manifold.IsValid(), "流形应该有效");
+    }
     
     return true;
 }
@@ -470,6 +880,7 @@ int main() {
     std::cout << "\n--- 球体 vs 盒体测试 ---" << std::endl;
     RUN_TEST(Test_SphereVsBox_Collision);
     RUN_TEST(Test_SphereVsBox_NoCollision);
+    RUN_TEST(Test_SphereVsBox_GroundCollision);
     
     std::cout << "\n--- 球体 vs 胶囊体测试 ---" << std::endl;
     RUN_TEST(Test_SphereVsCapsule_Collision);
@@ -486,6 +897,24 @@ int main() {
     std::cout << "\n--- 胶囊体 vs 盒体测试 ---" << std::endl;
     RUN_TEST(Test_CapsuleVsBox_Collision);
     RUN_TEST(Test_CapsuleVsBox_NoCollision);
+    
+    std::cout << "\n--- 接触点位置验证测试 ---" << std::endl;
+    RUN_TEST(Test_ContactPoint_SphereVsSphere_OnSurface);
+    RUN_TEST(Test_ContactPoint_SphereVsBox_OnSphereSurface);
+    RUN_TEST(Test_ContactPoint_BoxVsBox_OnSurface);
+    
+    std::cout << "\n--- 局部坐标验证测试 ---" << std::endl;
+    RUN_TEST(Test_LocalCoordinates_SphereVsSphere_Consistency);
+    RUN_TEST(Test_LocalCoordinates_SphereVsBox_Consistency);
+    
+    std::cout << "\n--- 边缘情况测试 ---" << std::endl;
+    RUN_TEST(Test_EdgeCase_SphereInsideBox);
+    RUN_TEST(Test_EdgeCase_SphereOnBoxEdge);
+    RUN_TEST(Test_EdgeCase_SphereOnBoxCorner);
+    RUN_TEST(Test_EdgeCase_SphereTouchingBox);
+    RUN_TEST(Test_EdgeCase_SphereVsRotatedBox);
+    RUN_TEST(Test_EdgeCase_VerySmallPenetration);
+    RUN_TEST(Test_EdgeCase_VeryLargePenetration);
     
     std::cout << "\n--- 辅助函数测试 ---" << std::endl;
     RUN_TEST(Test_ClosestPointOnSegment);

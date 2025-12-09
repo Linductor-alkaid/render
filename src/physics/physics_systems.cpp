@@ -125,10 +125,17 @@ void CollisionDetectionSystem::Update(float deltaTime) {
             
             if (collided) {
                 // 补充局部接触点坐标，便于后续约束求解
+                // 注意：需要使用考虑了collider.center偏移的世界位置
+                Vector3 worldPosA = posA + rotA * colliderA.center;
+                Vector3 worldPosB = posB + rotB * colliderB.center;
+                Quaternion worldRotA = rotA * colliderA.rotation;
+                Quaternion worldRotB = rotB * colliderB.rotation;
+                
                 for (int i = 0; i < manifold.contactCount; ++i) {
                     auto& cp = manifold.contacts[i];
-                    cp.localPointA = rotA.conjugate() * (cp.position - posA);
-                    cp.localPointB = rotB.conjugate() * (cp.position - posB);
+                    // 使用世界空间旋转和位置计算局部坐标
+                    cp.localPointA = worldRotA.conjugate() * (cp.position - worldPosA);
+                    cp.localPointB = worldRotB.conjugate() * (cp.position - worldPosB);
                 }
 
                 m_collisionPairs.emplace_back(entityA, entityB, manifold);
