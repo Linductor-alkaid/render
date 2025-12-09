@@ -806,6 +806,20 @@ void ConstraintSolver::PrepareJointConstraints(
             }
         }
         
+        // 为 Distance Joint 初始化 restLength（如果尚未初始化）
+        if (base.type == JointComponent::JointType::Distance) {
+            auto& distData = std::get<DistanceJointData>(jointComp.data);
+            
+            // 如果 restLength 是默认值（1.0f），初始化为当前距离
+            if (std::abs(distData.restLength - 1.0f) < MathUtils::EPSILON) {
+                Vector3 separation = worldAnchorB - worldAnchorA;
+                float currentDistance = separation.norm();
+                if (currentDistance > MathUtils::EPSILON) {
+                    distData.restLength = currentDistance;
+                }
+            }
+        }
+        
         m_jointConstraints.push_back(constraint);
     }
 }
@@ -1185,6 +1199,125 @@ void ConstraintSolver::SolveFixedJointPosition(
     }
 }
 
+void ConstraintSolver::SolveDistanceJointVelocity(
+    JointConstraint& constraint,
+    float dt
+) {
+    auto* joint = constraint.joint;
+    auto& bodyA = *constraint.bodyA;
+    auto& bodyB = *constraint.bodyB;
+    auto& transformA = *constraint.transformA;
+    auto& transformB = *constraint.transformB;
+    
+    // 获取 Distance Joint 数据
+    auto& distData = std::get<DistanceJointData>(joint->data);
+    
+    // 计算世界空间锚点位置
+    Vector3 worldAnchorA = transformA.GetPosition() 
+        + transformA.GetRotation() * joint->base.localAnchorA;
+    Vector3 worldAnchorB = transformB.GetPosition() 
+        + transformB.GetRotation() * joint->base.localAnchorB;
+    
+    Vector3 delta = worldAnchorB - worldAnchorA;
+    float currentDistance = delta.norm();
+    
+    // 避免除零
+    if (currentDistance < 1e-6f) {
+        return;
+    }
+    
+    Vector3 n = delta / currentDistance;
+    
+    // 约束方程：C = currentDistance - restLength
+    float C = currentDistance - distData.restLength;
+    
+    // 距离限制处理
+    if (distData.hasLimits) {
+        if (currentDistance < distData.minDistance) {
+            // 距离太近，需要推开
+            C = currentDistance - distData.minDistance;
+        } else if (currentDistance > distData.maxDistance) {
+            // 距离太远，需要拉近
+            C = currentDistance - distData.maxDistance;
+        } else {
+            // 在范围内，不施加约束
+            return;
+        }
+    }
+    
+    // 计算相对速度
+    Vector3 vA = bodyA.linearVelocity + bodyA.angularVelocity.cross(joint->runtime.rA);
+    Vector3 vB = bodyB.linearVelocity + bodyB.angularVelocity.cross(joint->runtime.rB);
+    Vector3 relVel = vB - vA;
+    float normalVel = relVel.dot(n);
+    
+    // 有效质量（添加 CFM 软化）
+    Vector3 rnA = joint->runtime.rA.cross(n);
+    Vector3 rnB = joint->runtime.rB.cross(n);
+    float K = bodyA.inverseMass + bodyB.inverseMass
+            + rnA.dot(joint->runtime.invInertiaA * rnA)
+            + rnB.dot(joint->runtime.invInertiaB * rnB)
+            + kCFM;
+    
+    if (K < MathUtils::EPSILON) {
+        return;
+    }
+    
+    float effectiveMass = 1.0f / K;
+    
+    // Baumgarte 稳定化（自适应）
+    float adaptiveBeta = ComputeAdaptiveBaumgarte(std::abs(C), dt);
+    float bias = (adaptiveBeta / std::max(dt, MathUtils::EPSILON)) * C;
+    
+    // 计算冲量
+    float lambda = -(normalVel + bias) * effectiveMass;
+    
+    // 冲量钳位
+    float maxImpulseA = ComputeMaxImpulse(bodyA, dt);
+    float maxImpulseB = ComputeMaxImpulse(bodyB, dt);
+    float maxImpulse = std::max(maxImpulseA, maxImpulseB);
+    lambda = MathUtils::Clamp(lambda, -maxImpulse, maxImpulse);
+    
+    if (std::isnan(lambda) || std::isinf(lambda)) {
+        return;
+    }
+    
+    // 单向约束处理（如果有限制）
+    if (distData.hasLimits) {
+        if (currentDistance < distData.minDistance) {
+            // 只能推开，不能拉近（λ >= 0）
+            float oldImpulse = joint->runtime.accumulatedLimitImpulse;
+            joint->runtime.accumulatedLimitImpulse = std::max(oldImpulse + lambda, 0.0f);
+            lambda = joint->runtime.accumulatedLimitImpulse - oldImpulse;
+        } else if (currentDistance > distData.maxDistance) {
+            // 只能拉近，不能推开（λ <= 0）
+            float oldImpulse = joint->runtime.accumulatedLimitImpulse;
+            joint->runtime.accumulatedLimitImpulse = std::min(oldImpulse + lambda, 0.0f);
+            lambda = joint->runtime.accumulatedLimitImpulse - oldImpulse;
+        }
+    }
+    
+    // 应用冲量
+    Vector3 impulse = lambda * n;
+    
+    if (!bodyA.IsStatic() && !bodyA.IsKinematic()) {
+        bodyA.linearVelocity -= impulse * bodyA.inverseMass;
+        bodyA.angularVelocity -= joint->runtime.invInertiaA * joint->runtime.rA.cross(impulse);
+    }
+    
+    if (!bodyB.IsStatic() && !bodyB.IsKinematic()) {
+        bodyB.linearVelocity += impulse * bodyB.inverseMass;
+        bodyB.angularVelocity += joint->runtime.invInertiaB * joint->runtime.rB.cross(impulse);
+    }
+    
+    // 累积冲量
+    joint->runtime.accumulatedLinearImpulse += impulse;
+    
+    // 速度限制检查
+    CheckAndClampVelocity(&bodyA);
+    CheckAndClampVelocity(&bodyB);
+}
+
 void ConstraintSolver::SolveJointVelocityConstraints(float dt) {
     for (auto& constraint : m_jointConstraints) {
         if (!constraint.joint) {
@@ -1195,15 +1328,143 @@ void ConstraintSolver::SolveJointVelocityConstraints(float dt) {
             case JointComponent::JointType::Fixed:
                 SolveFixedJointVelocity(constraint, dt);
                 break;
+            case JointComponent::JointType::Distance:
+                SolveDistanceJointVelocity(constraint, dt);
+                break;
             // 其他类型将在后续阶段实现
             case JointComponent::JointType::Hinge:
-            case JointComponent::JointType::Distance:
             case JointComponent::JointType::Spring:
             case JointComponent::JointType::Slider:
                 // 暂未实现
                 break;
         }
     }
+}
+
+void ConstraintSolver::SolveDistanceJointPosition(
+    JointConstraint& constraint,
+    float dt
+) {
+    auto* joint = constraint.joint;
+    auto& bodyA = *constraint.bodyA;
+    auto& bodyB = *constraint.bodyB;
+    
+    // 获取 Distance Joint 数据
+    auto& distData = std::get<DistanceJointData>(joint->data);
+    
+    // 跳过静态/运动学物体
+    bool canMoveA = !bodyA.IsStatic() && !bodyA.IsKinematic();
+    bool canMoveB = !bodyB.IsStatic() && !bodyB.IsKinematic();
+    
+    if (!canMoveA && !canMoveB) {
+        return;
+    }
+    
+    // 计算世界空间锚点位置
+    Vector3 worldAnchorA = constraint.transformA->GetPosition() 
+        + constraint.transformA->GetRotation() * joint->base.localAnchorA;
+    Vector3 worldAnchorB = constraint.transformB->GetPosition() 
+        + constraint.transformB->GetRotation() * joint->base.localAnchorB;
+    
+    Vector3 delta = worldAnchorB - worldAnchorA;
+    float currentDistance = delta.norm();
+    
+    // 避免除零
+    if (currentDistance < 1e-6f) {
+        return;
+    }
+    
+    Vector3 n = delta / currentDistance;
+    
+    // 计算距离误差
+    float distanceError = 0.0f;
+    bool needsCorrection = false;
+    
+    if (distData.hasLimits) {
+        // 有距离限制的情况
+        if (currentDistance < distData.minDistance) {
+            distanceError = currentDistance - distData.minDistance;
+            needsCorrection = true;
+        } else if (currentDistance > distData.maxDistance) {
+            distanceError = currentDistance - distData.maxDistance;
+            needsCorrection = true;
+        }
+        // 在范围内不需要修正
+    } else {
+        // 无限制，约束到 restLength
+        distanceError = currentDistance - distData.restLength;
+        if (std::abs(distanceError) > MathUtils::EPSILON) {
+            needsCorrection = true;
+        }
+    }
+    
+    if (!needsCorrection) {
+        return;
+    }
+    
+    // 有效质量
+    Vector3 rnA = joint->runtime.rA.cross(n);
+    Vector3 rnB = joint->runtime.rB.cross(n);
+    float K = bodyA.inverseMass + bodyB.inverseMass
+            + rnA.dot(joint->runtime.invInertiaA * rnA)
+            + rnB.dot(joint->runtime.invInertiaB * rnB)
+            + kCFM;
+    
+    if (K < MathUtils::EPSILON) {
+        return;
+    }
+    
+    float effectiveMass = 1.0f / K;
+    
+    // 位置修正系数（自适应）
+    float beta = 0.2f;
+    float absError = std::abs(distanceError);
+    if (absError > 0.5f) {
+        beta = 0.5f;
+    } else if (absError > 0.1f) {
+        beta = 0.3f;
+    }
+    
+    // 修正量：消除距离误差
+    float correction = -beta * distanceError;
+    float lambda = correction * effectiveMass;
+    
+    // 限制位置修正量
+    float maxCorrection = 0.2f;
+    lambda = MathUtils::Clamp(lambda, -maxCorrection * effectiveMass, maxCorrection * effectiveMass);
+    
+    Vector3 correctionImpulse = lambda * n;
+    
+    if (correctionImpulse.hasNaN()) {
+        return;
+    }
+    
+    // 应用位置修正
+    if (canMoveA) {
+        Vector3 linearDeltaA = -correctionImpulse * bodyA.inverseMass;
+        if (!linearDeltaA.hasNaN()) {
+            constraint.transformA->SetPosition(
+                constraint.transformA->GetPosition() + linearDeltaA);
+        }
+    }
+    
+    if (canMoveB) {
+        Vector3 linearDeltaB = correctionImpulse * bodyB.inverseMass;
+        if (!linearDeltaB.hasNaN()) {
+            constraint.transformB->SetPosition(
+                constraint.transformB->GetPosition() + linearDeltaB);
+        }
+    }
+    
+    // 更新 rA 和 rB
+    Vector3 comA = constraint.transformA->GetPosition() + bodyA.centerOfMass;
+    Vector3 comB = constraint.transformB->GetPosition() + bodyB.centerOfMass;
+    worldAnchorA = constraint.transformA->GetPosition() 
+        + constraint.transformA->GetRotation() * joint->base.localAnchorA;
+    worldAnchorB = constraint.transformB->GetPosition() 
+        + constraint.transformB->GetRotation() * joint->base.localAnchorB;
+    joint->runtime.rA = worldAnchorA - comA;
+    joint->runtime.rB = worldAnchorB - comB;
 }
 
 void ConstraintSolver::SolveJointPositionConstraints(float dt) {
@@ -1218,9 +1479,11 @@ void ConstraintSolver::SolveJointPositionConstraints(float dt) {
                 case JointComponent::JointType::Fixed:
                     SolveFixedJointPosition(constraint, dt);
                     break;
+                case JointComponent::JointType::Distance:
+                    SolveDistanceJointPosition(constraint, dt);
+                    break;
                 // 其他类型将在后续阶段实现
                 case JointComponent::JointType::Hinge:
-                case JointComponent::JointType::Distance:
                 case JointComponent::JointType::Spring:
                 case JointComponent::JointType::Slider:
                     // 暂未实现

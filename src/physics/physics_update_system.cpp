@@ -467,14 +467,26 @@ void PhysicsUpdateSystem::SolveConstraints(float dt) {
     }
 
     const auto& collisionPairs = collisionSystem->GetCollisionPairs();
-    if (collisionPairs.empty()) {
-        return;
-    }
-
+    
     m_constraintSolver.SetWorld(m_world);
     m_constraintSolver.SetSolverIterations(m_solverIterations);
     m_constraintSolver.SetPositionIterations(m_positionIterations);
-    m_constraintSolver.Solve(dt, collisionPairs);
+    
+    // 收集所有拥有关节组件的实体
+    std::vector<ECS::EntityID> jointEntities;
+    auto jointQuery = m_world->Query<PhysicsJointComponent>();
+    for (ECS::EntityID entity : jointQuery) {
+        if (m_world->HasComponent<PhysicsJointComponent>(entity)) {
+            jointEntities.push_back(entity);
+        }
+    }
+    
+    // 如果有关节，使用带关节的求解方法；否则使用普通求解方法
+    if (!jointEntities.empty()) {
+        m_constraintSolver.SolveWithJoints(dt, collisionPairs, jointEntities);
+    } else if (!collisionPairs.empty()) {
+        m_constraintSolver.Solve(dt, collisionPairs);
+    }
 }
 
 void PhysicsUpdateSystem::UpdateSleepingState(float dt) {

@@ -196,7 +196,7 @@ private:
 
 **优先级**: 🔴 Critical | **预计时间**: 2 天
 
-- [ ] **1.1.1** 创建 `joint_component.h`
+- [x] **1.1.1** 创建 `joint_component.h`
   ```cpp
   namespace Render {
   namespace Physics {
@@ -292,7 +292,7 @@ private:
   }  // namespace Render
   ```
 
-- [ ] **1.1.2** 在 `physics_components.h` 中集成关节数据
+- [x] **1.1.2** 在 `physics_components.h` 中集成关节数据
   ```cpp
   // 添加到 physics_components.h
   struct PhysicsJointComponent {
@@ -324,7 +324,7 @@ private:
   };
   ```
 
-- [ ] **1.1.3** 在 ECS::World 中注册关节组件
+- [x] **1.1.3** 在 ECS::World 中注册关节组件
   - ECS 模板自动注册，无需显式操作
   - 确保组件可以通过 `World::AddComponent<PhysicsJointComponent>()` 添加
 
@@ -339,7 +339,7 @@ private:
 
 **优先级**: 🔴 Critical | **预计时间**: 2 天
 
-- [ ] **1.2.1** 扩展 `ConstraintSolver` 支持关节约束
+- [x] **1.2.1** 扩展 `ConstraintSolver` 支持关节约束
   ```cpp
   // 在 constraint_solver.h 中添加
   class ConstraintSolver {
@@ -383,7 +383,7 @@ private:
   };
   ```
 
-- [ ] **1.2.2** 实现 `PrepareJointConstraints`
+- [x] **1.2.2** 实现 `PrepareJointConstraints`
   ```cpp
   void ConstraintSolver::PrepareJointConstraints(
       float dt, 
@@ -460,7 +460,7 @@ private:
   }
   ```
 
-- [ ] **1.2.3** 修改主求解流程
+- [x] **1.2.3** 修改主求解流程
   ```cpp
   void ConstraintSolver::SolveWithJoints(
       float dt,
@@ -507,7 +507,7 @@ private:
 
 **优先级**: 🔴 Critical | **预计时间**: 3 天
 
-- [ ] **1.3.1** 实现 Fixed Joint 预处理
+- [x] **1.3.1** 实现 Fixed Joint 预处理
   ```cpp
   // 在 constraint_solver.cpp 中添加
   namespace {
@@ -544,7 +544,7 @@ private:
   }  // namespace
   ```
 
-- [ ] **1.3.2** 实现 Fixed Joint 速度约束
+- [x] **1.3.2** 实现 Fixed Joint 速度约束
   ```cpp
   void SolveFixedJointVelocity(
       ConstraintSolver::JointConstraint& constraint,
@@ -637,7 +637,7 @@ private:
   }
   ```
 
-- [ ] **1.3.3** 实现 Fixed Joint 位置修正
+- [x] **1.3.3** 实现 Fixed Joint 位置修正
   ```cpp
   void SolveFixedJointPosition(
       ConstraintSolver::JointConstraint& constraint,
@@ -683,7 +683,7 @@ private:
   }
   ```
 
-- [ ] **1.3.4** 集成到求解器主循环
+- [x] **1.3.4** 集成到求解器主循环
   ```cpp
   void ConstraintSolver::SolveJointVelocityConstraints(float dt) {
       for (auto& constraint : m_jointConstraints) {
@@ -708,7 +708,7 @@ private:
   }
   ```
 
-- [ ] **1.3.5** 实现 Warm Start 和缓存
+- [x] **1.3.5** 实现 Warm Start 和缓存
   ```cpp
   void ConstraintSolver::WarmStartJoints() {
       for (auto& constraint : m_jointConstraints) {
@@ -750,7 +750,7 @@ private:
 
 **优先级**: 🔴 Critical | **预计时间**: 2 天
 
-- [ ] **1.4.1** 实现 Distance Joint 速度约束
+- [x] **1.4.1** 实现 Distance Joint 速度约束
   ```cpp
   void SolveDistanceJointVelocity(
       ConstraintSolver::JointConstraint& constraint,
@@ -832,9 +832,9 @@ private:
   }
   ```
 
-- [ ] **1.4.2** 实现 Distance Joint 位置修正
-- [ ] **1.4.3** 添加到求解器
-- [ ] **1.4.4** 编写测试
+- [x] **1.4.2** 实现 Distance Joint 位置修正
+- [x] **1.4.3** 添加到求解器
+- [x] **1.4.4** 编写测试
 
 **验证标准**:
 - ✅ 两个小球保持固定距离

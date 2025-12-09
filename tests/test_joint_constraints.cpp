@@ -24,10 +24,13 @@
  *
  * 测试目标：
  * 1. 固定关节约束的基本功能
- * 2. 位置约束和旋转约束的正确性
+ *    - 位置约束和旋转约束的正确性
+ * 2. 距离关节约束的基本功能
+ *    - restLength 约束
+ *    - 距离限制（minDistance, maxDistance）
  * 3. 数据爆炸检测（速度、角速度、冲量）
  * 4. 多帧稳定性
- * 5. 极端情况处理
+ * 5. 极端情况处理（极端质量比、高初始速度等）
  */
 
 #include "render/physics/dynamics/constraint_solver.h"
@@ -206,6 +209,80 @@ static float ComputeRotationError(
     error.normalize();
     // 小角度近似：误差角度 ≈ 2 * |vec(error)|
     return 2.0f * error.vec().norm();
+}
+
+static JointSceneContext CreateDistanceJointScene(
+    const Vector3& posA,
+    const Vector3& posB,
+    const Quaternion& rotA = Quaternion::Identity(),
+    const Quaternion& rotB = Quaternion::Identity(),
+    const Vector3& velA = Vector3::Zero(),
+    const Vector3& velB = Vector3::Zero(),
+    const Vector3& angVelA = Vector3::Zero(),
+    const Vector3& angVelB = Vector3::Zero(),
+    float massA = 1.0f,
+    float massB = 1.0f,
+    float restLength = 1.0f,
+    bool hasLimits = false,
+    float minDistance = 0.0f,
+    float maxDistance = std::numeric_limits<float>::infinity()
+) {
+    JointSceneContext ctx{};
+    ctx.world = std::make_shared<World>();
+    RegisterPhysicsComponents(ctx.world);
+    ctx.world->Initialize();
+
+    ctx.bodyA = ctx.world->CreateEntity();
+    ctx.bodyB = ctx.world->CreateEntity();
+    ctx.jointEntity = ctx.bodyA;  // 关节实体就是 bodyA
+
+    // 创建刚体A
+    TransformComponent transformA;
+    transformA.SetPosition(posA);
+    transformA.SetRotation(rotA);
+    ctx.world->AddComponent(ctx.bodyA, transformA);
+
+    RigidBodyComponent bodyA = MakeDynamicBox(massA);
+    bodyA.linearVelocity = velA;
+    bodyA.angularVelocity = angVelA;
+    ctx.world->AddComponent(ctx.bodyA, bodyA);
+
+    // 创建刚体B
+    TransformComponent transformB;
+    transformB.SetPosition(posB);
+    transformB.SetRotation(rotB);
+    ctx.world->AddComponent(ctx.bodyB, transformB);
+
+    RigidBodyComponent bodyB = MakeDynamicBox(massB);
+    bodyB.linearVelocity = velB;
+    bodyB.angularVelocity = angVelB;
+    ctx.world->AddComponent(ctx.bodyB, bodyB);
+
+    // 创建距离关节 - 附加到 bodyA 上
+    PhysicsJointComponent joint;
+    joint.base.type = JointComponent::JointType::Distance;
+    joint.base.connectedBody = ctx.bodyB;  // 连接到 bodyB
+    joint.base.localAnchorA = Vector3::Zero();  // 在质心
+    joint.base.localAnchorB = Vector3::Zero();  // 在质心
+    joint.base.isEnabled = true;
+    joint.base.isBroken = false;
+    
+    DistanceJointData distData;
+    distData.restLength = restLength;
+    distData.hasLimits = hasLimits;
+    distData.minDistance = minDistance;
+    distData.maxDistance = maxDistance;
+    joint.data = distData;
+    
+    // 将关节组件添加到 bodyA（关节的拥有者）
+    ctx.world->AddComponent(ctx.bodyA, joint);
+
+    ctx.initialPosA = posA;
+    ctx.initialPosB = posB;
+    ctx.initialRotA = rotA;
+    ctx.initialRotB = rotB;
+
+    return ctx;
 }
 
 // ============================================================================
@@ -792,6 +869,361 @@ bool Test_FixedJoint_EmptyJointList_NoEffect() {
 }
 
 // ============================================================================
+// 距离关节测试用例
+// ============================================================================
+
+// 用例 10：基础距离关节测试 - 应保持 restLength
+bool Test_DistanceJoint_Basic_RestLength() {
+    // 创建两个刚体，初始距离为 2 米，restLength 为 1.5 米
+    // 距离关节应该将距离约束到 restLength
+    JointSceneContext ctx = CreateDistanceJointScene(
+        Vector3(0, 0, 0),
+        Vector3(2, 0, 0),  // 初始距离 2 米
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        1.0f,  // massA
+        1.0f,  // massB
+        1.5f,  // restLength
+        false  // 无限制
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(15);
+    solver.SetPositionIterations(10);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const auto& transformA_before = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+    const auto& transformB_before = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+    float initialDistance = ComputeAnchorSeparation(
+        transformA_before, transformB_before,
+        Vector3::Zero(), Vector3::Zero()
+    );
+
+    // 运行多帧以收敛
+    const int numFrames = 50;
+    float dt = 1.0f / 60.0f;
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+    }
+
+    const auto& transformA_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+    const auto& transformB_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+    const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+    auto& distData = std::get<DistanceJointData>(joint.data);
+    
+    float finalDistance = ComputeAnchorSeparation(
+        transformA_after, transformB_after,
+        Vector3::Zero(), Vector3::Zero()
+    );
+
+    std::cout << "=== Basic Distance Joint Test ===" << std::endl;
+    std::cout << "Initial distance: " << initialDistance << std::endl;
+    std::cout << "Rest length: " << distData.restLength << std::endl;
+    std::cout << "Final distance: " << finalDistance << std::endl;
+    std::cout << "Expected: close to restLength (1.5)" << std::endl;
+    std::cout << "=================================" << std::endl;
+
+    // 验证：最终距离应该接近 restLength
+    float distanceError = std::abs(finalDistance - distData.restLength);
+    TEST_ASSERT(distanceError < 0.3f,
+                "距离关节应保持 restLength（误差应小于0.3米）");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 11：距离关节限制测试 - minDistance 和 maxDistance
+bool Test_DistanceJoint_Limits() {
+    // 创建两个刚体，设置距离限制 [1.0, 2.0]
+    JointSceneContext ctx = CreateDistanceJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0.5f, 0, 0),  // 初始距离 0.5 米（小于 minDistance）
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        1.0f,  // massA
+        1.0f,  // massB
+        1.5f,  // restLength（在限制范围内）
+        true,  // 有限制
+        1.0f,  // minDistance
+        2.0f   // maxDistance
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(15);
+    solver.SetPositionIterations(10);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    // 运行多帧
+    const int numFrames = 50;
+    float dt = 1.0f / 60.0f;
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+    }
+
+    const auto& transformA_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+    const auto& transformB_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+    const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+    auto& distData = std::get<DistanceJointData>(joint.data);
+    
+    float finalDistance = ComputeAnchorSeparation(
+        transformA_after, transformB_after,
+        Vector3::Zero(), Vector3::Zero()
+    );
+
+    std::cout << "=== Distance Joint Limits Test ===" << std::endl;
+    std::cout << "Min distance: " << distData.minDistance << std::endl;
+    std::cout << "Max distance: " << distData.maxDistance << std::endl;
+    std::cout << "Final distance: " << finalDistance << std::endl;
+    std::cout << "Expected: between 1.0 and 2.0" << std::endl;
+    std::cout << "==================================" << std::endl;
+
+    // 验证：最终距离应该在限制范围内
+    TEST_ASSERT(finalDistance >= distData.minDistance - 0.2f,
+                "距离应大于等于 minDistance（允许0.2米误差）");
+    TEST_ASSERT(finalDistance <= distData.maxDistance + 0.2f,
+                "距离应小于等于 maxDistance（允许0.2米误差）");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 12：距离关节数据爆炸检测
+bool Test_DistanceJoint_NoVelocityExplosion() {
+    // 创建两个有初始速度的刚体，试图分离
+    JointSceneContext ctx = CreateDistanceJointScene(
+        Vector3(0, 0, 0),
+        Vector3(1.5f, 0, 0),  // 初始距离 1.5 米
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3(1, 0, 0),   // 刚体A有X方向速度
+        Vector3(-1, 0, 0),  // 刚体B有-X方向速度（试图分离）
+        Vector3::Zero(),
+        Vector3::Zero(),
+        1.0f,  // massA
+        1.0f,  // massB
+        1.5f,  // restLength
+        false  // 无限制
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(10);
+    solver.SetPositionIterations(5);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const auto& bodyA_before = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+    const auto& bodyB_before = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+    float initialSpeedA = bodyA_before.linearVelocity.norm();
+    float initialSpeedB = bodyB_before.linearVelocity.norm();
+
+    // 运行多帧，检测是否有数据爆炸
+    const int numFrames = 100;
+    float dt = 1.0f / 60.0f;
+    float maxSpeedA = initialSpeedA;
+    float maxSpeedB = initialSpeedB;
+    float maxAngularSpeedA = 0.0f;
+    float maxAngularSpeedB = 0.0f;
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+
+        const auto& bodyA = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+        const auto& bodyB = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+
+        float speedA = bodyA.linearVelocity.norm();
+        float speedB = bodyB.linearVelocity.norm();
+        float angSpeedA = bodyA.angularVelocity.norm();
+        float angSpeedB = bodyB.angularVelocity.norm();
+
+        maxSpeedA = std::max(maxSpeedA, speedA);
+        maxSpeedB = std::max(maxSpeedB, speedB);
+        maxAngularSpeedA = std::max(maxAngularSpeedA, angSpeedA);
+        maxAngularSpeedB = std::max(maxAngularSpeedB, angSpeedB);
+
+        // 每帧检查
+        TEST_ASSERT(speedA < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体A速度不应爆炸");
+        TEST_ASSERT(speedB < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体B速度不应爆炸");
+        TEST_ASSERT(angSpeedA < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体A角速度不应爆炸");
+        TEST_ASSERT(angSpeedB < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体B角速度不应爆炸");
+    }
+
+    std::cout << "=== Distance Joint No Velocity Explosion Test ===" << std::endl;
+    std::cout << "Initial speed A: " << initialSpeedA << std::endl;
+    std::cout << "Initial speed B: " << initialSpeedB << std::endl;
+    std::cout << "Max speed A: " << maxSpeedA << std::endl;
+    std::cout << "Max speed B: " << maxSpeedB << std::endl;
+    std::cout << "Max angular speed A: " << maxAngularSpeedA << std::endl;
+    std::cout << "Max angular speed B: " << maxAngularSpeedB << std::endl;
+    std::cout << "=================================================" << std::endl;
+
+    // 验证：最大速度应在合理范围内
+    TEST_ASSERT(maxSpeedA < 50.0f,
+                "100帧后刚体A的最大速度应在合理范围内");
+    TEST_ASSERT(maxSpeedB < 50.0f,
+                "100帧后刚体B的最大速度应在合理范围内");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 13：距离关节多帧稳定性测试
+bool Test_DistanceJoint_MultiFrameStability() {
+    JointSceneContext ctx = CreateDistanceJointScene(
+        Vector3(0, 0, 0),
+        Vector3(2, 0, 0),  // 初始距离 2 米
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3(0.5f, 0, 0),
+        Vector3(-0.5f, 0, 0),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        1.0f,  // massA
+        1.0f,  // massB
+        1.5f,  // restLength
+        false  // 无限制
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(10);
+    solver.SetPositionIterations(5);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const int numFrames = 500;
+    float dt = 1.0f / 60.0f;
+
+    // 记录每100帧的距离
+    std::vector<float> distances;
+    std::vector<float> speedsA;
+    std::vector<float> speedsB;
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+
+        if (frame % 100 == 0) {
+            const auto& transformA = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+            const auto& transformB = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+            const auto& bodyA = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+            const auto& bodyB = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+            const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+            auto& distData = std::get<DistanceJointData>(joint.data);
+
+            float distance = ComputeAnchorSeparation(
+                transformA, transformB,
+                Vector3::Zero(), Vector3::Zero()
+            );
+            distances.push_back(distance);
+            speedsA.push_back(bodyA.linearVelocity.norm());
+            speedsB.push_back(bodyB.linearVelocity.norm());
+        }
+
+        // 每帧检查
+        const auto& bodyA = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+        const auto& bodyB = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+
+        TEST_ASSERT(bodyA.linearVelocity.norm() < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：速度不应爆炸");
+        TEST_ASSERT(bodyB.linearVelocity.norm() < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：速度不应爆炸");
+    }
+
+    std::cout << "=== Distance Joint Multi-Frame Stability Test ===" << std::endl;
+    std::cout << "Distances at frames 0, 100, 200, 300, 400, 500:" << std::endl;
+    for (size_t i = 0; i < distances.size(); ++i) {
+        std::cout << "  Frame " << (i * 100) << ": " << distances[i] << std::endl;
+    }
+    std::cout << "Rest length: 1.5" << std::endl;
+    std::cout << "==================================================" << std::endl;
+
+    // 验证：距离应该稳定在 restLength 附近
+    if (distances.size() >= 3) {
+        const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+        auto& distData = std::get<DistanceJointData>(joint.data);
+        
+        float avgDistance = 0.0f;
+        for (size_t i = distances.size() / 2; i < distances.size(); ++i) {
+            avgDistance += distances[i];
+        }
+        avgDistance /= (distances.size() - distances.size() / 2);
+        
+        // 验证：平均距离应该接近 restLength（误差小于0.3米）
+        float distanceError = std::abs(avgDistance - distData.restLength);
+        TEST_ASSERT(distanceError < 0.3f,
+                    "长时间运行后距离应稳定在 restLength 附近（误差应小于0.3米）");
+    }
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 14：距离关节极端质量比测试
+bool Test_DistanceJoint_ExtremeMassRatio() {
+    // 创建一个很轻的物体连接到一个很重的物体
+    JointSceneContext ctx = CreateDistanceJointScene(
+        Vector3(0, 0, 0),
+        Vector3(1.5f, 0, 0),
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        0.01f,  // 很轻
+        100.0f, // 很重
+        1.5f,  // restLength
+        false  // 无限制
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(15);
+    solver.SetPositionIterations(10);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const int numFrames = 50;
+    float dt = 1.0f / 60.0f;
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+
+        const auto& bodyA = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+        const auto& bodyB = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+
+        TEST_ASSERT(bodyA.linearVelocity.norm() < 100.0f,
+                    "极端质量比：轻物体速度不应爆炸");
+        TEST_ASSERT(bodyB.linearVelocity.norm() < 100.0f,
+                    "极端质量比：重物体速度不应爆炸");
+    }
+
+    std::cout << "=== Distance Joint Extreme Mass Ratio Test ===" << std::endl;
+    std::cout << "Mass A: 0.01, Mass B: 100.0" << std::endl;
+    std::cout << "Test passed: no explosion" << std::endl;
+    std::cout << "===============================================" << std::endl;
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// ============================================================================
 // 主入口
 // ============================================================================
 
@@ -819,6 +1251,25 @@ int main() {
 
     // 兼容性测试
     RUN_TEST(Test_FixedJoint_EmptyJointList_NoEffect);
+
+    std::cout << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "距离关节测试" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << std::endl;
+
+    // 距离关节基础功能测试
+    RUN_TEST(Test_DistanceJoint_Basic_RestLength);
+    RUN_TEST(Test_DistanceJoint_Limits);
+
+    // 距离关节数据爆炸检测
+    RUN_TEST(Test_DistanceJoint_NoVelocityExplosion);
+
+    // 距离关节稳定性测试
+    RUN_TEST(Test_DistanceJoint_MultiFrameStability);
+
+    // 距离关节极端情况测试
+    RUN_TEST(Test_DistanceJoint_ExtremeMassRatio);
 
     std::cout << std::endl;
     std::cout << "----------------------------------------" << std::endl;
