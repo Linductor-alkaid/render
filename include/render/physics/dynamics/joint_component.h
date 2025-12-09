@@ -63,7 +63,8 @@ struct JointComponent {
  * @brief 固定关节数据
  */
 struct FixedJointData {
-    Quaternion relativeRotation = Quaternion::Identity();
+    Vector3 relativePosition = Vector3::Zero();  // 两个锚点之间的相对位置（B相对于A）
+    Quaternion relativeRotation = Quaternion::Identity();  // 两个刚体之间的相对旋转
 };
 
 /**
