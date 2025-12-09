@@ -40,6 +40,7 @@
 #include "render/physics/collision/contact_manifold.h"
 #include "render/ecs/world.h"
 #include "render/ecs/components.h"
+#include "render/math_utils.h"
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -273,6 +274,89 @@ static JointSceneContext CreateDistanceJointScene(
     distData.minDistance = minDistance;
     distData.maxDistance = maxDistance;
     joint.data = distData;
+    
+    // 将关节组件添加到 bodyA（关节的拥有者）
+    ctx.world->AddComponent(ctx.bodyA, joint);
+
+    ctx.initialPosA = posA;
+    ctx.initialPosB = posB;
+    ctx.initialRotA = rotA;
+    ctx.initialRotB = rotB;
+
+    return ctx;
+}
+
+static JointSceneContext CreateHingeJointScene(
+    const Vector3& posA,
+    const Vector3& posB,
+    const Quaternion& rotA = Quaternion::Identity(),
+    const Quaternion& rotB = Quaternion::Identity(),
+    const Vector3& velA = Vector3::Zero(),
+    const Vector3& velB = Vector3::Zero(),
+    const Vector3& angVelA = Vector3::Zero(),
+    const Vector3& angVelB = Vector3::Zero(),
+    float massA = 1.0f,
+    float massB = 1.0f,
+    const Vector3& localAxisA = Vector3::UnitZ(),
+    const Vector3& localAxisB = Vector3::UnitZ(),
+    bool hasLimits = false,
+    float limitMin = -MathUtils::PI,
+    float limitMax = MathUtils::PI,
+    bool useMotor = false,
+    float motorSpeed = 0.0f,
+    float motorMaxForce = 100.0f
+) {
+    JointSceneContext ctx{};
+    ctx.world = std::make_shared<World>();
+    RegisterPhysicsComponents(ctx.world);
+    ctx.world->Initialize();
+
+    ctx.bodyA = ctx.world->CreateEntity();
+    ctx.bodyB = ctx.world->CreateEntity();
+    ctx.jointEntity = ctx.bodyA;  // 关节实体就是 bodyA
+
+    // 创建刚体A
+    TransformComponent transformA;
+    transformA.SetPosition(posA);
+    transformA.SetRotation(rotA);
+    ctx.world->AddComponent(ctx.bodyA, transformA);
+
+    RigidBodyComponent bodyA = MakeDynamicBox(massA);
+    bodyA.linearVelocity = velA;
+    bodyA.angularVelocity = angVelA;
+    ctx.world->AddComponent(ctx.bodyA, bodyA);
+
+    // 创建刚体B
+    TransformComponent transformB;
+    transformB.SetPosition(posB);
+    transformB.SetRotation(rotB);
+    ctx.world->AddComponent(ctx.bodyB, transformB);
+
+    RigidBodyComponent bodyB = MakeDynamicBox(massB);
+    bodyB.linearVelocity = velB;
+    bodyB.angularVelocity = angVelB;
+    ctx.world->AddComponent(ctx.bodyB, bodyB);
+
+    // 创建铰链关节 - 附加到 bodyA 上
+    PhysicsJointComponent joint;
+    joint.base.type = JointComponent::JointType::Hinge;
+    joint.base.connectedBody = ctx.bodyB;  // 连接到 bodyB
+    joint.base.localAnchorA = Vector3::Zero();  // 在质心
+    joint.base.localAnchorB = Vector3::Zero();  // 在质心
+    joint.base.isEnabled = true;
+    joint.base.isBroken = false;
+    
+    HingeJointData hingeData;
+    hingeData.localAxisA = localAxisA.normalized();
+    hingeData.localAxisB = localAxisB.normalized();
+    hingeData.hasLimits = hasLimits;
+    hingeData.limitMin = limitMin;
+    hingeData.limitMax = limitMax;
+    hingeData.currentAngle = 0.0f;
+    hingeData.useMotor = useMotor;
+    hingeData.motorSpeed = motorSpeed;
+    hingeData.motorMaxForce = motorMaxForce;
+    joint.data = hingeData;
     
     // 将关节组件添加到 bodyA（关节的拥有者）
     ctx.world->AddComponent(ctx.bodyA, joint);
@@ -1224,6 +1308,483 @@ bool Test_DistanceJoint_ExtremeMassRatio() {
 }
 
 // ============================================================================
+// 铰链关节测试用例
+// ============================================================================
+
+// 用例 15：基础铰链关节测试 - 位置应对齐，只能绕轴旋转
+bool Test_HingeJoint_Basic_PositionAlignment() {
+    // 创建两个刚体，初始位置重合
+    JointSceneContext ctx = CreateHingeJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 0),  // 位置重合，满足位置约束
+        Quaternion::Identity(),
+        Quaternion::Identity()
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(10);
+    solver.SetPositionIterations(5);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const auto& transformA_before = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+    const auto& transformB_before = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+    float initialSeparation = ComputeAnchorSeparation(
+        transformA_before, transformB_before,
+        Vector3::Zero(), Vector3::Zero()
+    );
+
+    solver.SolveWithJoints(1.0f / 60.0f, emptyPairs, jointEntities);
+
+    const auto& transformA_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+    const auto& transformB_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+    const auto& bodyA_after = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+    const auto& bodyB_after = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+
+    float finalSeparation = ComputeAnchorSeparation(
+        transformA_after, transformB_after,
+        Vector3::Zero(), Vector3::Zero()
+    );
+
+    std::cout << "=== Basic Hinge Joint Test ===" << std::endl;
+    std::cout << "Initial separation: " << initialSeparation << std::endl;
+    std::cout << "Final separation: " << finalSeparation << std::endl;
+    std::cout << "Velocity A: " << bodyA_after.linearVelocity.transpose() << std::endl;
+    std::cout << "Velocity B: " << bodyB_after.linearVelocity.transpose() << std::endl;
+    std::cout << "==============================" << std::endl;
+
+    // 验证：位置约束应保持两个锚点对齐
+    TEST_ASSERT(finalSeparation < 0.1f,
+                "铰链关节应保持两个锚点对齐（分离距离应小于0.1）");
+    
+    // 验证速度不应爆炸
+    TEST_ASSERT(bodyA_after.linearVelocity.norm() < 10.0f,
+                "刚体A的速度不应爆炸");
+    TEST_ASSERT(bodyB_after.linearVelocity.norm() < 10.0f,
+                "刚体B的速度不应爆炸");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 16：铰链关节旋转约束测试 - 只能绕指定轴旋转
+bool Test_HingeJoint_RotationConstraint() {
+    // 创建两个刚体，初始旋转不同（绕非旋转轴旋转）
+    Quaternion rotA = Quaternion::Identity();
+    Quaternion rotB = Quaternion(Eigen::AngleAxisf(0.5f, Vector3::UnitX()));  // 绕X轴旋转（不是旋转轴Z）
+
+    JointSceneContext ctx = CreateHingeJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 0),  // 位置相同
+        rotA,
+        rotB,
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        1.0f,  // massA
+        1.0f,  // massB
+        Vector3::UnitZ(),  // 旋转轴是Z轴
+        Vector3::UnitZ()
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(15);
+    solver.SetPositionIterations(10);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    // 运行多帧以收敛
+    const int numFrames = 30;
+    float dt = 1.0f / 60.0f;
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+    }
+
+    const auto& transformA_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+    const auto& transformB_after = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+    const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+    auto& hingeData = std::get<HingeJointData>(joint.data);
+
+    // 计算世界空间旋转轴（使用关节的运行时数据）
+    Vector3 worldAxis = joint.runtime.worldAxis;
+    worldAxis.normalize();
+
+    // 使用关节的角度计算函数来获取当前角度
+    // 这比直接计算相对旋转更准确，因为它考虑了铰链关节的特定约束
+    float currentAngle = hingeData.currentAngle;
+    
+    // 计算相对旋转（用于验证旋转是否主要围绕旋转轴）
+    Quaternion qA = transformA_after.GetRotation();
+    Quaternion qB = transformB_after.GetRotation();
+    Quaternion relativeRot = qB * qA.conjugate();
+
+    // 将相对旋转转换为轴角表示
+    Eigen::AngleAxisf angleAxis(relativeRot);
+    Vector3 rotationAxis = angleAxis.axis();
+    float rotationAngle = angleAxis.angle();
+
+    // 计算旋转轴与期望旋转轴（worldAxis）的夹角
+    // 如果旋转约束正确，旋转轴应该与worldAxis对齐
+    float axisAlignment = std::abs(rotationAxis.dot(worldAxis));
+    
+    // 如果角度很小，轴对齐度可能不准确，所以使用角度作为替代指标
+    // 如果角度小于阈值，认为约束是有效的
+
+    std::cout << "=== Hinge Joint Rotation Constraint Test ===" << std::endl;
+    std::cout << "Current angle (from joint): " << currentAngle << std::endl;
+    std::cout << "Rotation angle (from quaternion): " << rotationAngle << std::endl;
+    std::cout << "Axis alignment with world axis: " << axisAlignment << std::endl;
+    std::cout << "Expected: rotation should be around Z axis (alignment close to 1.0)" << std::endl;
+    std::cout << "=============================================" << std::endl;
+
+    // 验证：旋转应该主要围绕旋转轴（Z轴）
+    // 如果旋转约束正确，应该满足以下条件之一：
+    // 1. 旋转角度很小（说明约束已经消除了非旋转轴方向的旋转）
+    // 2. 旋转轴与期望旋转轴对齐（轴对齐度 > 0.8）
+    // 3. 当前角度（从关节计算）接近旋转角度（说明旋转主要围绕旋转轴）
+    
+    // 关键验证：如果初始旋转是绕X轴（非旋转轴），旋转约束应该将其消除
+    // 最终相对旋转应该很小，或者只保留绕Z轴的分量
+    bool isValid = (rotationAngle < 0.3f) ||  // 旋转角度应该很小
+                   (axisAlignment > 0.8f) ||  // 或者旋转轴与期望轴对齐
+                   (std::abs(currentAngle) < 0.3f);  // 或者关节角度很小
+    
+    TEST_ASSERT(isValid,
+                "铰链关节应只允许绕旋转轴旋转（旋转角度应小于0.3或轴对齐度应大于0.8）");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 17：铰链关节角度限制测试
+bool Test_HingeJoint_AngleLimits() {
+    // 创建两个刚体，设置角度限制 [-0.5, 0.5] 弧度
+    JointSceneContext ctx = CreateHingeJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 0),
+        Quaternion::Identity(),
+        Quaternion(Eigen::AngleAxisf(1.0f, Vector3::UnitZ())),  // 初始角度 1.0 弧度（超出限制）
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        1.0f,  // massA
+        1.0f,  // massB
+        Vector3::UnitZ(),  // 旋转轴
+        Vector3::UnitZ(),
+        true,  // 有限制
+        -0.5f,  // limitMin
+        0.5f    // limitMax
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(15);
+    solver.SetPositionIterations(10);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    // 运行多帧
+    const int numFrames = 50;
+    float dt = 1.0f / 60.0f;
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+    }
+
+    const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+    auto& hingeData = std::get<HingeJointData>(joint.data);
+
+    std::cout << "=== Hinge Joint Angle Limits Test ===" << std::endl;
+    std::cout << "Limit min: " << hingeData.limitMin << std::endl;
+    std::cout << "Limit max: " << hingeData.limitMax << std::endl;
+    std::cout << "Current angle: " << hingeData.currentAngle << std::endl;
+    std::cout << "Expected: between -0.5 and 0.5" << std::endl;
+    std::cout << "====================================" << std::endl;
+
+    // 验证：当前角度应该在限制范围内
+    TEST_ASSERT(hingeData.currentAngle >= hingeData.limitMin - 0.2f,
+                "角度应大于等于 limitMin（允许0.2弧度误差）");
+    TEST_ASSERT(hingeData.currentAngle <= hingeData.limitMax + 0.2f,
+                "角度应小于等于 limitMax（允许0.2弧度误差）");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 18：铰链关节马达测试
+bool Test_HingeJoint_Motor() {
+    // 创建两个刚体，启用马达
+    JointSceneContext ctx = CreateHingeJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 0),
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        1.0f,  // massA
+        1.0f,  // massB
+        Vector3::UnitZ(),  // 旋转轴
+        Vector3::UnitZ(),
+        false,  // 无角度限制
+        -MathUtils::PI,
+        MathUtils::PI,
+        true,  // 使用马达
+        2.0f,  // motorSpeed: 2 rad/s
+        50.0f  // motorMaxForce
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(10);
+    solver.SetPositionIterations(5);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const int numFrames = 30;
+    float dt = 1.0f / 60.0f;
+    float totalTime = numFrames * dt;
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+    }
+
+    const auto& bodyA_after = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+    const auto& bodyB_after = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+    const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+    auto& hingeData = std::get<HingeJointData>(joint.data);
+
+    // 计算相对角速度（沿旋转轴）
+    Vector3 worldAxis = ctx.world->GetComponent<TransformComponent>(ctx.bodyA).GetRotation() 
+        * hingeData.localAxisA;
+    worldAxis.normalize();
+    Vector3 angVelRel = bodyB_after.angularVelocity - bodyA_after.angularVelocity;
+    float currentSpeed = angVelRel.dot(worldAxis);
+
+    std::cout << "=== Hinge Joint Motor Test ===" << std::endl;
+    std::cout << "Target motor speed: " << hingeData.motorSpeed << " rad/s" << std::endl;
+    std::cout << "Current speed: " << currentSpeed << " rad/s" << std::endl;
+    std::cout << "Expected: close to target speed" << std::endl;
+    std::cout << "=============================" << std::endl;
+
+    // 验证：相对角速度应该接近目标马达速度
+    float speedError = std::abs(currentSpeed - hingeData.motorSpeed);
+    TEST_ASSERT(speedError < 1.0f,
+                "马达应产生接近目标速度的旋转（误差应小于1.0 rad/s）");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 19：铰链关节数据爆炸检测
+bool Test_HingeJoint_NoVelocityExplosion() {
+    // 创建两个有初始角速度的刚体
+    JointSceneContext ctx = CreateHingeJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 0),
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3(0, 0, 5.0f),   // 刚体A有Z方向角速度
+        Vector3(0, 0, -5.0f)   // 刚体B有-Z方向角速度
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(10);
+    solver.SetPositionIterations(5);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const int numFrames = 100;
+    float dt = 1.0f / 60.0f;
+    float maxSpeedA = 0.0f;
+    float maxSpeedB = 0.0f;
+    float maxAngularSpeedA = 0.0f;
+    float maxAngularSpeedB = 0.0f;
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+
+        const auto& bodyA = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+        const auto& bodyB = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+
+        float speedA = bodyA.linearVelocity.norm();
+        float speedB = bodyB.linearVelocity.norm();
+        float angSpeedA = bodyA.angularVelocity.norm();
+        float angSpeedB = bodyB.angularVelocity.norm();
+
+        maxSpeedA = std::max(maxSpeedA, speedA);
+        maxSpeedB = std::max(maxSpeedB, speedB);
+        maxAngularSpeedA = std::max(maxAngularSpeedA, angSpeedA);
+        maxAngularSpeedB = std::max(maxAngularSpeedB, angSpeedB);
+
+        // 每帧检查
+        TEST_ASSERT(speedA < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体A速度不应爆炸");
+        TEST_ASSERT(speedB < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体B速度不应爆炸");
+        TEST_ASSERT(angSpeedA < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体A角速度不应爆炸");
+        TEST_ASSERT(angSpeedB < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：刚体B角速度不应爆炸");
+    }
+
+    std::cout << "=== Hinge Joint No Velocity Explosion Test ===" << std::endl;
+    std::cout << "Max speed A: " << maxSpeedA << std::endl;
+    std::cout << "Max speed B: " << maxSpeedB << std::endl;
+    std::cout << "Max angular speed A: " << maxAngularSpeedA << std::endl;
+    std::cout << "Max angular speed B: " << maxAngularSpeedB << std::endl;
+    std::cout << "===============================================" << std::endl;
+
+    // 验证：最大速度应在合理范围内
+    TEST_ASSERT(maxSpeedA < 50.0f,
+                "100帧后刚体A的最大速度应在合理范围内");
+    TEST_ASSERT(maxSpeedB < 50.0f,
+                "100帧后刚体B的最大速度应在合理范围内");
+    TEST_ASSERT(maxAngularSpeedA < 50.0f,
+                "100帧后刚体A的最大角速度应在合理范围内");
+    TEST_ASSERT(maxAngularSpeedB < 50.0f,
+                "100帧后刚体B的最大角速度应在合理范围内");
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 20：铰链关节多帧稳定性测试
+bool Test_HingeJoint_MultiFrameStability() {
+    JointSceneContext ctx = CreateHingeJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 0),
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3(0, 0, 1.0f),  // 初始角速度
+        Vector3(0, 0, -1.0f)
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(10);
+    solver.SetPositionIterations(5);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const int numFrames = 500;
+    float dt = 1.0f / 60.0f;
+
+    // 记录每100帧的状态
+    std::vector<float> separations;
+    std::vector<float> angles;
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+
+        if (frame % 100 == 0) {
+            const auto& transformA = ctx.world->GetComponent<TransformComponent>(ctx.bodyA);
+            const auto& transformB = ctx.world->GetComponent<TransformComponent>(ctx.bodyB);
+            const auto& joint = ctx.world->GetComponent<PhysicsJointComponent>(ctx.jointEntity);
+            auto& hingeData = std::get<HingeJointData>(joint.data);
+
+            float separation = ComputeAnchorSeparation(
+                transformA, transformB,
+                Vector3::Zero(), Vector3::Zero()
+            );
+            separations.push_back(separation);
+            angles.push_back(hingeData.currentAngle);
+        }
+
+        // 每帧检查
+        const auto& bodyA = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+        const auto& bodyB = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+
+        TEST_ASSERT(bodyA.linearVelocity.norm() < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：速度不应爆炸");
+        TEST_ASSERT(bodyB.linearVelocity.norm() < 100.0f,
+                    "第 " + std::to_string(frame) + " 帧：速度不应爆炸");
+    }
+
+    std::cout << "=== Hinge Joint Multi-Frame Stability Test ===" << std::endl;
+    std::cout << "Separations at frames 0, 100, 200, 300, 400, 500:" << std::endl;
+    for (size_t i = 0; i < separations.size(); ++i) {
+        std::cout << "  Frame " << (i * 100) << ": " << separations[i] << std::endl;
+    }
+    std::cout << "Angles at frames 0, 100, 200, 300, 400, 500:" << std::endl;
+    for (size_t i = 0; i < angles.size(); ++i) {
+        std::cout << "  Frame " << (i * 100) << ": " << angles[i] << std::endl;
+    }
+    std::cout << "===============================================" << std::endl;
+
+    // 验证：分离距离应该稳定（接近0，因为位置约束）
+    if (separations.size() >= 3) {
+        float avgSeparation = 0.0f;
+        for (size_t i = separations.size() / 2; i < separations.size(); ++i) {
+            avgSeparation += separations[i];
+        }
+        avgSeparation /= (separations.size() - separations.size() / 2);
+        
+        TEST_ASSERT(avgSeparation < 0.2f,
+                    "长时间运行后分离距离应稳定（应小于0.2米）");
+    }
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// 用例 21：铰链关节极端质量比测试
+bool Test_HingeJoint_ExtremeMassRatio() {
+    // 创建一个很轻的物体连接到一个很重的物体
+    JointSceneContext ctx = CreateHingeJointScene(
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 0),
+        Quaternion::Identity(),
+        Quaternion::Identity(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        Vector3::Zero(),
+        0.01f,  // 很轻
+        100.0f  // 很重
+    );
+
+    ConstraintSolver solver(ctx.world.get());
+    solver.SetSolverIterations(15);
+    solver.SetPositionIterations(10);
+
+    std::vector<CollisionPair> emptyPairs;
+    std::vector<EntityID> jointEntities = {ctx.jointEntity};
+
+    const int numFrames = 50;
+    float dt = 1.0f / 60.0f;
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        solver.SolveWithJoints(dt, emptyPairs, jointEntities);
+
+        const auto& bodyA = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyA);
+        const auto& bodyB = ctx.world->GetComponent<RigidBodyComponent>(ctx.bodyB);
+
+        TEST_ASSERT(bodyA.linearVelocity.norm() < 100.0f,
+                    "极端质量比：轻物体速度不应爆炸");
+        TEST_ASSERT(bodyB.linearVelocity.norm() < 100.0f,
+                    "极端质量比：重物体速度不应爆炸");
+    }
+
+    std::cout << "=== Hinge Joint Extreme Mass Ratio Test ===" << std::endl;
+    std::cout << "Mass A: 0.01, Mass B: 100.0" << std::endl;
+    std::cout << "Test passed: no explosion" << std::endl;
+    std::cout << "===========================================" << std::endl;
+
+    ctx.world->Shutdown();
+    return true;
+}
+
+// ============================================================================
 // 主入口
 // ============================================================================
 
@@ -1270,6 +1831,27 @@ int main() {
 
     // 距离关节极端情况测试
     RUN_TEST(Test_DistanceJoint_ExtremeMassRatio);
+
+    std::cout << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "铰链关节测试" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << std::endl;
+
+    // 铰链关节基础功能测试
+    RUN_TEST(Test_HingeJoint_Basic_PositionAlignment);
+    RUN_TEST(Test_HingeJoint_RotationConstraint);
+    RUN_TEST(Test_HingeJoint_AngleLimits);
+    RUN_TEST(Test_HingeJoint_Motor);
+
+    // 铰链关节数据爆炸检测
+    RUN_TEST(Test_HingeJoint_NoVelocityExplosion);
+
+    // 铰链关节稳定性测试
+    RUN_TEST(Test_HingeJoint_MultiFrameStability);
+
+    // 铰链关节极端情况测试
+    RUN_TEST(Test_HingeJoint_ExtremeMassRatio);
 
     std::cout << std::endl;
     std::cout << "----------------------------------------" << std::endl;

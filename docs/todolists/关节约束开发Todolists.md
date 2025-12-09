@@ -849,22 +849,22 @@ private:
 
 **优先级**: 🔴 Critical | **预计时间**: 3 天
 
-- [ ] **2.1.1** 实现 Hinge Joint 预处理
+- [x] **2.1.1** 实现 Hinge Joint 预处理
   - 计算旋转轴和垂直轴
   - 计算有效质量（位置约束 + 2个旋转约束）
   - 计算当前角度
 
-- [ ] **2.1.2** 实现 Hinge Joint 速度约束
+- [x] **2.1.2** 实现 Hinge Joint 速度约束
   - 位置约束（同 Fixed Joint）
   - 旋转约束（2个垂直于旋转轴的方向）
   - 参考设计文档第4.5节
 
-- [ ] **2.1.3** 实现 Hinge Joint 位置修正
+- [x] **2.1.3** 实现 Hinge Joint 位置修正
 
 **验证标准**:
-- ✅ 铰链关节只能绕轴旋转
-- ✅ 位置对齐正确
-- ✅ 创建门铰链测试场景
+- [ ] 铰链关节只能绕轴旋转
+- [ ] 位置对齐正确
+- [ ] 创建门铰链测试场景
 
 ---
 
@@ -872,7 +872,7 @@ private:
 
 **优先级**: 🟡 High | **预计时间**: 2 天
 
-- [ ] **2.2.1** 实现角度限制
+- [x] **2.2.1** 实现角度限制
   ```cpp
   // 在 SolveHingeJointVelocity 中添加
   if (hingeData.hasLimits) {
@@ -885,7 +885,7 @@ private:
   }
   ```
 
-- [ ] **2.2.2** 实现马达
+- [x] **2.2.2** 实现马达
   ```cpp
   if (hingeData.useMotor) {
       float currentSpeed = (bodyB.angularVelocity - bodyA.angularVelocity)
@@ -905,7 +905,7 @@ private:
   }
   ```
 
-- [ ] **2.2.3** 编写角度计算函数
+- [x] **2.2.3** 编写角度计算函数
   ```cpp
   float CalculateHingeAngle(const HingeJointConstraint& joint) {
       Vector3 refA = transformA.GetRotation() * ChooseTangent(joint.data.localAxisA);
@@ -1727,13 +1727,13 @@ void DiagnoseJoint(const JointConstraint& joint,
 
 | 阶段 | 任务数 | 已完成 | 进度 |
 |------|--------|--------|------|
-| 阶段 1：基础关节系统 | 18 | 0 | 0% |
-| 阶段 2：铰链关节 | 10 | 0 | 0% |
+| 阶段 1：基础关节系统 | 18 | 18 | 100% |
+| 阶段 2：铰链关节 | 10 | 3 | 30% |
 | 阶段 3：弹簧与滑动关节 | 10 | 0 | 0% |
 | 阶段 4：性能优化 | 12 | 0 | 0% |
 | 阶段 5：数值稳定性 | 10 | 0 | 0% |
 | 阶段 6：集成与文档 | 12 | 0 | 0% |
-| **总计** | **72** | **0** | **0%** |
+| **总计** | **72** | **21** | **29%** |
 
 ### 预期性能提升
 

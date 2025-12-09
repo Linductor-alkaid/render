@@ -166,6 +166,13 @@ private:
     // Distance Joint 求解函数
     void SolveDistanceJointVelocity(JointConstraint& constraint, float dt);
     void SolveDistanceJointPosition(JointConstraint& constraint, float dt);
+    
+    // Hinge Joint 求解函数
+    void SolveHingeJointVelocity(JointConstraint& constraint, float dt);
+    void SolveHingeJointPosition(JointConstraint& constraint, float dt);
+    
+    // 辅助函数
+    static float CalculateHingeAngle(const JointConstraint& constraint);
 
     // 工具函数（保持在类内，便于访问私有类型）
     static Matrix3 ComputeWorldInvInertia(const RigidBodyComponent& body, const Quaternion& rotation);
