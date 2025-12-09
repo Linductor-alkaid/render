@@ -1,8 +1,8 @@
 # 物理引擎 API 参考手册
 
-> **版本**: v1.7.0  
-> **开发阶段**: 阶段 1-3 已完成（基础架构 + 碰撞检测 + 刚体动力学）  
-> **最后更新**: 2025-12-06
+> **版本**: v1.8.0  
+> **开发阶段**: 阶段 1-3 + 4.4 已完成（基础架构 + 碰撞检测 + 刚体动力学 + 物理-渲染同步）  
+> **最后更新**: 2025-12-09
 
 ## 目录
 
@@ -16,10 +16,15 @@
 - [物理世界](#物理世界)
   - [PhysicsWorld](#physicsworld)
   - [PhysicsConfig](#physicsconfig)
+  - [PhysicsTransformSync](#physicstransformsync)
 - [动力学系统](#动力学系统)
   - [ForceAccumulator](#forceaccumulator)
   - [SymplecticEulerIntegrator](#symplecticeulerintegrator)
   - [PhysicsUpdateSystem](#physicsupdatesystem)
+- [约束求解系统](#约束求解系统)
+  - [ConstraintSolver](#constraintsolver)
+  - [PhysicsJointComponent](#physicsjointcomponent)
+  - [关节类型](#关节类型)
 - [碰撞检测系统](#碰撞检测系统)
   - [CollisionDetectionSystem](#collisiondetectionsystem)
   - [BroadPhase](#broadphase)
@@ -44,7 +49,7 @@
 
 ## 概述
 
-RenderEngine 物理引擎是一个基于 ECS 架构的 3D 物理模拟系统。当前版本已完成基础架构、碰撞检测与刚体动力学，支持：
+RenderEngine 物理引擎是一个基于 ECS 架构的 3D 物理模拟系统。当前版本已完成基础架构、碰撞检测、刚体动力学、约束求解与物理-渲染同步，支持：
 
 - ✅ 基础物理组件（刚体、碰撞体、材质）
 - ✅ 多种碰撞形状（球体、盒体、胶囊体、网格）
@@ -55,8 +60,11 @@ RenderEngine 物理引擎是一个基于 ECS 架构的 3D 物理模拟系统。�
 - ✅ 碰撞层和掩码
 - ✅ 刚体动力学：力/扭矩/冲量、全局重力与力场、半隐式欧拉积分
 - ✅ 休眠与渲染插值（平滑视觉，避免螺旋死亡）
+- ✅ 约束求解器：接触约束（序列冲量法、摩擦、弹性碰撞）
+- ✅ 关节约束：固定关节、铰链关节（含角度限制和马达）、距离关节
+- ✅ 物理-渲染同步：自动同步动态物体变换、Kinematic 物体驱动、父子关系处理
 
-**注意**: 约束求解、接触解算等功能将在后续阶段实现。
+**注意**: 弹簧关节（Spring Joint）和滑动关节（Slider Joint）将在后续版本实现。
 
 ---
 
@@ -146,8 +154,11 @@ physicsSystem->SetFixedDeltaTime(config.fixedDeltaTime);
 // 在主循环中
 float deltaTime = 0.016f;  // 60 FPS
 
-// ECS 会按系统优先级顺序执行：碰撞检测 -> 刚体更新
-world->Update(deltaTime);
+// 推荐：使用 PhysicsWorld::Step()，自动处理同步和插值
+physicsWorld.Step(deltaTime);
+
+// 或者：直接使用 ECS 更新（需要手动处理同步）
+// world->Update(deltaTime);
 
 // 获取碰撞对
 const auto& collisionPairs = collisionSystem->GetCollisionPairs();
@@ -156,6 +167,12 @@ for (const auto& pair : collisionPairs) {
               << pair.entityB.index << std::endl;
 }
 ```
+
+**注意**: `PhysicsWorld::Step()` 会自动处理：
+- 渲染 → 物理同步（Kinematic/Static 物体）
+- 物理更新（碰撞检测、刚体动力学）
+- 物理 → 渲染同步（动态物体）
+- 插值变换（平滑渲染）
 
 ---
 
@@ -569,7 +586,13 @@ PhysicsWorld(ECS::World* ecsWorld, const PhysicsConfig& config = PhysicsConfig::
 **参数**:
 - `deltaTime`: 帧时间（秒）
 
-**注意**: 当前动力学更新由 `PhysicsUpdateSystem` 承担；`PhysicsWorld::Step` 主要作为包装入口，后续会接入约束与解算。
+**执行流程**:
+1. 渲染 → 物理同步（Kinematic/Static 物体）
+2. 物理更新（应用力、积分、碰撞检测、约束求解）
+3. 物理 → 渲染同步（动态物体）
+4. 插值变换（平滑渲染）
+
+**注意**: `PhysicsWorld::Step` 已集成 `PhysicsTransformSync`，自动处理物理与渲染之间的同步。
 
 ##### `void SetGravity(const Vector3& gravity)`
 设置重力。
@@ -592,6 +615,16 @@ physicsWorld.SetGravity(Vector3(0, -9.81f, 0));
 
 **返回值**: 物理配置的常量引用
 
+##### `void InterpolateTransforms(float alpha)`
+插值变换（平滑渲染）。
+
+在固定时间步长和渲染帧率之间进行插值，应该在物理更新后、渲染前调用。
+
+**参数**:
+- `alpha`: 插值因子 [0, 1]，0 表示上一帧，1 表示当前帧
+
+**注意**: 通常不需要手动调用，`Step()` 方法会自动处理插值。仅在需要自定义插值时使用。
+
 #### 使用示例
 
 ```cpp
@@ -609,6 +642,100 @@ PhysicsWorld physicsWorld(world.get(), config);
 float deltaTime = 0.016f;
 physicsWorld.Step(deltaTime);
 ```
+
+---
+
+### PhysicsTransformSync
+
+物理-渲染变换同步类，负责在物理模拟和渲染系统之间同步变换数据。
+
+#### 头文件
+```cpp
+#include "render/physics/physics_transform_sync.h"
+```
+
+#### 核心功能
+
+- **物理 → 渲染**: 将动态物体的物理位置/旋转同步到 `TransformComponent`
+- **渲染 → 物理**: 将 Kinematic/Static 物体的 `Transform` 同步到物理状态
+- **插值平滑**: 在固定时间步长和渲染帧率之间进行插值，提升视觉平滑度
+
+#### 父子关系处理
+
+- 物理仅影响根对象（无父实体的对象）
+- 子对象的变换由父对象通过 Transform 层级自动计算
+
+#### 构造函数
+
+```cpp
+PhysicsTransformSync()
+```
+
+#### 成员函数
+
+##### `void SyncPhysicsToTransform(ECS::World* world)`
+物理 → 渲染同步。
+
+将动态物体的物理位置和旋转同步到 `TransformComponent`。只处理根对象（无父实体的对象）。
+
+**参数**:
+- `world`: ECS 世界指针
+
+**注意**: 只处理 `BodyType::Dynamic` 的刚体。
+
+##### `void SyncTransformToPhysics(ECS::World* world, float deltaTime)`
+渲染 → 物理同步。
+
+将 Kinematic/Static 物体的 `Transform` 同步到物理状态。对于 Kinematic 物体，还会计算速度（基于位置变化）。
+
+**参数**:
+- `world`: ECS 世界指针
+- `deltaTime`: 时间步长（用于计算速度）
+
+**注意**: 只处理 `BodyType::Kinematic` 和 `BodyType::Static` 的刚体。
+
+##### `void InterpolateTransforms(ECS::World* world, float alpha)`
+插值变换（平滑渲染）。
+
+在固定时间步长和渲染帧率之间进行插值。使用上一帧和当前帧的物理状态进行线性/球面插值。
+
+**参数**:
+- `world`: ECS 世界指针
+- `alpha`: 插值因子 [0, 1]，0 表示上一帧，1 表示当前帧
+
+**注意**: 
+- 只处理 `BodyType::Dynamic` 的刚体
+- 位置使用线性插值（Lerp），旋转使用球面插值（Slerp）
+
+##### `void ClearCache()`
+清除缓存的变换状态。
+
+当实体被销毁时调用，清理相关缓存。
+
+#### 使用示例
+
+```cpp
+// 创建同步器
+PhysicsTransformSync sync;
+
+// 在主循环中
+float deltaTime = 0.016f;
+
+// 1. 渲染 → 物理同步（Kinematic/Static 物体）
+sync.SyncTransformToPhysics(world.get(), deltaTime);
+
+// 2. 物理更新（由 PhysicsUpdateSystem 处理）
+world->Update(deltaTime);
+
+// 3. 物理 → 渲染同步（动态物体）
+sync.SyncPhysicsToTransform(world.get());
+
+// 4. 插值变换（平滑渲染）
+float alpha = physicsSystem->GetInterpolationAlpha();
+sync.InterpolateTransforms(world.get(), alpha);
+```
+
+**注意**: 通常不需要直接使用 `PhysicsTransformSync`，`PhysicsWorld::Step()` 会自动处理所有同步和插值。
 
 ---
 
@@ -751,7 +878,7 @@ customConfig.solverIterations = 15;
 主要流程（固定时间步，最多 5 个子步）：
 1) `ApplyForces`：全局重力、力场、刚体累积力/扭矩，应用冲量增量  
 2) `IntegrateVelocity`、`IntegratePosition`：使用半隐式欧拉  
-3) `ResolveCollisions` / `SolveConstraints`：占位，后续接入碰撞解算与约束  
+3) `ResolveCollisions` / `SolveConstraints`：碰撞检测与约束求解（接触约束 + 关节约束）  
 4) `UpdateSleepingState`：外力/碰撞唤醒，岛屿传播，低动能休眠  
 5) `UpdateAABBs`：刷新包围盒  
 6) `InterpolateTransforms`：渲染插值，alpha=0 时保持上一帧，余量为 0 时直接使用最新解算结果
@@ -777,6 +904,260 @@ physicsSystem->SetFixedDeltaTime(1.0f / 60.0f);
 
 // 应用一次冲量（比如开局推球）
 physicsSystem->ApplyImpulse(ballEntity, Vector3(0, 0, 5.0f));
+```
+
+---
+
+## 约束求解系统
+
+### ConstraintSolver
+
+约束求解器，负责求解接触约束和关节约束。
+
+#### 头文件
+```cpp
+#include "render/physics/dynamics/constraint_solver.h"
+```
+
+#### 核心功能
+
+- **接触约束求解**: 使用序列冲量法（Sequential Impulse）求解碰撞约束
+- **关节约束求解**: 支持固定关节、铰链关节、距离关节
+- **Warm Starting**: 使用上一帧的累积冲量作为初始猜测，提升收敛速度
+- **位置修正**: 使用 Baumgarte 稳定化修正穿透
+
+#### 构造函数
+
+```cpp
+ConstraintSolver()
+explicit ConstraintSolver(ECS::World* world)
+```
+
+#### 成员函数
+
+##### `void Solve(float dt, const std::vector<CollisionPair>& pairs)`
+求解接触约束。
+
+**参数**:
+- `dt`: 固定时间步长
+- `pairs`: 碰撞对列表
+
+##### `void SolveWithJoints(float dt, const std::vector<CollisionPair>& pairs, const std::vector<ECS::EntityID>& jointEntities)`
+求解接触约束和关节约束。
+
+**参数**:
+- `dt`: 固定时间步长
+- `pairs`: 碰撞对列表
+- `jointEntities`: 关节实体列表
+
+##### `void SetSolverIterations(int iterations)`
+设置速度约束求解迭代次数。
+
+**参数**:
+- `iterations`: 迭代次数（默认 10）
+
+##### `void SetPositionIterations(int iterations)`
+设置位置约束求解迭代次数。
+
+**参数**:
+- `iterations`: 迭代次数（默认 4）
+
+##### `void Clear()`
+清理内部缓存。
+
+#### 使用示例
+
+```cpp
+// 创建约束求解器
+ConstraintSolver solver(world.get());
+solver.SetSolverIterations(10);
+solver.SetPositionIterations(4);
+
+// 在主循环中
+const auto& collisionPairs = collisionSystem->GetCollisionPairs();
+std::vector<ECS::EntityID> jointEntities = /* ... */;
+
+// 求解约束
+solver.SolveWithJoints(deltaTime, collisionPairs, jointEntities);
+```
+
+**注意**: 通常不需要直接使用 `ConstraintSolver`，`PhysicsUpdateSystem` 会自动调用。
+
+---
+
+### PhysicsJointComponent
+
+物理关节组件，用于连接两个刚体。
+
+#### 头文件
+```cpp
+#include "render/physics/physics_components.h"
+```
+
+#### 成员变量
+
+##### 基础属性
+
+| 类型 | 名称 | 说明 | 默认值 |
+|------|------|------|--------|
+| `JointComponent` | `base` | 基础关节组件 | - |
+| `std::variant<...>` | `data` | 关节类型专用数据 | `FixedJointData` |
+| `RuntimeData` | `runtime` | 运行时缓存数据 | - |
+
+##### 运行时数据
+
+| 类型 | 名称 | 说明 |
+|------|------|------|
+| `Vector3` | `rA`, `rB` | 锚点相对于质心的向量 |
+| `Vector3` | `worldAxis` | 世界空间轴（用于铰链关节） |
+| `Matrix3` | `invInertiaA`, `invInertiaB` | 世界空间逆惯性张量 |
+| `Vector3` | `accumulatedLinearImpulse` | 累积线性冲量（Warm Start） |
+| `Vector3` | `accumulatedAngularImpulse` | 累积角冲量（Warm Start） |
+| `float` | `accumulatedLimitImpulse` | 累积限制冲量 |
+| `float` | `accumulatedMotorImpulse` | 累积马达冲量 |
+
+#### 使用示例
+
+```cpp
+// 创建关节实体
+auto jointEntity = world->CreateEntity();
+auto& joint = world->AddComponent<PhysicsJointComponent>(jointEntity);
+
+// 设置基础属性
+joint.base.type = JointComponent::JointType::Fixed;
+joint.base.connectedBody = bodyBEntity;
+joint.base.localAnchorA = Vector3(0, 0, 0);
+joint.base.localAnchorB = Vector3(0, 0, 0);
+joint.base.breakForce = 1000.0f;
+joint.base.enableCollision = false;  // 连接的刚体不参与碰撞
+```
+
+---
+
+### 关节类型
+
+#### FixedJointData（固定关节）
+
+完全固定两个刚体的相对位置和旋转。
+
+**数据结构**:
+```cpp
+struct FixedJointData {
+    Vector3 relativePosition = Vector3::Zero();      // 相对位置
+    Quaternion relativeRotation = Quaternion::Identity();  // 相对旋转
+};
+```
+
+**使用场景**: 将两个物体完全固定在一起，如焊接。
+
+**示例**:
+```cpp
+auto& joint = world->AddComponent<PhysicsJointComponent>(jointEntity);
+joint.base.type = JointComponent::JointType::Fixed;
+joint.data = FixedJointData();
+```
+
+---
+
+#### HingeJointData（铰链关节）
+
+允许绕一个轴旋转的关节。
+
+**数据结构**:
+```cpp
+struct HingeJointData {
+    Vector3 localAxisA = Vector3::UnitZ();  // 物体 A 的局部轴
+    Vector3 localAxisB = Vector3::UnitZ();  // 物体 B 的局部轴
+    
+    // 角度限制
+    bool hasLimits = false;
+    float limitMin = -PI;
+    float limitMax = PI;
+    float currentAngle = 0.0f;
+    
+    // 马达
+    bool useMotor = false;
+    float motorSpeed = 0.0f;       // 目标角速度
+    float motorMaxForce = 100.0f;  // 最大马达力矩
+};
+```
+
+**使用场景**: 门、摆锤、机器人关节等。
+
+**示例**:
+```cpp
+auto& joint = world->AddComponent<PhysicsJointComponent>(jointEntity);
+joint.base.type = JointComponent::JointType::Hinge;
+HingeJointData hingeData;
+hingeData.localAxisA = Vector3::UnitZ();
+hingeData.hasLimits = true;
+hingeData.limitMin = -MathUtils::PI / 2.0f;
+hingeData.limitMax = MathUtils::PI / 2.0f;
+hingeData.useMotor = true;
+hingeData.motorSpeed = 2.0f;  // 2 rad/s
+hingeData.motorMaxForce = 50.0f;
+joint.data = hingeData;
+```
+
+---
+
+#### DistanceJointData（距离关节）
+
+保持两个锚点之间固定距离的关节。
+
+**数据结构**:
+```cpp
+struct DistanceJointData {
+    float restLength = 1.0f;  // 静止长度
+    bool hasLimits = false;
+    float minDistance = 0.0f;
+    float maxDistance = INFINITY;
+};
+```
+
+**使用场景**: 链条、绳索、摆锤等。
+
+**示例**:
+```cpp
+auto& joint = world->AddComponent<PhysicsJointComponent>(jointEntity);
+joint.base.type = JointComponent::JointType::Distance;
+DistanceJointData distanceData;
+distanceData.restLength = 2.0f;
+distanceData.hasLimits = true;
+distanceData.minDistance = 1.5f;
+distanceData.maxDistance = 2.5f;
+joint.data = distanceData;
+```
+
+---
+
+#### SpringJointData（弹簧关节）
+
+**状态**: ⚠️ **未实现**，将在后续版本添加。
+
+**数据结构**:
+```cpp
+struct SpringJointData {
+    float restLength = 1.0f;
+    float stiffness = 100.0f;  // 刚度系数 k
+    float damping = 10.0f;      // 阻尼系数 c
+};
+```
+
+---
+
+#### SliderJointData（滑动关节）
+
+**状态**: ⚠️ **未实现**，将在后续版本添加。
+
+**数据结构**:
+```cpp
+struct SliderJointData {
+    Vector3 localAxis = Vector3::UnitX();
+    bool hasLimits = false;
+    float minDistance = -INFINITY;
+    float maxDistance = INFINITY;
+};
 ```
 
 ---
@@ -1516,8 +1897,8 @@ int main() {
     // 10. 主循环
     float deltaTime = 0.016f;  // 60 FPS
     for (int i = 0; i < 100; ++i) {
-        // 更新物理系统
-        world->Update(deltaTime);
+        // 更新物理系统（自动处理同步和插值）
+        physicsWorld.Step(deltaTime);
         
         // 获取碰撞对
         const auto& pairs = collisionSystem->GetCollisionPairs();
@@ -1568,6 +1949,9 @@ int main() {
 - `test_force_and_impulse_system.cpp` - 力与冲量测试（29/29 通过）
 - `test_physics_update_system_interpolation.cpp` - 物理更新系统测试（12/12 通过）
 - `test_physics_sleeping.cpp` - 休眠系统测试（6/6 通过）
+- `test_physics_transform_sync.cpp` - 物理-渲染同步测试（已实现）
+- `test_constraint_solver.cpp` - 约束求解器测试（已实现）
+- `test_joint_constraints.cpp` - 关节约束测试（已实现）
 
 运行测试：
 ```bash
@@ -1582,7 +1966,14 @@ int main() {
 
 根据开发计划，后续阶段将实现：
 
-- **阶段 4**: 约束求解（接触约束、关节约束）
+- **阶段 4.1-4.2**: 约束求解器框架与接触约束求解 - ✅ **已完成**
+- **阶段 4.3**: 关节约束 - ✅ **部分完成**
+  - ✅ 固定关节（Fixed Joint）
+  - ✅ 铰链关节（Hinge Joint，含角度限制和马达）
+  - ✅ 距离关节（Distance Joint）
+  - ⚠️ 弹簧关节（Spring Joint）- **未实现**
+  - ⚠️ 滑动关节（Slider Joint）- **未实现**
+- **阶段 4.4**: 物理-渲染同步 - ✅ **已完成**
 - **阶段 5**: 物理世界管理（查询系统、性能优化）
 - **阶段 6-9**: 性能优化、调试可视化、测试与文档
 
@@ -1596,5 +1987,5 @@ int main() {
 
 ---
 
-**最后更新**: 2025-12-06  
-**文档版本**: v1.7.0
+**最后更新**: 2025-12-09   
+**文档版本**: v1.8.0
