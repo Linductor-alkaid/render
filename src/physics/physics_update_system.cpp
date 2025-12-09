@@ -38,7 +38,7 @@ PhysicsUpdateSystem::PhysicsUpdateSystem() {
     m_fixedDeltaTime = 1.0f / 60.0f;
     m_accumulator = 0.0f;
     m_physicsTime = 0.0f;
-    m_constraintSolver.SetWorld(m_world);
+    // 注意：m_world 在 OnCreate 中设置，这里不设置
 }
 
 void PhysicsUpdateSystem::Update(float deltaTime) {
@@ -66,17 +66,7 @@ void PhysicsUpdateSystem::Update(float deltaTime) {
     // 缓存物理解算后的真实状态（供下帧恢复）
     CacheSimulatedTransforms();
     
-    // 渲染插值，提升视觉平滑度
-    float alpha = 0.0f;
-    if (m_fixedDeltaTime > 0.0f) {
-        // 当时间余量耗尽时直接使用最新物理解算结果，避免回退到上一帧
-        if (m_accumulator <= 1e-6f) {
-            alpha = 1.0f;
-        } else {
-            alpha = std::clamp(m_accumulator / m_fixedDeltaTime, 0.0f, 1.0f);
-        }
-    }
-    InterpolateTransforms(alpha);
+    // 注意：插值现在由 PhysicsWorld 统一处理，通过 PhysicsTransformSync
 }
 
 void PhysicsUpdateSystem::FixedUpdate(float dt) {
@@ -370,39 +360,16 @@ void PhysicsUpdateSystem::CacheSimulatedTransforms() {
     m_simulatedTransforms.swap(newCache);
 }
 
-void PhysicsUpdateSystem::InterpolateTransforms(float alpha) {
-    if (!m_world) {
-        return;
-    }
-    
-    float t = MathUtils::Clamp(alpha, 0.0f, 1.0f);
-    
-    auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
-    for (ECS::EntityID entity : entities) {
-        if (!m_world->HasComponent<ECS::TransformComponent>(entity) ||
-            !m_world->HasComponent<RigidBodyComponent>(entity)) {
-            continue;
-        }
-        
-        try {
-            auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
-            auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
-            
-            auto it = m_simulatedTransforms.find(entity);
-            const Vector3 currentPos = (it != m_simulatedTransforms.end())
-                ? it->second.position : transform.GetPosition();
-            const Quaternion currentRot = (it != m_simulatedTransforms.end())
-                ? it->second.rotation : transform.GetRotation();
-            
-            Vector3 interpolatedPos = MathUtils::Lerp(body.previousPosition, currentPos, t);
-            Quaternion interpolatedRot = MathUtils::Slerp(body.previousRotation, currentRot, t);
-            
-            transform.SetPosition(interpolatedPos);
-            transform.SetRotation(interpolatedRot);
-        } catch (...) {
-            // 忽略组件访问错误
+float PhysicsUpdateSystem::GetInterpolationAlpha() const {
+    if (m_fixedDeltaTime > 0.0f) {
+        // 当时间余量耗尽时直接使用最新物理解算结果，避免回退到上一帧
+        if (m_accumulator <= 1e-6f) {
+            return 1.0f;
+        } else {
+            return std::clamp(m_accumulator / m_fixedDeltaTime, 0.0f, 1.0f);
         }
     }
+    return 1.0f;
 }
 
 void PhysicsUpdateSystem::ResolveCollisions(float dt) {
@@ -468,9 +435,12 @@ void PhysicsUpdateSystem::SolveConstraints(float dt) {
 
     const auto& collisionPairs = collisionSystem->GetCollisionPairs();
     
-    m_constraintSolver.SetWorld(m_world);
-    m_constraintSolver.SetSolverIterations(m_solverIterations);
-    m_constraintSolver.SetPositionIterations(m_positionIterations);
+    // 确保 world 已设置（在 OnCreate 中设置）
+    if (m_world) {
+        m_constraintSolver.SetWorld(m_world);
+        m_constraintSolver.SetSolverIterations(m_solverIterations);
+        m_constraintSolver.SetPositionIterations(m_positionIterations);
+    }
     
     // 收集所有拥有关节组件的实体
     std::vector<ECS::EntityID> jointEntities;

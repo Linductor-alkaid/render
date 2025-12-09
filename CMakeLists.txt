@@ -246,6 +246,7 @@ set(RENDER_SOURCES
     # Physics
     src/physics/physics_world.cpp
     src/physics/physics_update_system.cpp
+    src/physics/physics_transform_sync.cpp
     src/physics/physics_systems.cpp
     src/physics/dynamics/symplectic_euler_integrator.cpp
     src/physics/dynamics/constraint_solver.cpp

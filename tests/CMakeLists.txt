@@ -39,6 +39,7 @@ add_executable(test_physics_update_system_interpolation test_physics_update_syst
 add_executable(test_physics_sleeping test_physics_sleeping.cpp)
 add_executable(test_constraint_solver test_constraint_solver.cpp)
 add_executable(test_joint_constraints test_joint_constraints.cpp)
+add_executable(test_physics_transform_sync test_physics_transform_sync.cpp)
 
 target_link_libraries(mesh_tangent_test PRIVATE RenderEngine)
 target_link_libraries(model_loader_regression_test PRIVATE RenderEngine)
@@ -65,6 +66,7 @@ target_link_libraries(test_physics_update_system_interpolation PRIVATE RenderEng
 target_link_libraries(test_physics_sleeping PRIVATE RenderEngine)
 target_link_libraries(test_constraint_solver PRIVATE RenderEngine)
 target_link_libraries(test_joint_constraints PRIVATE RenderEngine)
+target_link_libraries(test_physics_transform_sync PRIVATE RenderEngine)
 
 target_compile_definitions(mesh_tangent_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(model_loader_regression_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
@@ -91,6 +93,7 @@ target_compile_definitions(test_physics_update_system_interpolation PRIVATE PROJ
 target_compile_definitions(test_physics_sleeping PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(test_constraint_solver PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(test_joint_constraints PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+target_compile_definitions(test_physics_transform_sync PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 
 if(MSVC)
     target_compile_options(mesh_tangent_test PRIVATE /utf-8)
@@ -118,6 +121,7 @@ if(MSVC)
     target_compile_options(test_physics_sleeping PRIVATE /utf-8)
     target_compile_options(test_constraint_solver PRIVATE /utf-8)
     target_compile_options(test_joint_constraints PRIVATE /utf-8)
+    target_compile_options(test_physics_transform_sync PRIVATE /utf-8)
 endif()
 
 add_test(NAME mesh_tangent_test COMMAND mesh_tangent_test)
@@ -145,3 +149,4 @@ add_test(NAME test_physics_update_system_interpolation COMMAND test_physics_upda
 add_test(NAME test_physics_sleeping COMMAND test_physics_sleeping)
 add_test(NAME test_constraint_solver COMMAND test_constraint_solver)
 add_test(NAME test_joint_constraints COMMAND test_joint_constraints)
+add_test(NAME test_physics_transform_sync COMMAND test_physics_transform_sync)

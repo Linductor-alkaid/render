@@ -20,24 +20,60 @@
  */
 #include "render/physics/physics_world.h"
 #include "render/physics/physics_systems.h"
+#include "render/physics/physics_transform_sync.h"
 #include "render/ecs/world.h"
+#include <memory>
 
 namespace Render {
 namespace Physics {
+
+PhysicsWorld::PhysicsWorld(ECS::World* ecsWorld, const PhysicsConfig& config)
+    : m_ecsWorld(ecsWorld), m_config(config) {
+    // 创建物理-渲染同步器
+    m_transformSync = std::make_unique<PhysicsTransformSync>();
+}
 
 void PhysicsWorld::Step(float deltaTime) {
     if (!m_ecsWorld) {
         return;
     }
 
-    auto* physicsSystem = m_ecsWorld->GetSystem<PhysicsUpdateSystem>();
+    // 1. 渲染 → 物理同步（Kinematic/Static 物体）
+    if (m_transformSync) {
+        m_transformSync->SyncTransformToPhysics(m_ecsWorld, deltaTime);
+    }
 
+    // 2. 物理更新
+    auto* physicsSystem = m_ecsWorld->GetSystem<PhysicsUpdateSystem>();
     if (physicsSystem) {
         physicsSystem->SetGravity(m_config.gravity);
         physicsSystem->SetFixedDeltaTime(m_config.fixedDeltaTime);
         physicsSystem->SetSolverIterations(m_config.solverIterations);
         physicsSystem->SetPositionIterations(m_config.positionIterations);
         physicsSystem->Update(deltaTime);
+    }
+
+    // 3. 物理 → 渲染同步（动态物体）
+    if (m_transformSync) {
+        m_transformSync->SyncPhysicsToTransform(m_ecsWorld);
+    }
+
+    // 4. 插值变换（平滑渲染）
+    if (physicsSystem && m_transformSync) {
+        float alpha = physicsSystem->GetInterpolationAlpha();
+        m_transformSync->InterpolateTransforms(m_ecsWorld, alpha);
+    }
+}
+
+/**
+ * @brief 获取插值因子并执行插值
+ * 
+ * 这个方法应该在物理更新后、渲染前调用
+ * 用于在固定时间步长和渲染帧率之间进行平滑插值
+ */
+void PhysicsWorld::InterpolateTransforms(float alpha) {
+    if (m_transformSync) {
+        m_transformSync->InterpolateTransforms(m_ecsWorld, alpha);
     }
 }
 

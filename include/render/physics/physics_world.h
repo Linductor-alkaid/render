@@ -22,6 +22,7 @@
 
 #include "physics_config.h"
 #include "physics_components.h"
+#include "physics_transform_sync.h"
 
 namespace Render {
 
@@ -48,8 +49,7 @@ public:
      * @param ecsWorld ECS 世界指针
      * @param config 物理配置
      */
-    PhysicsWorld(ECS::World* ecsWorld, const PhysicsConfig& config = PhysicsConfig::Default())
-        : m_ecsWorld(ecsWorld), m_config(config) {}
+    PhysicsWorld(ECS::World* ecsWorld, const PhysicsConfig& config = PhysicsConfig::Default());
     
     /**
      * @brief 析构函数
@@ -90,11 +90,22 @@ public:
         m_config = config;
     }
     
+    /**
+     * @brief 插值变换（平滑渲染）
+     * 
+     * 在固定时间步长和渲染帧率之间进行插值
+     * 应该在物理更新后、渲染前调用
+     * 
+     * @param alpha 插值因子 [0, 1]
+     */
+    void InterpolateTransforms(float alpha);
+    
 private:
     ECS::World* m_ecsWorld;
     PhysicsConfig m_config;
     
-    // 更多成员变量将在后续阶段添加
+    // 物理-渲染同步器
+    std::unique_ptr<PhysicsTransformSync> m_transformSync;
 };
 
 } // namespace Physics

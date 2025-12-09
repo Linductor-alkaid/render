@@ -226,6 +226,14 @@ public:
      */
     void ApplyAngularImpulse(ECS::EntityID entity, const Vector3& angularImpulse);
     
+    /**
+     * @brief 获取当前插值因子
+     * 
+     * 用于在固定时间步长和渲染帧率之间进行插值
+     * @return 插值因子 [0, 1]，0 表示上一帧，1 表示当前帧
+     */
+    float GetInterpolationAlpha() const;
+    
 private:
     /**
      * @brief 用于在渲染插值前后保存/恢复模拟结果
@@ -281,12 +289,6 @@ private:
      * @brief 缓存当前物理解算结果，供下一帧恢复
      */
     void CacheSimulatedTransforms();
-    
-    /**
-     * @brief 进行渲染插值，提升视觉平滑
-     * @param alpha 插值因子 [0,1]
-     */
-    void InterpolateTransforms(float alpha);
     
     /**
      * @brief 处理碰撞结果的占位（后续实现）
