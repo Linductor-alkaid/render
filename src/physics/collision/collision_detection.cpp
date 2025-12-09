@@ -74,7 +74,7 @@ bool CollisionDetector::SphereVsBox(
     const Quaternion& boxRotation,
     ContactManifold& manifold
 ) {
-    // 计算球心在盒体局部空间中的最近点
+    // 计算球心在盒子局部空间中的最近点
     Vector3 closestPoint = ClosestPointOnOBB(sphereCenter, boxCenter, boxHalfExtents, boxRotation);
     
     // 检测距离
@@ -88,44 +88,58 @@ bool CollisionDetector::SphereVsBox(
     
     float dist = std::sqrt(distSq);
     
-    // 球心在盒体内部的情况
+    // ========== 球心在盒子内部的特殊情况 ==========
     if (dist < MathUtils::EPSILON) {
-        // 找到最近的面
+        // 将球心转换到盒子局部空间
         Matrix3 rotMatrix = boxRotation.toRotationMatrix();
         Vector3 localCenter = rotMatrix.transpose() * (sphereCenter - boxCenter);
         
-        // 找到最近的轴
-        Vector3 localExtents = boxHalfExtents - localCenter.cwiseAbs();
+        // 计算球心到各个面的距离
+        Vector3 distToFaces = boxHalfExtents - localCenter.cwiseAbs();
+        
+        // 找到最近的面（距离最小的轴）
         int minAxis = 0;
-        float minDist = localExtents.x();
+        float minDist = distToFaces.x();
         
-        if (localExtents.y() < minDist) {
+        if (distToFaces.y() < minDist) {
             minAxis = 1;
-            minDist = localExtents.y();
+            minDist = distToFaces.y();
         }
-        if (localExtents.z() < minDist) {
+        if (distToFaces.z() < minDist) {
             minAxis = 2;
-            minDist = localExtents.z();
+            minDist = distToFaces.z();
         }
         
+        // 构造局部空间法线（指向最近的面的外侧）
         Vector3 localNormal = Vector3::Zero();
         localNormal[minAxis] = (localCenter[minAxis] > 0) ? 1.0f : -1.0f;
         
+        // 转换到世界空间（法线从盒子指向球）
         Vector3 normal = rotMatrix * localNormal;
         manifold.SetNormal(normal);
+        
+        // 穿透深度 = 球半径 + 到最近面的距离
         manifold.penetration = sphereRadius + minDist;
-        manifold.AddContact(sphereCenter - normal * sphereRadius, manifold.penetration);
+        
+        // 接触点在球表面上，沿法线方向
+        Vector3 contactPoint = sphereCenter - normal * sphereRadius;
+        manifold.AddContact(contactPoint, manifold.penetration);
+        
         return true;
     }
     
-    // 正常碰撞情况
+    // ========== 正常碰撞情况 ==========
+    
+    // 计算从盒子指向球心的法线
     Vector3 normal = delta / dist;
     manifold.SetNormal(normal);
+    
+    // 穿透深度
     manifold.penetration = sphereRadius - dist;
     
-    // 接触点应该在球体表面上，而不是盒体上
-    // 使用球心到盒体最近点的方向，在球体表面上找到接触点
-    Vector3 contactPoint = sphereCenter - normal * sphereRadius;
+    // 接触点：在盒子表面和球表面之间取中点
+    // 或者更准确地说，在盒子的 closestPoint 位置
+    Vector3 contactPoint = closestPoint;
     manifold.AddContact(contactPoint, manifold.penetration);
     
     return true;
