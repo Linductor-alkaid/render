@@ -80,6 +80,28 @@ struct PhysicsConfig {
     /// 防止高速物体穿透，但性能消耗较大
     bool enableCCD = false;
     
+    // ==================== CCD 配置 ====================
+    
+    /// CCD 速度阈值（m/s）
+    /// 当物体速度超过此值时自动启用 CCD
+    float ccdVelocityThreshold = 10.0f;
+    
+    /// CCD 位移阈值（相对于形状尺寸的比例）
+    /// 位移 = 速度 * dt，如果位移 > 形状尺寸 * 此值，启用 CCD
+    float ccdDisplacementThreshold = 0.5f;
+    
+    /// 最大 CCD 对象数（性能限制）
+    /// 每帧最多对多少个物体进行 CCD 检测
+    int maxCCDObjects = 50;
+    
+    /// 最大子步数（防止性能爆炸）
+    /// CCD 检测可能产生子步长，限制最大子步数
+    int maxCCDSubSteps = 5;
+    
+    /// 是否启用 Broad Phase CCD
+    /// 使用 AABB 扫描加速 CCD 检测
+    bool enableBroadPhaseCCD = true;
+    
     /// 是否启用休眠系统
     /// 静止物体自动休眠以节省 CPU
     bool enableSleeping = true;

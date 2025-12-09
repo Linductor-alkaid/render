@@ -446,14 +446,17 @@ bool CollisionDetector::CapsuleVsBox(
     Vector3 segmentB = capsuleCenter + capsuleAxis * halfHeight;
     
     // 找到线段到盒体的最近点对
-    // 方法：采样线段上的多个点，找到距离盒体最近的点
-    const int samples = 16;  // 增加采样点以提高精度
+    // 方法：使用迭代优化找到最近点，而不是简单采样
+    // 首先使用采样找到初始估计
+    const int initialSamples = 32;  // 增加初始采样点以提高精度
     float minDistSq = std::numeric_limits<float>::max();
     Vector3 closestSegmentPoint;
     Vector3 closestBoxPoint;
+    float bestT = 0.5f;
     
-    for (int i = 0; i <= samples; ++i) {
-        float t = static_cast<float>(i) / static_cast<float>(samples);
+    // 初始采样
+    for (int i = 0; i <= initialSamples; ++i) {
+        float t = static_cast<float>(i) / static_cast<float>(initialSamples);
         Vector3 samplePoint = segmentA + (segmentB - segmentA) * t;
         
         // 找到盒体上最近的点
@@ -464,7 +467,30 @@ bool CollisionDetector::CapsuleVsBox(
             minDistSq = distSq;
             closestSegmentPoint = samplePoint;
             closestBoxPoint = boxPoint;
+            bestT = t;
         }
+    }
+    
+    // 使用梯度下降优化最近点（简单迭代）
+    const int iterations = 8;
+    float currentT = bestT;
+    for (int iter = 0; iter < iterations; ++iter) {
+        Vector3 samplePoint = segmentA + (segmentB - segmentA) * currentT;
+        Vector3 boxPoint = ClosestPointOnOBB(samplePoint, boxCenter, boxHalfExtents, boxRotation);
+        Vector3 delta = samplePoint - boxPoint;
+        float distSq = delta.squaredNorm();
+        
+        if (distSq < minDistSq) {
+            minDistSq = distSq;
+            closestSegmentPoint = samplePoint;
+            closestBoxPoint = boxPoint;
+        }
+        
+        // 计算梯度方向（简化：沿线段方向移动）
+        Vector3 segmentDir = (segmentB - segmentA).normalized();
+        Vector3 gradient = delta.normalized();
+        float step = gradient.dot(segmentDir) * 0.1f;
+        currentT = MathUtils::Clamp(currentT - step, 0.0f, 1.0f);
     }
     
     // 额外检测：线段端点
@@ -653,11 +679,19 @@ bool CollisionDispatcher::Detect(
     }
     
     // Capsule 分发
-    if (typeA == ShapeType::Capsule && typeB == ShapeType::Capsule) {
+    if (typeA == ShapeType::Capsule) {
         return DispatchCapsule(
             static_cast<const CapsuleShape*>(shapeA), posA, rotA, scaleA,
             shapeB, posB, rotB, scaleB,
             manifold, false
+        );
+    } else if (typeB == ShapeType::Capsule) {
+        // 当 typeB 是 Capsule 时，调用 DispatchCapsule(shapeB, shapeA, swapped=true)
+        // DispatchCapsule 内部已经正确处理了法线方向（从A指向B）
+        return DispatchCapsule(
+            static_cast<const CapsuleShape*>(shapeB), posB, rotB, scaleB,
+            shapeA, posA, rotA, scaleA,
+            manifold, true
         );
     }
     
@@ -779,6 +813,44 @@ bool CollisionDispatcher::DispatchCapsule(
     float capsuleHeight = capsule->GetHeight() * scale.y();
     
     switch (other->GetType()) {
+        case ShapeType::Sphere: {
+            const SphereShape* sphere = static_cast<const SphereShape*>(other);
+            float sphereRadius = sphere->GetRadius() * otherScale.maxCoeff();
+            // SphereVsCapsule 返回的法线是从胶囊指向球
+            bool result = CollisionDetector::SphereVsCapsule(
+                otherPos, sphereRadius,
+                pos, capsuleRadius, capsuleHeight, rot,
+                manifold
+            );
+            if (result) {
+                // 当 swapped=false 时，需要反转为从A（胶囊）指向B（球）
+                // 当 swapped=true 时，法线已经是从A指向B，不需要翻转
+                if (!swapped) {
+                    manifold.SetNormal(-manifold.normal);
+                }
+            }
+            return result;
+        }
+        
+        case ShapeType::Box: {
+            const BoxShape* box = static_cast<const BoxShape*>(other);
+            Vector3 boxHalfExtents = box->GetHalfExtents().cwiseProduct(otherScale);
+            // CapsuleVsBox 返回的法线是从盒子指向胶囊
+            bool result = CollisionDetector::CapsuleVsBox(
+                pos, capsuleRadius, capsuleHeight, rot,
+                otherPos, boxHalfExtents, otherRot,
+                manifold
+            );
+            if (result) {
+                // 当 swapped=false 时，需要反转为从A（胶囊）指向B（盒子）
+                // 当 swapped=true 时，法线已经是从A指向B，不需要翻转
+                if (!swapped) {
+                    manifold.SetNormal(-manifold.normal);
+                }
+            }
+            return result;
+        }
+        
         case ShapeType::Capsule: {
             const CapsuleShape* otherCapsule = static_cast<const CapsuleShape*>(other);
             float otherRadius = otherCapsule->GetRadius() * otherScale.maxCoeff();

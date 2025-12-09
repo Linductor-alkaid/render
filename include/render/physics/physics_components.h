@@ -215,6 +215,30 @@ struct RigidBodyComponent {
     /// 上一帧的旋转
     Quaternion previousRotation{1.0f, 0.0f, 0.0f, 0.0f}; // w, x, y, z
     
+    // ==================== 连续碰撞检测（CCD）====================
+    
+    /// 是否启用连续碰撞检测
+    /// true: 强制启用 CCD（无论速度）
+    /// false: 根据速度阈值自动判断
+    bool useCCD = false;
+    
+    /// CCD 速度阈值（m/s）
+    /// 当 useCCD=false 时，速度超过此值自动启用 CCD
+    float ccdVelocityThreshold = 10.0f;
+    
+    /// CCD 位移阈值（相对于形状尺寸的比例）
+    /// 位移 = 速度 * dt，如果位移 > 形状尺寸 * 此值，启用 CCD
+    float ccdDisplacementThreshold = 0.5f;
+    
+    /// CCD 碰撞信息（如果发生 CCD 碰撞）
+    struct CCDCollisionInfo {
+        bool occurred = false;
+        float toi = 0.0f;  // Time of Impact [0, 1]
+        Vector3 collisionPoint{0.0f, 0.0f, 0.0f};
+        Vector3 collisionNormal{0.0f, 0.0f, 0.0f};
+        ECS::EntityID otherEntity = ECS::EntityID::Invalid();
+    } ccdCollision;
+    
     // ==================== 构造函数 ====================
     
     /**

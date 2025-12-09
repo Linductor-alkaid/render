@@ -314,9 +314,20 @@ void ConstraintSolver::PrepareConstraints(float dt, const std::vector<CollisionP
             Vector3 vB = bodyB.linearVelocity + bodyB.angularVelocity.cross(point.rB);
             float relativeNormalVel = (vB - vA).dot(point.normal);
             
+            // 仅在分离速度足够大且存在恢复系数时应用弹性恢复
+            // 弹性碰撞公式：v_post = -e * v_pre
+            // 其中v_pre是碰撞前的相对法向速度（负数表示接近）
+            // v_post是碰撞后的相对法向速度（正数表示分离）
             if (point.restitution > MathUtils::EPSILON && relativeNormalVel < -kRestitutionVelocityThreshold) {
-                // 仅在存在恢复系数时计算反弹：目标速度 -(1+e)*vn
-                point.restitutionBias = -(1.0f + point.restitution) * relativeNormalVel;
+                // 计算碰撞后的目标相对法向速度：v_post = -e * v_pre
+                // relativeNormalVel是负数（接近），所以v_post是正数（分离）
+                float targetPostVel = -point.restitution * relativeNormalVel;
+                
+                // 限制目标速度，防止异常大的反弹
+                targetPostVel = std::min(targetPostVel, kMaxVelocity * 0.5f);
+                
+                // restitutionBias存储目标相对速度
+                point.restitutionBias = targetPostVel;
             } else {
                 point.restitutionBias = 0.0f;
             }
@@ -404,11 +415,30 @@ void ConstraintSolver::SolveVelocityConstraints() {
 
                 Vector3 relativeVel = (vB + wB.cross(point.rB)) - (vA + wA.cross(point.rA));
 
-                // 法向冲量：使用预计算的 restitutionBias 而不是动态计算
+                // 法向冲量：处理位置修正和弹性恢复
                 float normalRelVel = relativeVel.dot(point.normal);
-                // 约束方程: C = vn + bias - v_target, 其中 v_target = restitutionBias
-                // 使用 point.bias（Baumgarte位置修正）减去 point.restitutionBias（弹性恢复目标速度）
-                float lambdaN = -(normalRelVel + point.bias - point.restitutionBias) * point.normalMass;
+                
+                // 计算约束偏差
+                // 标准约束：C_dot = vn + bias = 0
+                // 对于弹性碰撞，我们希望达到目标相对速度
+                float constraintError = normalRelVel + point.bias;
+                
+                // 如果有弹性恢复，调整约束误差以达到目标速度
+                if (point.restitutionBias > MathUtils::EPSILON) {
+                    // restitutionBias是目标相对法向速度（正数，分离方向）
+                    // 如果当前速度还未达到目标，需要加速
+                    // 如果已经超过目标，不应该再加速（防止能量增加）
+                    if (normalRelVel < point.restitutionBias) {
+                        // 需要加速到目标速度
+                        constraintError = normalRelVel - point.restitutionBias + point.bias;
+                    } else {
+                        // 已经达到或超过目标速度，只使用位置修正（防止能量增加）
+                        constraintError = normalRelVel + point.bias;
+                    }
+                }
+                
+                // 约束方程: lambda = -C_dot * mass
+                float lambdaN = -constraintError * point.normalMass;
 
                 // 冲量钳位，防止数值爆炸
                 float maxImpulseA = ComputeMaxImpulse(*bodyA, 1.0f / 60.0f);  // 假设60fps
@@ -427,6 +457,10 @@ void ConstraintSolver::SolveVelocityConstraints() {
                 bodyB->linearVelocity += impulseN * bodyB->inverseMass;
                 Vector3 torqueNB = point.rB.cross(impulseN);
                 bodyB->angularVelocity += constraint.invInertiaB * torqueNB;
+                
+                // 应用速度限制，防止数值爆炸
+                CheckAndClampVelocity(bodyA);
+                CheckAndClampVelocity(bodyB);
 
                 // 更新相对速度用于摩擦
                 vA = bodyA->linearVelocity;
