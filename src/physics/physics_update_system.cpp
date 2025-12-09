@@ -21,6 +21,8 @@
 #include "render/physics/physics_systems.h"
 #include "render/physics/physics_utils.h"
 #include "render/physics/dynamics/force_accumulator.h"
+#include "render/physics/collision/ccd_detector.h"
+#include "render/physics/collision/collision_shapes.h"
 #include "render/math_utils.h"
 #include "render/ecs/world.h"
 #include "render/ecs/components.h"
@@ -77,19 +79,28 @@ void PhysicsUpdateSystem::FixedUpdate(float dt) {
     // 2. 积分速度
     IntegrateVelocity(dt);
     
-    // 3. 积分位置
-    IntegratePosition(dt);
+    // 3. 检测需要 CCD 的物体
+    std::vector<ECS::EntityID> ccdCandidates = DetectCCDCandidates(dt);
     
-    // 4. 碰撞结果处理
+    // 4. 根据配置决定使用 CCD 还是标准积分
+    if (!ccdCandidates.empty() && m_config.enableCCD) {
+        // 使用 CCD 路径积分
+        IntegrateWithCCD(dt, ccdCandidates);
+    } else {
+        // 标准积分（DCD）
+        IntegratePosition(dt);
+    }
+    
+    // 5. 碰撞结果处理
     ResolveCollisions(dt);
     
-    // 5. 约束求解
+    // 6. 约束求解
     SolveConstraints(dt);
     
-    // 6. 休眠检测
+    // 7. 休眠检测
     UpdateSleepingState(dt);
     
-    // 7. 更新 AABB
+    // 8. 更新 AABB
     UpdateAABBs();
     
     // 注意：碰撞检测和约束求解在 CollisionDetectionSystem 中处理
@@ -858,6 +869,269 @@ void PhysicsUpdateSystem::ApplyInterpolation() {
         } catch (...) {
             // 忽略组件访问错误
         }
+    }
+}
+
+// ============================================================================
+// CCD 集成方法
+// ============================================================================
+
+std::vector<ECS::EntityID> PhysicsUpdateSystem::DetectCCDCandidates(float dt) {
+    std::vector<ECS::EntityID> candidates;
+    
+    if (!m_world) {
+        return candidates;
+    }
+    
+    auto entities = m_world->Query<ECS::TransformComponent, RigidBodyComponent, ColliderComponent>();
+    
+    int count = 0;
+    for (ECS::EntityID entity : entities) {
+        if (count >= m_config.maxCCDObjects) {
+            break;  // 达到最大 CCD 对象数限制
+        }
+        
+        if (!m_world->HasComponent<RigidBodyComponent>(entity) ||
+            !m_world->HasComponent<ColliderComponent>(entity)) {
+            continue;
+        }
+        
+        try {
+            auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+            auto& collider = m_world->GetComponent<ColliderComponent>(entity);
+            
+            // 使用 CCDCandidateDetector 判断是否需要 CCD
+            if (CCDCandidateDetector::ShouldUseCCD(
+                body, collider, dt,
+                m_config.ccdVelocityThreshold,
+                m_config.ccdDisplacementThreshold
+            )) {
+                candidates.push_back(entity);
+                count++;
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
+    
+    return candidates;
+}
+
+void PhysicsUpdateSystem::IntegrateWithCCD(float dt, const std::vector<ECS::EntityID>& candidates) {
+    if (!m_world) {
+        return;
+    }
+    
+    // 创建形状缓存（避免重复创建）
+    std::unordered_map<ECS::EntityID, std::unique_ptr<CollisionShape>, ECS::EntityID::Hash> shapeCache;
+    
+    // 对所有 CCD 候选物体进行检测
+    for (ECS::EntityID candidateEntity : candidates) {
+        if (!m_world->HasComponent<RigidBodyComponent>(candidateEntity) ||
+            !m_world->HasComponent<ColliderComponent>(candidateEntity) ||
+            !m_world->HasComponent<ECS::TransformComponent>(candidateEntity)) {
+            continue;
+        }
+        
+        try {
+            auto& body = m_world->GetComponent<RigidBodyComponent>(candidateEntity);
+            auto& collider = m_world->GetComponent<ColliderComponent>(candidateEntity);
+            auto& transform = m_world->GetComponent<ECS::TransformComponent>(candidateEntity);
+            
+            // 保存上一帧位置（用于 CCD）
+            body.previousPosition = transform.GetPosition();
+            body.previousRotation = transform.GetRotation();
+            
+            // 创建候选物体的形状
+            std::unique_ptr<CollisionShape> candidateShape = CreateShapeFromCollider(collider);
+            if (!candidateShape) {
+                // 不支持该形状类型，使用标准积分
+                IntegratePositionToTime(candidateEntity, dt);
+                continue;
+            }
+            
+            // 获取候选物体的初始状态
+            Vector3 posA0 = body.previousPosition;
+            Vector3 velA = body.linearVelocity;
+            Quaternion rotA0 = body.previousRotation;
+            Vector3 angularVelA = body.angularVelocity;
+            
+            // 检测与所有其他物体的 CCD 碰撞
+            struct CollisionInfo {
+                CCDResult result;
+                ECS::EntityID otherEntity;
+            };
+            std::vector<CollisionInfo> collisions;
+            auto allEntities = m_world->Query<ECS::TransformComponent, RigidBodyComponent, ColliderComponent>();
+            
+            for (ECS::EntityID otherEntity : allEntities) {
+                if (otherEntity == candidateEntity) {
+                    continue;
+                }
+                
+                if (!m_world->HasComponent<RigidBodyComponent>(otherEntity) ||
+                    !m_world->HasComponent<ColliderComponent>(otherEntity) ||
+                    !m_world->HasComponent<ECS::TransformComponent>(otherEntity)) {
+                    continue;
+                }
+                
+                try {
+                    auto& otherBody = m_world->GetComponent<RigidBodyComponent>(otherEntity);
+                    auto& otherCollider = m_world->GetComponent<ColliderComponent>(otherEntity);
+                    auto& otherTransform = m_world->GetComponent<ECS::TransformComponent>(otherEntity);
+                    
+                    // 创建其他物体的形状
+                    std::unique_ptr<CollisionShape> otherShape = CreateShapeFromCollider(otherCollider);
+                    if (!otherShape) {
+                        continue;
+                    }
+                    
+                    // 获取其他物体的状态
+                    Vector3 posB0 = otherBody.previousPosition.isZero() ? 
+                        otherTransform.GetPosition() : otherBody.previousPosition;
+                    Vector3 velB = otherBody.linearVelocity;
+                    Quaternion rotB0 = otherBody.previousRotation.isApprox(Quaternion::Identity()) ?
+                        otherTransform.GetRotation() : otherBody.previousRotation;
+                    Vector3 angularVelB = otherBody.angularVelocity;
+                    
+                    // 执行 CCD 检测
+                    CCDResult result;
+                    if (CCDDetector::Detect(
+                        candidateShape.get(), posA0, velA, rotA0, angularVelA,
+                        otherShape.get(), posB0, velB, rotB0, angularVelB,
+                        dt, result
+                    )) {
+                        CollisionInfo info;
+                        info.result = result;
+                        info.otherEntity = otherEntity;
+                        collisions.push_back(info);
+                    }
+                } catch (...) {
+                    // 忽略组件访问错误
+                }
+            }
+            
+            if (!collisions.empty()) {
+                // 找到最早的碰撞
+                auto earliest = std::min_element(
+                    collisions.begin(), collisions.end(),
+                    [](const CollisionInfo& a, const CollisionInfo& b) {
+                        return a.result.toi < b.result.toi;
+                    }
+                );
+                
+                // 积分到 TOI
+                float toi = earliest->result.toi * dt;
+                IntegratePositionToTime(candidateEntity, toi);
+                
+                // 处理碰撞
+                HandleCCDCollision(candidateEntity, earliest->result, earliest->otherEntity);
+                
+                // 递归处理剩余时间（简化：剩余时间使用标准积分）
+                if (toi < dt - MathUtils::EPSILON) {
+                    float remainingTime = dt - toi;
+                    IntegratePositionToTime(candidateEntity, remainingTime);
+                }
+            } else {
+                // 无碰撞，使用标准积分
+                IntegratePositionToTime(candidateEntity, dt);
+            }
+        } catch (...) {
+            // 忽略组件访问错误
+        }
+    }
+    
+    // 对非 CCD 物体使用标准积分
+    auto allEntities = m_world->Query<ECS::TransformComponent, RigidBodyComponent>();
+    std::unordered_set<ECS::EntityID, ECS::EntityID::Hash> ccdSet(candidates.begin(), candidates.end());
+    
+    for (ECS::EntityID entity : allEntities) {
+        if (ccdSet.find(entity) == ccdSet.end()) {
+            // 非 CCD 物体，使用标准积分
+            IntegratePositionToTime(entity, dt);
+        }
+    }
+}
+
+void PhysicsUpdateSystem::IntegratePositionToTime(ECS::EntityID entity, float dt) {
+    if (!m_world) {
+        return;
+    }
+    
+    if (!m_world->HasComponent<RigidBodyComponent>(entity) ||
+        !m_world->HasComponent<ECS::TransformComponent>(entity)) {
+        return;
+    }
+    
+    try {
+        auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+        auto& transform = m_world->GetComponent<ECS::TransformComponent>(entity);
+        
+        m_integrator.IntegratePosition(body, transform, dt);
+    } catch (...) {
+        // 忽略组件访问错误
+    }
+}
+
+void PhysicsUpdateSystem::HandleCCDCollision(ECS::EntityID entity, const CCDResult& result, ECS::EntityID otherEntity) {
+    if (!m_world) {
+        return;
+    }
+    
+    if (!m_world->HasComponent<RigidBodyComponent>(entity)) {
+        return;
+    }
+    
+    try {
+        auto& body = m_world->GetComponent<RigidBodyComponent>(entity);
+        
+        // 存储 CCD 碰撞信息
+        body.ccdCollision.occurred = true;
+        body.ccdCollision.toi = result.toi;
+        body.ccdCollision.collisionPoint = result.collisionPoint;
+        body.ccdCollision.collisionNormal = result.collisionNormal;
+        body.ccdCollision.otherEntity = otherEntity;
+        
+        // 简化的碰撞响应：停止在碰撞点
+        // 实际应该使用更复杂的碰撞响应算法
+        if (body.IsDynamic()) {
+            // 将速度投影到碰撞法线方向，移除穿透分量
+            float velocityAlongNormal = body.linearVelocity.dot(result.collisionNormal);
+            if (velocityAlongNormal < 0.0f) {
+                body.linearVelocity -= result.collisionNormal * velocityAlongNormal;
+            }
+        }
+    } catch (...) {
+        // 忽略组件访问错误
+    }
+}
+
+// ============================================================================
+// 辅助函数：从 ColliderComponent 创建 CollisionShape
+// ============================================================================
+
+std::unique_ptr<CollisionShape> PhysicsUpdateSystem::CreateShapeFromCollider(const ColliderComponent& collider) {
+    switch (collider.shapeType) {
+        case ColliderComponent::ShapeType::Sphere: {
+            return std::make_unique<SphereShape>(collider.shapeData.sphere.radius);
+        }
+        case ColliderComponent::ShapeType::Box: {
+            Vector3 halfExtents(
+                collider.shapeData.box.halfExtents[0],
+                collider.shapeData.box.halfExtents[1],
+                collider.shapeData.box.halfExtents[2]
+            );
+            return std::make_unique<BoxShape>(halfExtents);
+        }
+        case ColliderComponent::ShapeType::Capsule: {
+            return std::make_unique<CapsuleShape>(
+                collider.shapeData.capsule.radius,
+                collider.shapeData.capsule.height
+            );
+        }
+        default:
+            // 暂不支持 Mesh 和 ConvexHull
+            return nullptr;
     }
 }
 

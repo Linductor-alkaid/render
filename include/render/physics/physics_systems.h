@@ -28,8 +28,10 @@
 #include "collision/contact_manifold.h"
 #include "collision/broad_phase.h"
 #include "collision/collision_detection.h"
+#include "collision/ccd_detector.h"
 #include "dynamics/symplectic_euler_integrator.h"
 #include "dynamics/constraint_solver.h"
+#include "physics_config.h"
 #include <vector>
 #include <memory>
 #include <unordered_set>
@@ -234,6 +236,25 @@ public:
      */
     float GetInterpolationAlpha() const;
     
+    /**
+     * @brief 设置物理配置（包括 CCD 配置）
+     */
+    void SetConfig(const PhysicsConfig& config) {
+        m_config = config;
+    }
+    
+    /**
+     * @brief 获取物理配置
+     */
+    const PhysicsConfig& GetConfig() const {
+        return m_config;
+    }
+    
+    /**
+     * @brief 检测需要 CCD 的物体（用于测试）
+     */
+    std::vector<ECS::EntityID> DetectCCDCandidates(float dt);
+    
 private:
     /**
      * @brief 用于在渲染插值前后保存/恢复模拟结果
@@ -274,6 +295,26 @@ private:
      * @brief 积分位置
      */
     void IntegratePosition(float dt);
+    
+    /**
+     * @brief 使用 CCD 进行路径积分
+     */
+    void IntegrateWithCCD(float dt, const std::vector<ECS::EntityID>& candidates);
+    
+    /**
+     * @brief 积分单个实体到指定时间
+     */
+    void IntegratePositionToTime(ECS::EntityID entity, float toi);
+    
+    /**
+     * @brief 处理 CCD 碰撞
+     */
+    void HandleCCDCollision(ECS::EntityID entity, const CCDResult& result, ECS::EntityID otherEntity);
+    
+    /**
+     * @brief 从 ColliderComponent 创建 CollisionShape（辅助函数）
+     */
+    static std::unique_ptr<CollisionShape> CreateShapeFromCollider(const ColliderComponent& collider);
     
     /**
      * @brief 更新 AABB
@@ -319,6 +360,7 @@ private:
     ConstraintSolver m_constraintSolver;             // 约束求解器
     int m_solverIterations = 10;
     int m_positionIterations = 4;
+    PhysicsConfig m_config;                           // 物理配置（包含 CCD 配置）
 };
 
 } // namespace Physics
