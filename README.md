@@ -131,6 +131,7 @@ cd ..\..
 git clone https://github.com/nlohmann/json.git
 git clone https://github.com/assimp/assimp.git
 git clone https://github.com/zeux/meshoptimizer.git
+git clone https://github.com/bulletphysics/bullet3.git
 
 # 复制 SDL3_ttf 所需的 cmake 文件
 copy "third_party\SDL\cmake\GetGitRevisionDescription.cmake" "third_party\SDL3_ttf-3.2.2\cmake\GetGitRevisionDescription.cmake"

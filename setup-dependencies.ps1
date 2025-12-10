@@ -409,7 +409,41 @@ if (-not $SkipMeshOptimizer) {
     Write-Host "Skipping meshoptimizer (using --SkipMeshOptimizer)" -ForegroundColor Gray
 }
 
-# 7. Download and extract Eigen3
+# 7. Clone bullet3
+if (-not $SkipBullet3) {
+    $Bullet3Dir = "bullet3"
+    $needsClone = $false
+    
+    if (Test-Path $Bullet3Dir) {
+        # Check if directory is empty
+        $bullet3Items = Get-ChildItem -Path $Bullet3Dir -ErrorAction SilentlyContinue
+        if ($null -eq $bullet3Items -or $bullet3Items.Count -eq 0) {
+            Write-Host "bullet3 directory exists but is empty, removing and re-cloning..." -ForegroundColor Yellow
+            Remove-Item -Path $Bullet3Dir -Recurse -Force
+            $needsClone = $true
+        } else {
+            Write-Host "bullet3 already exists and is complete, skipping clone" -ForegroundColor Green
+        }
+    } else {
+        $needsClone = $true
+    }
+    
+    if ($needsClone) {
+        Write-Host "Cloning bullet3..." -ForegroundColor Yellow
+        git clone https://github.com/bulletphysics/bullet3.git
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: bullet3 clone failed" -ForegroundColor Red
+            Pop-Location
+            exit 1
+        }
+    }
+} else {
+    Write-Host "Skipping bullet3 (using --SkipBullet3)" -ForegroundColor Gray
+}
+
+
+# 8. Download and extract Eigen3
 if (-not $SkipEigen) {
     $EigenDir = "eigen-3.4.0"
     $EigenCoreFile = Join-Path $EigenDir "Eigen\Core"

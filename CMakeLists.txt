@@ -23,6 +23,7 @@ option(ENABLE_OPENMP "Enable OpenMP for parallel processing" ON)
 # 物理引擎选项
 option(ENABLE_PHYSICS "Enable physics engine" ON)
 option(USE_EXTERNAL_PHYSICS "Use external physics library (Bullet/PhysX)" OFF)
+option(USE_BULLET_PHYSICS "Use Bullet Physics instead of custom engine" ON)
 if(ENABLE_OPENMP)
     find_package(OpenMP)
     if(OpenMP_CXX_FOUND)
@@ -203,6 +204,50 @@ if(NOT EXISTS ${GLAD_INCLUDE_DIR})
 endif()
 
 # ============================================================================
+# Bullet Physics 配置 - 作为子项目编译
+# ============================================================================
+if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
+    set(BULLET_ROOT ${THIRD_PARTY_DIR}/bullet3)
+    
+    if(EXISTS ${BULLET_ROOT}/CMakeLists.txt)
+        # 设置策略以抑制 Bullet 的 cmake_minimum_required 版本警告
+        # Bullet 使用较旧的 CMake 版本要求（3.5），但不影响功能
+        # CMP0154 策略控制对 cmake_minimum_required 版本的检查（CMake 3.27+）
+        if(POLICY CMP0154)
+            cmake_policy(SET CMP0154 OLD)  # 不警告较低版本的 cmake_minimum_required
+        endif()
+        
+        # 配置 Bullet 构建选项
+        set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "Build Bullet demos" FORCE)
+        set(BUILD_BULLET3 OFF CACHE BOOL "Build Bullet3" FORCE)
+        set(BUILD_EXTRAS OFF CACHE BOOL "Build Bullet extras" FORCE)
+        set(BUILD_UNIT_TESTS OFF CACHE BOOL "Build Bullet unit tests" FORCE)
+        set(BUILD_CPU_DEMOS OFF CACHE BOOL "Build Bullet CPU demos" FORCE)
+        set(USE_GRAPHICAL_BENCHMARK OFF CACHE BOOL "Use graphical benchmark" FORCE)
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+        
+        # 添加 Bullet 子目录
+        add_subdirectory(${BULLET_ROOT} ${CMAKE_BINARY_DIR}/bullet3 EXCLUDE_FROM_ALL)
+        
+        # 设置 Bullet 库
+        set(BULLET_LIBRARIES
+            BulletDynamics
+            BulletCollision
+            LinearMath
+        )
+        
+        # 设置包含目录
+        set(BULLET_INCLUDE_DIRS
+            ${BULLET_ROOT}/src
+        )
+        
+        message(STATUS "Bullet Physics enabled (using subproject)")
+    else()
+        message(FATAL_ERROR "Bullet Physics source not found at ${BULLET_ROOT}")
+    endif()
+endif()
+
+# ============================================================================
 # OpenGL 配置
 # ============================================================================
 find_package(OpenGL REQUIRED)
@@ -220,6 +265,11 @@ include_directories(
     ${GLAD_INCLUDE_DIR}
     ${OPENGL_INCLUDE_DIR}
 )
+
+# Bullet 包含目录（如果启用）
+if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
+    include_directories(${BULLET_INCLUDE_DIRS})
+endif()
 
 # ============================================================================
 # 源文件
@@ -487,6 +537,18 @@ set(RENDER_HEADERS
 )
 
 # ============================================================================
+# 添加 Bullet Adapter 源文件（如果启用）
+# ============================================================================
+if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
+    list(APPEND RENDER_SOURCES
+        src/physics/bullet_adapter/eigen_to_bullet.cpp
+        src/physics/bullet_adapter/bullet_world_adapter.cpp
+        src/physics/bullet_adapter/bullet_rigid_body_adapter.cpp
+        src/physics/bullet_adapter/bullet_shape_adapter.cpp
+    )
+endif()
+
+# ============================================================================
 # 创建库
 # ============================================================================
 add_library(RenderEngine STATIC ${RENDER_SOURCES} ${RENDER_HEADERS})
@@ -500,6 +562,11 @@ target_include_directories(RenderEngine
 # 设置编译选项（仅对 RenderEngine）
 target_compile_options(RenderEngine PRIVATE ${PROJECT_COMPILE_OPTIONS})
 
+# 添加编译定义
+if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
+    target_compile_definitions(RenderEngine PRIVATE USE_BULLET_PHYSICS)
+endif()
+
 # 链接库
 target_link_libraries(RenderEngine
     PUBLIC
@@ -510,6 +577,11 @@ target_link_libraries(RenderEngine
         ${MESHOPTIMIZER_LIBRARY}
         ${OPENGL_LIBRARIES}
 )
+
+# 链接 Bullet（如果启用）
+if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
+    target_link_libraries(RenderEngine PRIVATE ${BULLET_LIBRARIES})
+endif()
 
 # 链接 OpenMP（如果启用）
 if(ENABLE_OPENMP AND OpenMP_CXX_FOUND)
@@ -565,6 +637,12 @@ message(STATUS "  Assimp Include: ${ASSIMP_INCLUDE_DIRS}")
 message(STATUS "  Assimp Library: ${ASSIMP_LIBRARY}")
 message(STATUS "  meshoptimizer Library: ${MESHOPTIMIZER_LIBRARY}")
 message(STATUS "  OpenGL Include: ${OPENGL_INCLUDE_DIR}")
+if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
+    message(STATUS "  Bullet Physics: ENABLED")
+    message(STATUS "  Bullet Include: ${BULLET_INCLUDE_DIRS}")
+else()
+    message(STATUS "  Bullet Physics: DISABLED")
+endif()
 message(STATUS "  Build Examples: ${BUILD_EXAMPLES}")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")
 message(STATUS "========================================")
