@@ -78,6 +78,47 @@ public:
      * @brief 获取 Bullet 世界指针（用于高级操作）
      */
     btDiscreteDynamicsWorld* GetBulletWorld() const { return m_bulletWorld.get(); }
+    
+    /**
+     * @brief 同步配置到 Bullet 世界
+     * @param config 物理配置
+     */
+    void SyncConfig(const PhysicsConfig& config);
+    
+    // ==================== 2.1.4 实体到刚体映射 ====================
+    
+    /**
+     * @brief 添加实体到刚体的映射
+     * @param entity 实体 ID
+     * @param rigidBody Bullet 刚体指针
+     */
+    void AddRigidBodyMapping(ECS::EntityID entity, btRigidBody* rigidBody);
+    
+    /**
+     * @brief 移除实体到刚体的映射（通过实体 ID）
+     * @param entity 实体 ID
+     */
+    void RemoveRigidBodyMapping(ECS::EntityID entity);
+    
+    /**
+     * @brief 移除实体到刚体的映射（通过刚体指针）
+     * @param rigidBody Bullet 刚体指针
+     */
+    void RemoveRigidBodyMapping(btRigidBody* rigidBody);
+    
+    /**
+     * @brief 根据实体 ID 获取刚体指针
+     * @param entity 实体 ID
+     * @return Bullet 刚体指针，如果不存在则返回 nullptr
+     */
+    btRigidBody* GetRigidBody(ECS::EntityID entity) const;
+    
+    /**
+     * @brief 根据刚体指针获取实体 ID
+     * @param rigidBody Bullet 刚体指针
+     * @return 实体 ID，如果不存在则返回 Invalid()
+     */
+    ECS::EntityID GetEntity(btRigidBody* rigidBody) const;
 
 private:
     std::unique_ptr<btDiscreteDynamicsWorld> m_bulletWorld;
@@ -89,6 +130,9 @@ private:
     // 实体到 Bullet 刚体的映射
     std::unordered_map<ECS::EntityID, btRigidBody*, ECS::EntityID::Hash> m_entityToRigidBody;
     std::unordered_map<btRigidBody*, ECS::EntityID> m_rigidBodyToEntity;
+    
+    // 保存配置（用于 Step() 方法中的固定时间步长等参数）
+    PhysicsConfig m_config;
 };
 
 } // namespace Render::Physics::BulletAdapter

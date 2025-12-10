@@ -183,29 +183,29 @@
 
 ### 2.1 BulletWorldAdapter 核心功能
 
-- [ ] **2.1.1** 实现世界初始化
-  - [ ] 创建 `btBroadphaseInterface`（使用 `btDbvtBroadphase`）
-  - [ ] 创建 `btCollisionDispatcher`
-  - [ ] 创建 `btConstraintSolver`（使用 `btSequentialImpulseConstraintSolver`）
-  - [ ] 创建 `btCollisionConfiguration`（使用 `btDefaultCollisionConfiguration`）
-  - [ ] 创建 `btDiscreteDynamicsWorld`
+- [x] **2.1.1** 实现世界初始化
+  - [x] 创建 `btBroadphaseInterface`（使用 `btDbvtBroadphase`）
+  - [x] 创建 `btCollisionDispatcher`
+  - [x] 创建 `btConstraintSolver`（使用 `btSequentialImpulseConstraintSolver`）
+  - [x] 创建 `btCollisionConfiguration`（使用 `btDefaultCollisionConfiguration`）
+  - [x] 创建 `btDiscreteDynamicsWorld`
 
-- [ ] **2.1.2** 实现世界配置同步
-  - [ ] 同步 `PhysicsConfig::gravity` → `setGravity()`
-  - [ ] 同步 `PhysicsConfig::solverIterations` → `getSolverInfo().m_numIterations`
-  - [ ] 同步 `PhysicsConfig::positionIterations`
-  - [ ] 同步 `PhysicsConfig::enableCCD` → `getDispatchInfo().m_useContinuous`
-  - [ ] 同步 `PhysicsConfig::enableSleeping`
+- [x] **2.1.2** 实现世界配置同步
+  - [x] 同步 `PhysicsConfig::gravity` → `setGravity()`
+  - [x] 同步 `PhysicsConfig::solverIterations` → `getSolverInfo().m_numIterations`
+  - [x] 同步 `PhysicsConfig::positionIterations`
+  - [x] 同步 `PhysicsConfig::enableCCD` → `getDispatchInfo().m_useContinuous`
+  - [x] 同步 `PhysicsConfig::enableSleeping`
 
-- [ ] **2.1.3** 实现 Step() 方法
-  - [ ] 调用 `btDiscreteDynamicsWorld::stepSimulation(deltaTime)`
-  - [ ] 处理固定时间步长（`fixedDeltaTime`）
-  - [ ] 处理最大子步数（`maxSubSteps`）
+- [x] **2.1.3** 实现 Step() 方法
+  - [x] 调用 `btDiscreteDynamicsWorld::stepSimulation(deltaTime)`
+  - [x] 处理固定时间步长（`fixedDeltaTime`）
+  - [x] 处理最大子步数（`maxSubSteps`）
 
-- [ ] **2.1.4** 实现实体到刚体映射
-  - [ ] 维护 `std::unordered_map<ECS::EntityID, btRigidBody*>`
-  - [ ] 维护 `std::unordered_map<btRigidBody*, ECS::EntityID>`
-  - [ ] 实现添加/移除映射的方法
+- [x] **2.1.4** 实现实体到刚体映射
+  - [x] 维护 `std::unordered_map<ECS::EntityID, btRigidBody*>`
+  - [x] 维护 `std::unordered_map<btRigidBody*, ECS::EntityID>`
+  - [x] 实现添加/移除映射的方法
 
 **验证标准**:
 - ✅ 物理世界正确初始化
