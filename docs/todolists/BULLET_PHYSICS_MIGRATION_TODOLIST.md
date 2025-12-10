@@ -129,43 +129,43 @@
 
 ### 1.4 刚体适配器
 
-- [ ] **1.4.1** 实现基础同步接口
-  - [ ] `BulletRigidBodyAdapter::SyncToBullet(const RigidBodyComponent&)`
-  - [ ] `BulletRigidBodyAdapter::SyncFromBullet(RigidBodyComponent&)`
-  - [ ] 处理基本属性（质量、速度、力、扭矩）
+- [x] **1.4.1** 实现基础同步接口
+  - [x] `BulletRigidBodyAdapter::SyncToBullet(const RigidBodyComponent&)`
+  - [x] `BulletRigidBodyAdapter::SyncFromBullet(RigidBodyComponent&)`
+  - [x] 处理基本属性（质量、速度、力、扭矩）
 
-- [ ] **1.4.2** 实现刚体类型转换
-  - [ ] `BodyType::Static` → `CF_STATIC_OBJECT` + 质量 = 0
-  - [ ] `BodyType::Kinematic` → `CF_KINEMATIC_OBJECT` + 质量 = 0
-  - [ ] `BodyType::Dynamic` → 正常质量
-  - [ ] 处理类型切换
+- [x] **1.4.2** 实现刚体类型转换
+  - [x] `BodyType::Static` → `CF_STATIC_OBJECT` + 质量 = 0
+  - [x] `BodyType::Kinematic` → `CF_KINEMATIC_OBJECT` + 质量 = 0
+  - [x] `BodyType::Dynamic` → 正常质量
+  - [x] 处理类型切换
 
-- [ ] **1.4.3** 实现质量属性同步
-  - [ ] 同步 `mass` 和 `inverseMass`
-  - [ ] 同步 `inertiaTensor` 和 `inverseInertiaTensor`
-  - [ ] 使用 `btRigidBody::setMassProps()`
+- [x] **1.4.3** 实现质量属性同步
+  - [x] 同步 `mass` 和 `inverseMass`
+  - [x] 同步 `inertiaTensor` 和 `inverseInertiaTensor`
+  - [x] 使用 `btRigidBody::setMassProps()`
 
-- [ ] **1.4.4** 实现速度约束同步
-  - [ ] 处理 `lockPosition[3]` → `setLinearFactor()`
-  - [ ] 处理 `lockRotation[3]` → `setAngularFactor()`
-  - [ ] 处理 `maxLinearSpeed` 和 `maxAngularSpeed`
+- [x] **1.4.4** 实现速度约束同步
+  - [x] 处理 `lockPosition[3]` → `setLinearFactor()`
+  - [x] 处理 `lockRotation[3]` → `setAngularFactor()`
+  - [x] 处理 `maxLinearSpeed` 和 `maxAngularSpeed`
 
-- [ ] **1.4.5** 实现阻尼同步
-  - [ ] 同步 `linearDamping` → `setDamping()`
-  - [ ] 同步 `angularDamping` → `setDamping()`
+- [x] **1.4.5** 实现阻尼同步
+  - [x] 同步 `linearDamping` → `setDamping()`
+  - [x] 同步 `angularDamping` → `setDamping()`
 
-- [ ] **1.4.6** 实现重力同步
-  - [ ] 处理 `useGravity` → `setGravity()` 或 `CF_DISABLE_GRAVITY`
-  - [ ] 实现 `gravityScale`（在应用重力时乘以缩放因子）
+- [x] **1.4.6** 实现重力同步
+  - [x] 处理 `useGravity` → `setGravity()`（通过设置重力向量为零来禁用）
+  - [x] 实现 `gravityScale`（在应用重力时乘以缩放因子，需在世界适配器中处理）
 
-- [ ] **1.4.7** 实现 CCD 同步
-  - [ ] 处理 `useCCD` → `setCcdMotionThreshold()`
-  - [ ] 处理 `ccdVelocityThreshold` 自动判断
-  - [ ] 设置 `setCcdSweptSphereRadius()`
+- [x] **1.4.7** 实现 CCD 同步
+  - [x] 处理 `useCCD` → `setCcdMotionThreshold()`
+  - [x] 处理 `ccdVelocityThreshold` 自动判断
+  - [x] 设置 `setCcdSweptSphereRadius()`
 
-- [ ] **1.4.8** 实现休眠状态同步
-  - [ ] 同步 `isSleeping` ↔ `getActivationState()`
-  - [ ] 处理休眠阈值 `sleepThreshold` → `setSleepingThresholds()`
+- [x] **1.4.8** 实现休眠状态同步
+  - [x] 同步 `isSleeping` ↔ `getActivationState()`
+  - [x] 处理休眠阈值 `sleepThreshold` → `setSleepingThresholds()`
 
 **验证标准**:
 - ✅ 所有刚体属性正确同步
