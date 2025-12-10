@@ -23,6 +23,7 @@
 #include "render/physics/bullet_adapter/bullet_shape_adapter.h"
 #include "render/physics/bullet_adapter/bullet_rigid_body_adapter.h"
 #include "render/physics/bullet_adapter/bullet_contact_callback.h"
+#include "render/physics/bullet_adapter/bullet_material_callback.h"
 #include "render/physics/physics_components.h"
 #include "render/physics/physics_events.h"
 #include "render/application/event_bus.h"
@@ -34,9 +35,26 @@
 #include <BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.h>
 #include <BulletCollision/CollisionShapes/btCollisionShape.h>
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
+#include <BulletCollision/NarrowPhaseCollision/btPersistentManifold.h>
+#include <BulletCollision/NarrowPhaseCollision/btManifoldPoint.h>
+#include "render/physics/bullet_adapter/bullet_material_callback.h"
 #include <vector>
+#include <functional>
 
 namespace Render::Physics::BulletAdapter {
+
+// 全局材质回调包装器（用于 Bullet 的全局回调）
+static BulletMaterialCallback* g_materialCallbackInstance = nullptr;
+
+// Bullet 全局接触处理回调的包装函数
+extern "C" bool BulletContactProcessedCallback(btManifoldPoint& cp, void* body0, void* body1) {
+    if (g_materialCallbackInstance) {
+        const btCollisionObject* colObj0 = static_cast<const btCollisionObject*>(body0);
+        const btCollisionObject* colObj1 = static_cast<const btCollisionObject*>(body1);
+        return g_materialCallbackInstance->ProcessContactPoint(cp, colObj0, colObj1);
+    }
+    return false;  // 未处理，使用默认值
+}
 
 BulletWorldAdapter::BulletWorldAdapter(const PhysicsConfig& config) {
     // ==================== 2.1.1 世界初始化 ====================
@@ -70,10 +88,34 @@ BulletWorldAdapter::BulletWorldAdapter(const PhysicsConfig& config) {
         m_entityToRigidBody,
         m_rigidBodyToEntity
     );
+    
+    // ==================== 2.4.3 材质组合模式 ====================
+    // 创建材质回调对象
+    m_materialCallback = std::make_unique<BulletMaterialCallback>(
+        m_entityToRigidBody,
+        m_rigidBodyToEntity
+    );
+    
+    // 设置全局材质回调实例（用于全局回调函数）
+    g_materialCallbackInstance = m_materialCallback.get();
+    
+    // 设置 Bullet 的全局接触处理回调
+    // 注意：gContactProcessedCallback 是 Bullet 的全局变量，在 btPersistentManifold.h 中声明
+    // 由于已经包含了 btPersistentManifold.h，可以直接使用
+    extern ContactProcessedCallback gContactProcessedCallback;
+    gContactProcessedCallback = BulletContactProcessedCallback;
 }
 
 BulletWorldAdapter::~BulletWorldAdapter() {
     // ==================== 清理 ====================
+    
+    // 清除全局材质回调
+    if (g_materialCallbackInstance == m_materialCallback.get()) {
+        extern ContactProcessedCallback gContactProcessedCallback;
+        gContactProcessedCallback = nullptr;
+        g_materialCallbackInstance = nullptr;
+    }
+    
     // 注意：需要先移除所有刚体，然后才能销毁世界
     // 因为 Bullet 会在析构时检查是否有残留的刚体
     
@@ -377,10 +419,14 @@ bool BulletWorldAdapter::AddRigidBody(ECS::EntityID entity,
     BulletRigidBodyAdapter adapter(bulletBody, entity);
     adapter.SyncToBullet(rigidBody);
     
-    // 6. 设置材质属性（摩擦和弹性）
+    // 6. 设置材质属性（摩擦和弹性）（2.4.1 和 2.4.2）
     if (collider.material) {
         bulletBody->setFriction(collider.material->friction);
         bulletBody->setRestitution(collider.material->restitution);
+    } else {
+        // 如果没有材质，使用默认值
+        bulletBody->setFriction(0.5f);
+        bulletBody->setRestitution(0.3f);
     }
     
     // 7. 设置触发器标志
@@ -756,6 +802,15 @@ uint64_t BulletWorldAdapter::HashPair(ECS::EntityID a, ECS::EntityID b) {
     
     // 使用位操作组合哈希值
     return (hashA << 32) | hashB;
+}
+
+// ==================== 2.4 物理材质处理 ====================
+
+void BulletWorldAdapter::SetMaterialGetter(std::function<std::shared_ptr<PhysicsMaterial>(ECS::EntityID)> getter) {
+    // ==================== 2.4.3 材质组合模式 ====================
+    if (m_materialCallback) {
+        BulletMaterialCallback::SetMaterialGetter(std::move(getter));
+    }
 }
 
 } // namespace Render::Physics::BulletAdapter

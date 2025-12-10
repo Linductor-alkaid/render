@@ -272,19 +272,19 @@
 
 ### 2.4 物理材质处理
 
-- [ ] **2.4.1** 实现摩擦系数同步
-  - [ ] 同步 `PhysicsMaterial::friction` → `setFriction()`
-  - [ ] 处理材质变化
+- [x] **2.4.1** 实现摩擦系数同步
+  - [x] 同步 `PhysicsMaterial::friction` → `setFriction()`
+  - [x] 处理材质变化（在 `AddRigidBody` 和 `UpdateRigidBody` 中）
 
-- [ ] **2.4.2** 实现弹性系数同步
-  - [ ] 同步 `PhysicsMaterial::restitution` → `setRestitution()`
-  - [ ] 处理材质变化
+- [x] **2.4.2** 实现弹性系数同步
+  - [x] 同步 `PhysicsMaterial::restitution` → `setRestitution()`
+  - [x] 处理材质变化（在 `AddRigidBody` 和 `UpdateRigidBody` 中）
 
-- [ ] **2.4.3** 实现材质组合模式
-  - [ ] 实现自定义接触回调 `CustomContactCallback`
-  - [ ] 处理 `frictionCombine`（Average/Minimum/Maximum/Multiply）
-  - [ ] 处理 `restitutionCombine`（Average/Minimum/Maximum/Multiply）
-  - [ ] 在 `addContactPoint()` 中应用组合逻辑
+- [x] **2.4.3** 实现材质组合模式
+  - [x] 实现自定义接触回调 `BulletMaterialCallback`
+  - [x] 处理 `frictionCombine`（Average/Minimum/Maximum/Multiply）
+  - [x] 处理 `restitutionCombine`（Average/Minimum/Maximum/Multiply）
+  - [x] 在 `ProcessContactPoint()` 中应用组合逻辑（通过 Bullet 的 `gContactProcessedCallback` 全局回调）
 
 **验证标准**:
 - ✅ 摩擦系数正确应用

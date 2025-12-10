@@ -23,10 +23,17 @@
 #include "render/physics/physics_config.h"
 #include "render/ecs/entity.h"
 #include "render/physics/bullet_adapter/bullet_contact_callback.h"
+#include "render/physics/bullet_adapter/bullet_material_callback.h"
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <functional>
+
+// 前向声明
+namespace Render::Physics {
+struct PhysicsMaterial;
+}
 
 // 前向声明
 class btDiscreteDynamicsWorld;
@@ -178,6 +185,14 @@ public:
      * @return 碰撞对列表
      */
     const std::vector<BulletContactCallback::CollisionPair>& GetCollisionPairs() const;
+    
+    // ==================== 2.4 物理材质处理 ====================
+    
+    /**
+     * @brief 设置材质获取函数（用于从ECS获取材质）
+     * @param getter 材质获取函数
+     */
+    void SetMaterialGetter(std::function<std::shared_ptr<PhysicsMaterial>(ECS::EntityID)> getter);
 
 private:
     // ==================== 2.3.3 碰撞事件回调 ====================
@@ -229,6 +244,11 @@ private:
     // 上一帧的碰撞对（用于检测 Enter/Stay/Exit）
     // 使用完整的碰撞对信息，而不仅仅是哈希值，以便在 Exit 时能够恢复实体ID
     std::vector<BulletContactCallback::CollisionPair> m_previousCollisionPairs;
+    
+    // ==================== 2.4 物理材质处理 ====================
+    
+    // 材质回调对象
+    std::unique_ptr<BulletMaterialCallback> m_materialCallback;
 };
 
 } // namespace Render::Physics::BulletAdapter
