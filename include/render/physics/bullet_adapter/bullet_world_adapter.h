@@ -202,6 +202,22 @@ public:
      */
     void SyncToECS(ECS::EntityID entity, RigidBodyComponent& rigidBody);
     
+    /**
+     * @brief 同步 TransformComponent 到 Bullet（Kinematic/Static 物体）
+     * @param entity 实体 ID
+     * @param position 位置
+     * @param rotation 旋转
+     */
+    void SyncTransformToBullet(ECS::EntityID entity, const Vector3& position, const Quaternion& rotation);
+    
+    /**
+     * @brief 同步 Bullet 变换到 TransformComponent（Dynamic 物体）
+     * @param entity 实体 ID
+     * @param position 输出位置（将被更新）
+     * @param rotation 输出旋转（将被更新）
+     */
+    void SyncTransformFromBullet(ECS::EntityID entity, Vector3& position, Quaternion& rotation);
+    
     // ==================== 2.4 物理材质处理 ====================
     
     /**
@@ -209,6 +225,12 @@ public:
      * @param getter 材质获取函数
      */
     void SetMaterialGetter(std::function<std::shared_ptr<PhysicsMaterial>(ECS::EntityID)> getter);
+
+    /**
+     * @brief 打印刚体信息
+     * @param entity 实体 ID
+     */
+    void DebugPrintRigidBodyInfo(ECS::EntityID entity) const;
 
 private:
     // ==================== 2.3.3 碰撞事件回调 ====================
@@ -242,6 +264,9 @@ private:
     // 实体到形状的映射（用于管理形状生命周期）
     std::unordered_map<ECS::EntityID, btCollisionShape*, ECS::EntityID::Hash> m_entityToShape; // 实体到形状的映射
     std::unordered_map<btCollisionShape*, std::unordered_set<ECS::EntityID, ECS::EntityID::Hash>> m_shapeToEntities; // 形状到实体的反向映射（用于跟踪共享）
+    
+    // 跟踪已经初始化变换的实体（用于判断是否是首次设置变换）
+    std::unordered_set<ECS::EntityID, ECS::EntityID::Hash> m_initializedTransforms;
     
     // 保存配置（用于 Step() 方法中的固定时间步长等参数）
     PhysicsConfig m_config;

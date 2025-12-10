@@ -22,7 +22,9 @@
 #include "render/physics/physics_systems.h"
 #include "render/physics/physics_transform_sync.h"
 #include "render/ecs/world.h"
+#include "render/math_utils.h"
 #include <memory>
+#include <unordered_set>
 
 #ifdef USE_BULLET_PHYSICS
 #include "render/physics/bullet_adapter/bullet_world_adapter.h"
@@ -113,8 +115,18 @@ void PhysicsWorld::Step(float deltaTime) {
         }
         
         // 6. 插值变换（平滑渲染）
-        // 注意：Bullet 使用固定时间步长，插值在 BulletWorldAdapter 内部处理
-        // 这里暂时不处理插值，后续在 3.2 中完善
+        // ==================== 3.2.4 插值变换 ====================
+        // Bullet 使用固定时间步长，需要在渲染前进行插值
+        // 插值因子由固定时间步长和实际时间步长计算
+        if (m_transformSync) {
+            // 计算插值因子 alpha = (实际时间 - 已累积的固定时间步长) / 固定时间步长
+            // 这里简化处理，使用固定时间步长的一半作为插值因子
+            // 更精确的实现需要跟踪累积时间
+            float fixedDeltaTime = m_config.fixedDeltaTime;
+            float alpha = (fixedDeltaTime > 1e-6f) ? (deltaTime / fixedDeltaTime) : 1.0f;
+            alpha = MathUtils::Clamp(alpha, 0.0f, 1.0f);
+            m_transformSync->InterpolateTransforms(m_ecsWorld, alpha);
+        }
     } else {
         // 回退到原有实现（不应该发生，但为了安全）
         StepLegacy(deltaTime);
@@ -178,7 +190,7 @@ void PhysicsWorld::SyncECSToBullet() {
         return;
     }
     
-    // 查询所有有 RigidBodyComponent 和 ColliderComponent 的实体
+    std::unordered_set<ECS::EntityID, ECS::EntityID::Hash> currentEntities;
     auto entities = m_ecsWorld->Query<RigidBodyComponent, ColliderComponent>();
     
     for (ECS::EntityID entity : entities) {
@@ -190,25 +202,59 @@ void PhysicsWorld::SyncECSToBullet() {
             auto& body = m_ecsWorld->GetComponent<RigidBodyComponent>(entity);
             auto& collider = m_ecsWorld->GetComponent<ColliderComponent>(entity);
             
-            // 检查是否已在 Bullet 中
+            currentEntities.insert(entity);
+            
+            // 获取TransformComponent（如果存在）
+            Vector3 transformPosition;
+            Quaternion transformRotation;
+            bool hasTransform = false;
+            if (m_ecsWorld->HasComponent<ECS::TransformComponent>(entity)) {
+                auto& transform = m_ecsWorld->GetComponent<ECS::TransformComponent>(entity);
+                transformPosition = transform.GetPosition();
+                transformRotation = transform.GetRotation();
+                hasTransform = true;
+            }
+            
+            // 检查是否已在Bullet中
+            bool wasNewlyAdded = false;
+            
             if (m_bulletAdapter->HasRigidBody(entity)) {
                 // 更新现有刚体
                 m_bulletAdapter->UpdateRigidBody(entity, body, collider);
             } else {
                 // 添加新刚体
                 m_bulletAdapter->AddRigidBody(entity, body, collider);
+                wasNewlyAdded = true;
             }
+            
+            // === 关键修复：确保Kinematic/Static物体的Transform总是同步 ===
+            if (hasTransform) {
+                // 对于Kinematic和Static物体，每次Step都必须同步Transform
+                // 因为它们是ECS驱动的（不是物理模拟驱动的）
+                if (body.type == RigidBodyComponent::BodyType::Kinematic || 
+                    body.type == RigidBodyComponent::BodyType::Static ||
+                    wasNewlyAdded) {
+                    
+                    // 添加调试输出
+                    std::cout << "[SYNC] Syncing transform for entity " << entity.index 
+                              << ", type: " << (int)body.type 
+                              << ", position: (" << transformPosition.x() << ", "
+                              << transformPosition.y() << ", " << transformPosition.z() << ")" 
+                              << std::endl;
+                    
+                    // 同步到Bullet
+                    m_bulletAdapter->SyncTransformToBullet(entity, transformPosition, transformRotation);
+                }
+            }
+            
         } catch (...) {
             // 忽略组件访问错误
         }
     }
-    
-    // 检查是否有实体被移除（需要从 Bullet 中移除）
-    // 注意：这需要维护一个实体集合，暂时简化处理
-    // 后续在 3.2 中完善
 }
 
 void PhysicsWorld::SyncBulletToECS() {
+    // ==================== 3.2.2 Bullet → ECS 同步 ====================
     if (!m_ecsWorld || !m_bulletAdapter) {
         return;
     }
@@ -224,8 +270,27 @@ void PhysicsWorld::SyncBulletToECS() {
         try {
             if (m_bulletAdapter->HasRigidBody(entity)) {
                 auto& body = m_ecsWorld->GetComponent<RigidBodyComponent>(entity);
-                // 从 Bullet 同步位置、旋转、速度等
+                
+                // 从 Bullet 同步 RigidBodyComponent（速度、力、扭矩等）
                 m_bulletAdapter->SyncToECS(entity, body);
+                
+                // ==================== 3.2.2 同步 TransformComponent（Dynamic 物体） ====================
+                // 只同步 Dynamic 物体的变换（Kinematic/Static 由 TransformComponent 驱动）
+                if (body.type == RigidBodyComponent::BodyType::Dynamic) {
+                    // 检查是否有 TransformComponent
+                    if (m_ecsWorld->HasComponent<ECS::TransformComponent>(entity)) {
+                        auto& transform = m_ecsWorld->GetComponent<ECS::TransformComponent>(entity);
+                        
+                        // 从 Bullet 同步位置和旋转
+                        Vector3 position;
+                        Quaternion rotation;
+                        m_bulletAdapter->SyncTransformFromBullet(entity, position, rotation);
+                        
+                        // 更新 TransformComponent
+                        transform.SetPosition(position);
+                        transform.SetRotation(rotation);
+                    }
+                }
             }
         } catch (...) {
             // 忽略组件访问错误

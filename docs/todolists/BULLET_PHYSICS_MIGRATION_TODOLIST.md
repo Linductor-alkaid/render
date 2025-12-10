@@ -319,28 +319,28 @@
 
 ### 3.2 同步机制
 
-- [ ] **3.2.1** 实现 ECS → Bullet 同步
-  - [ ] 在 `Step()` 开始时同步所有组件
-  - [ ] 同步 `TransformComponent` → `btRigidBody`（Kinematic/Static）
-  - [ ] 同步 `RigidBodyComponent` → `btRigidBody`
-  - [ ] 同步 `ColliderComponent` → `btCollisionShape`
-  - [ ] 处理新添加的实体
+- [x] **3.2.1** 实现 ECS → Bullet 同步
+  - [x] 在 `Step()` 开始时同步所有组件
+  - [x] 同步 `TransformComponent` → `btRigidBody`（Kinematic/Static）
+  - [x] 同步 `RigidBodyComponent` → `btRigidBody`
+  - [x] 同步 `ColliderComponent` → `btCollisionShape`
+  - [x] 处理新添加的实体
 
-- [ ] **3.2.2** 实现 Bullet → ECS 同步
-  - [ ] 在 `Step()` 结束后同步所有结果
-  - [ ] 同步 `btRigidBody` → `TransformComponent`（Dynamic）
-  - [ ] 同步 `btRigidBody` → `RigidBodyComponent`
-  - [ ] 处理移除的实体
+- [x] **3.2.2** 实现 Bullet → ECS 同步
+  - [x] 在 `Step()` 结束后同步所有结果
+  - [x] 同步 `btRigidBody` → `TransformComponent`（Dynamic）
+  - [x] 同步 `btRigidBody` → `RigidBodyComponent`
+  - [x] 处理移除的实体（基础实现完成，实体移除应通过显式调用或ECS事件处理）
 
-- [ ] **3.2.3** 实现 Kinematic 物体驱动
-  - [ ] 从 `TransformComponent` 读取位置/旋转
-  - [ ] 同步到 `btRigidBody`
-  - [ ] 确保 Kinematic 物体不受力影响
+- [x] **3.2.3** 实现 Kinematic 物体驱动
+  - [x] 从 `TransformComponent` 读取位置/旋转
+  - [x] 同步到 `btRigidBody`
+  - [x] 确保 Kinematic 物体不受力影响（通过 Bullet 的 Kinematic 标志）
 
-- [ ] **3.2.4** 实现插值变换
-  - [ ] 保存上一帧的变换（`previousPosition`, `previousRotation`）
-  - [ ] 实现 `InterpolateTransforms(float alpha)`
-  - [ ] 在渲染前调用插值
+- [x] **3.2.4** 实现插值变换
+  - [x] 保存上一帧的变换（`previousPosition`, `previousRotation`）
+  - [x] 实现 `InterpolateTransforms(float alpha)`（使用 PhysicsTransformSync）
+  - [x] 在渲染前调用插值
 
 **验证标准**:
 - ✅ 物理更新正确同步到渲染

@@ -27,6 +27,7 @@
 #include "render/physics/physics_components.h"
 #include "render/physics/physics_events.h"
 #include "render/application/event_bus.h"
+#include "render/logger.h"
 #include <BulletDynamics/Dynamics/btDiscreteDynamicsWorld.h>
 #include <BulletDynamics/Dynamics/btRigidBody.h>
 #include <BulletCollision/BroadphaseCollision/btDbvtBroadphase.h>
@@ -197,6 +198,7 @@ BulletWorldAdapter::~BulletWorldAdapter() {
     m_rigidBodyToEntity.clear();
     m_entityToShape.clear();
     m_shapeToEntities.clear();
+    m_initializedTransforms.clear();
     
     // 智能指针会自动清理，但需要按顺序销毁
     // 先销毁世界（会清理所有刚体）
@@ -369,89 +371,101 @@ bool BulletWorldAdapter::HasRigidBody(ECS::EntityID entity) const {
 }
 
 bool BulletWorldAdapter::AddRigidBody(ECS::EntityID entity,
-                                      const RigidBodyComponent& rigidBody,
-                                      const ColliderComponent& collider) {
-    // ==================== 2.2.1 实现刚体添加 ====================
+                                    const RigidBodyComponent& rigidBody,
+                                    const ColliderComponent& collider) {
     if (!m_bulletWorld || !entity.IsValid()) {
         return false;
     }
-    
+
     // 检查是否已存在
     if (m_entityToRigidBody.find(entity) != m_entityToRigidBody.end()) {
-        // 如果已存在，先移除旧的
         RemoveRigidBody(entity);
     }
-    
+
     // 1. 创建碰撞形状
     btCollisionShape* shape = BulletShapeAdapter::CreateShape(collider);
     if (!shape) {
         return false;
     }
-    
+
     // 2. 计算局部惯性
     btVector3 localInertia(0.0f, 0.0f, 0.0f);
     float mass = 0.0f;
+
     if (rigidBody.type == RigidBodyComponent::BodyType::Dynamic && rigidBody.mass > 0.0f) {
         mass = rigidBody.mass;
-        // 从惯性张量提取对角线元素
         localInertia.setX(rigidBody.inertiaTensor(0, 0));
         localInertia.setY(rigidBody.inertiaTensor(1, 1));
         localInertia.setZ(rigidBody.inertiaTensor(2, 2));
-        
-        // 如果惯性张量无效，从形状计算
+
         if (localInertia.length2() < 1e-6f) {
             shape->calculateLocalInertia(mass, localInertia);
         }
     }
-    
+    // Kinematic 和 Static 物体的质量必须为 0
+
     // 3. 创建刚体构造信息
     btRigidBody::btRigidBodyConstructionInfo rbInfo(
         mass,
-        nullptr,  // motionState（将在同步时设置变换）
+        nullptr,
         shape,
         localInertia
     );
-    
+
     // 4. 创建 Bullet 刚体
     btRigidBody* bulletBody = new btRigidBody(rbInfo);
     if (!bulletBody) {
         BulletShapeAdapter::DestroyShape(shape);
         return false;
     }
-    
-    // 5. 同步刚体属性（使用适配器）
+
+    // 5. 先建立映射（必须在 SyncToBullet 之前）
+    AddRigidBodyMapping(entity, bulletBody);
+    m_entityToShape[entity] = shape;
+    m_shapeToEntities[shape].insert(entity);
+
+    // 6. 同步刚体属性（这会设置运动学/静态标志）
     BulletRigidBodyAdapter adapter(bulletBody, entity);
     adapter.SyncToBullet(rigidBody);
-    
-    // 6. 设置材质属性（摩擦和弹性）（2.4.1 和 2.4.2）
+
+    // 7. 设置材质属性
     if (collider.material) {
         bulletBody->setFriction(collider.material->friction);
         bulletBody->setRestitution(collider.material->restitution);
     } else {
-        // 如果没有材质，使用默认值
         bulletBody->setFriction(0.5f);
         bulletBody->setRestitution(0.3f);
     }
-    
-    // 7. 设置触发器标志
+
+    // 8. 设置触发器标志
     if (collider.isTrigger) {
         int flags = bulletBody->getCollisionFlags();
         flags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
         bulletBody->setCollisionFlags(flags);
     }
-    
-    // 8. 添加到物理世界（同时设置碰撞层和掩码）
-    // Bullet 的 addRigidBody 方法可以接受碰撞层和掩码作为参数
-    // 参数：body, group, mask
+
+    // 9. 为运动学物体设置特殊属性
+    if (rigidBody.type == RigidBodyComponent::BodyType::Kinematic) {
+        // 禁用自动休眠
+        bulletBody->setActivationState(DISABLE_DEACTIVATION);
+        // 激活刚体
+        bulletBody->activate(true);
+        // 设置运动学标志（确保已设置）
+        int flags = bulletBody->getCollisionFlags();
+        flags |= btCollisionObject::CF_KINEMATIC_OBJECT;
+        bulletBody->setCollisionFlags(flags);
+    }
+
+    // 10. 添加到物理世界
     m_bulletWorld->addRigidBody(bulletBody, collider.collisionLayer, collider.collisionMask);
-    
-    // 10. 更新映射
-    AddRigidBodyMapping(entity, bulletBody);
-    m_entityToShape[entity] = shape;
-    
-    // 更新形状到实体的反向映射（用于跟踪共享）
-    m_shapeToEntities[shape].insert(entity);
-    
+
+    // 11. 初始变换将在外部通过 SyncTransformToBullet 设置
+    // 这里先设置为单位变换，防止未定义行为
+    btTransform initialTransform;
+    initialTransform.setIdentity();
+    bulletBody->setWorldTransform(initialTransform);
+    bulletBody->setInterpolationWorldTransform(initialTransform);
+
     return true;
 }
 
@@ -506,10 +520,13 @@ bool BulletWorldAdapter::RemoveRigidBody(ECS::EntityID entity) {
     // 3. 释放刚体
     delete rigidBody;
     
-    // 4. 清理映射
-    RemoveRigidBodyMapping(entity);
-    
-    return true;
+        // 4. 清理映射
+        RemoveRigidBodyMapping(entity);
+        
+        // 5. 从已初始化变换集合中移除
+        m_initializedTransforms.erase(entity);
+        
+        return true;
 }
 
 bool BulletWorldAdapter::UpdateRigidBody(ECS::EntityID entity,
@@ -820,25 +837,140 @@ void BulletWorldAdapter::SetMaterialGetter(std::function<std::shared_ptr<Physics
 // ==================== 3.1 ECS 同步 ====================
 
 void BulletWorldAdapter::SyncToECS(ECS::EntityID entity, RigidBodyComponent& rigidBody) {
+    // ==================== 3.1 ECS 同步 ====================
     btRigidBody* bulletBody = GetRigidBody(entity);
     if (!bulletBody) {
         return;
     }
     
-    // 从 Bullet 同步位置和旋转
+    // 使用 BulletRigidBodyAdapter 同步 RigidBodyComponent
+    BulletRigidBodyAdapter adapter(bulletBody, entity);
+    adapter.SyncFromBullet(rigidBody);
+}
+
+void BulletWorldAdapter::SyncTransformToBullet(ECS::EntityID entity, 
+        const Vector3& position, 
+        const Quaternion& rotation) {
+    btRigidBody* bulletBody = GetRigidBody(entity);
+    if (!bulletBody) {
+        return;
+    }
+
+    // 构建新的变换
+    btTransform newTransform = ToBullet(position, rotation);
+
+    // 检查刚体类型
+    int flags = bulletBody->getCollisionFlags();
+    bool isKinematic = (flags & btCollisionObject::CF_KINEMATIC_OBJECT) != 0;
+    bool isStatic = (flags & btCollisionObject::CF_STATIC_OBJECT) != 0;
+
+    std::cout << "[SYNC] SyncTransformToBullet: entity=" << entity.index 
+              << ", isKinematic=" << isKinematic
+              << ", position=(" << position.x() << "," << position.y() << "," << position.z() << ")" << std::endl;
+
+    if (isKinematic) {
+        // ==================== 运动学物体的关键修复 ====================
+        // Bullet3 的 saveKinematicState 会在 stepSimulation 开始时调用
+        // 它使用 interpolationWorldTransform（上一帧）和 worldTransform（当前帧）来计算速度
+        // 因此，我们需要：
+        // 1. 先保存当前的 worldTransform 到 interpolationWorldTransform（作为上一帧位置）
+        // 2. 然后设置新的 worldTransform（当前帧位置）
+        
+        // 检查是否是首次设置变换（使用标志位跟踪）
+        bool isFirstTime = (m_initializedTransforms.find(entity) == m_initializedTransforms.end());
+        
+        if (isFirstTime) {
+            // 首次设置：两个变换都设置为新位置
+            bulletBody->setWorldTransform(newTransform);
+            bulletBody->setInterpolationWorldTransform(newTransform);
+            // 标记为已初始化
+            m_initializedTransforms.insert(entity);
+        } else {
+            // 后续更新：
+            // 1. 获取当前的世界变换（作为上一帧位置）
+            btTransform previousTransform = bulletBody->getWorldTransform();
+            // 2. 将当前 worldTransform 保存到 interpolationWorldTransform（作为上一帧）
+            bulletBody->setInterpolationWorldTransform(previousTransform);
+            // 3. 设置新的 worldTransform（当前帧）
+            bulletBody->setWorldTransform(newTransform);
+        }
+
+        // 清除所有累积的力和速度
+        bulletBody->clearForces();
+        bulletBody->setLinearVelocity(btVector3(0, 0, 0));
+        bulletBody->setAngularVelocity(btVector3(0, 0, 0));
+
+        // 4. 确保激活状态
+        bulletBody->setActivationState(DISABLE_DEACTIVATION);
+        bulletBody->activate(true);
+
+        // 5. 更新 AABB（确保碰撞检测正确）
+        if (m_bulletWorld) {
+            m_bulletWorld->updateSingleAabb(bulletBody);
+        }
+
+    } else if (isStatic) {
+        // 静态物体：直接设置变换
+        bulletBody->setWorldTransform(newTransform);
+        bulletBody->setInterpolationWorldTransform(newTransform);
+
+        // 更新 AABB
+        if (m_bulletWorld) {
+            m_bulletWorld->updateSingleAabb(bulletBody);
+        }
+
+    } else {
+        // 动态物体：只在初始化时设置
+        bulletBody->setWorldTransform(newTransform);
+        bulletBody->setInterpolationWorldTransform(newTransform);
+        bulletBody->activate();
+    }
+}
+
+void BulletWorldAdapter::SyncTransformFromBullet(ECS::EntityID entity, Vector3& position, Quaternion& rotation) {
+    // ==================== 3.2.2 Bullet → ECS 同步（TransformComponent） ====================
+    btRigidBody* bulletBody = GetRigidBody(entity);
+    if (!bulletBody) {
+        return;
+    }
+    
+    // 从 Bullet 获取变换
     const btTransform& transform = bulletBody->getWorldTransform();
+    
+    // 转换为 Eigen 类型
+    FromBullet(transform, position, rotation);
+}
+
+void BulletWorldAdapter::DebugPrintRigidBodyInfo(ECS::EntityID entity) const {
+    btRigidBody* bulletBody = GetRigidBody(entity);
+    if (!bulletBody) {
+        std::cout << "[DEBUG] Entity " << entity.index 
+                  << ": No rigid body found" << std::endl;
+        return;
+    }
+    
+    int flags = bulletBody->getCollisionFlags();
+    bool isKinematic = (flags & btCollisionObject::CF_KINEMATIC_OBJECT) != 0;
+    bool isStatic = (flags & btCollisionObject::CF_STATIC_OBJECT) != 0;
+    
+    btTransform transform = bulletBody->getWorldTransform();
     btVector3 pos = transform.getOrigin();
     btQuaternion rot = transform.getRotation();
     
-    // 同步到 RigidBodyComponent（注意：这里只同步物理状态，TransformComponent 由 PhysicsTransformSync 处理）
-    // 如果需要，可以在这里更新 rigidBody 的内部状态
+    btTransform interpTransform = bulletBody->getInterpolationWorldTransform();
+    btVector3 interpPos = interpTransform.getOrigin();
     
-    // 同步速度
-    const btVector3& linearVel = bulletBody->getLinearVelocity();
-    const btVector3& angularVel = bulletBody->getAngularVelocity();
+    float mass = bulletBody->getInvMass() > 0 ? 1.0f / bulletBody->getInvMass() : 0.0f;
     
-    // 注意：RigidBodyComponent 可能没有直接存储速度的字段
-    // 这里暂时不更新，后续在 3.2 中完善
+    std::cout << "[DEBUG] Entity " << entity.index << " RigidBody Info:" << std::endl;
+    std::cout << "  Type: " << (isKinematic ? "Kinematic" : (isStatic ? "Static" : "Dynamic")) << std::endl;
+    std::cout << "  Position: (" << pos.x() << ", " << pos.y() << ", " << pos.z() << ")" << std::endl;
+    std::cout << "  Interp Position: (" << interpPos.x() << ", " << interpPos.y() << ", " << interpPos.z() << ")" << std::endl;
+    std::cout << "  Rotation: (" << rot.x() << ", " << rot.y() << ", " << rot.z() << ", " << rot.w() << ")" << std::endl;
+    std::cout << "  Mass: " << mass << std::endl;
+    std::cout << "  Activation State: " << bulletBody->getActivationState() << std::endl;
+    std::cout << "  In World: " << (bulletBody->isInWorld() ? "Yes" : "No") << std::endl;
+    std::cout << "  Flags: 0x" << std::hex << flags << std::dec << std::endl;
 }
 
 } // namespace Render::Physics::BulletAdapter
