@@ -24,6 +24,7 @@
 #include "render/ecs/entity.h"
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 // 前向声明
 class btDiscreteDynamicsWorld;
@@ -32,6 +33,13 @@ class btCollisionDispatcher;
 class btConstraintSolver;
 class btCollisionConfiguration;
 class btRigidBody;
+class btCollisionShape;
+
+// 前向声明组件（避免循环依赖）
+namespace Render::Physics {
+struct RigidBodyComponent;
+struct ColliderComponent;
+}
 
 namespace Render::Physics::BulletAdapter {
 
@@ -119,6 +127,37 @@ public:
      * @return 实体 ID，如果不存在则返回 Invalid()
      */
     ECS::EntityID GetEntity(btRigidBody* rigidBody) const;
+    
+    // ==================== 2.2 实体管理 ====================
+    
+    /**
+     * @brief 添加刚体到物理世界
+     * @param entity 实体 ID
+     * @param rigidBody 刚体组件
+     * @param collider 碰撞体组件
+     * @return 是否成功添加
+     */
+    bool AddRigidBody(ECS::EntityID entity, 
+                      const RigidBodyComponent& rigidBody,
+                      const ColliderComponent& collider);
+    
+    /**
+     * @brief 从物理世界移除刚体
+     * @param entity 实体 ID
+     * @return 是否成功移除
+     */
+    bool RemoveRigidBody(ECS::EntityID entity);
+    
+    /**
+     * @brief 更新刚体（检测组件变化并同步）
+     * @param entity 实体 ID
+     * @param rigidBody 刚体组件
+     * @param collider 碰撞体组件
+     * @return 是否成功更新
+     */
+    bool UpdateRigidBody(ECS::EntityID entity,
+                         const RigidBodyComponent& rigidBody,
+                         const ColliderComponent& collider);
 
 private:
     std::unique_ptr<btDiscreteDynamicsWorld> m_bulletWorld;
@@ -130,6 +169,10 @@ private:
     // 实体到 Bullet 刚体的映射
     std::unordered_map<ECS::EntityID, btRigidBody*, ECS::EntityID::Hash> m_entityToRigidBody;
     std::unordered_map<btRigidBody*, ECS::EntityID> m_rigidBodyToEntity;
+    
+    // 实体到形状的映射（用于管理形状生命周期）
+    std::unordered_map<ECS::EntityID, btCollisionShape*, ECS::EntityID::Hash> m_entityToShape; // 实体到形状的映射
+    std::unordered_map<btCollisionShape*, std::unordered_set<ECS::EntityID, ECS::EntityID::Hash>> m_shapeToEntities; // 形状到实体的反向映射（用于跟踪共享）
     
     // 保存配置（用于 Step() 方法中的固定时间步长等参数）
     PhysicsConfig m_config;

@@ -20,11 +20,17 @@
  */
 #include "render/physics/bullet_adapter/bullet_world_adapter.h"
 #include "render/physics/bullet_adapter/eigen_to_bullet.h"
+#include "render/physics/bullet_adapter/bullet_shape_adapter.h"
+#include "render/physics/bullet_adapter/bullet_rigid_body_adapter.h"
+#include "render/physics/physics_components.h"
 #include <BulletDynamics/Dynamics/btDiscreteDynamicsWorld.h>
+#include <BulletDynamics/Dynamics/btRigidBody.h>
 #include <BulletCollision/BroadphaseCollision/btDbvtBroadphase.h>
 #include <BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h>
 #include <BulletCollision/CollisionDispatch/btCollisionDispatcher.h>
 #include <BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.h>
+#include <BulletCollision/CollisionShapes/btCollisionShape.h>
+#include <vector>
 
 namespace Render::Physics::BulletAdapter {
 
@@ -60,9 +66,84 @@ BulletWorldAdapter::~BulletWorldAdapter() {
     // 注意：需要先移除所有刚体，然后才能销毁世界
     // 因为 Bullet 会在析构时检查是否有残留的刚体
     
-    // 清除所有映射（刚体会在世界析构时自动清理）
+    if (!m_bulletWorld) {
+        // 如果世界已经不存在，直接清理映射
+        m_entityToRigidBody.clear();
+        m_rigidBodyToEntity.clear();
+        m_entityToShape.clear();
+        m_shapeToEntities.clear();
+        return;
+    }
+    
+    // 清理所有通过 AddRigidBody 添加的刚体和形状
+    // 注意：只清理在 m_entityToShape 中的实体（即通过 AddRigidBody 添加的）
+    // AddRigidBodyMapping 添加的映射不应该在这里自动删除，因为它们可能由外部管理
+    // 创建实体列表的副本（因为移除会修改映射）
+    std::vector<ECS::EntityID> entitiesToRemove;
+    entitiesToRemove.reserve(m_entityToShape.size());
+    for (const auto& pair : m_entityToShape) {
+        entitiesToRemove.push_back(pair.first);
+    }
+    
+    // 移除所有通过 AddRigidBody 添加的刚体
+    for (ECS::EntityID entity : entitiesToRemove) {
+        // 检查刚体是否存在
+        auto it = m_entityToRigidBody.find(entity);
+        if (it == m_entityToRigidBody.end()) {
+            continue;  // 已经被移除
+        }
+        
+        btRigidBody* rigidBody = it->second;
+        if (!rigidBody) {
+            continue;  // 无效指针
+        }
+        
+        // 先移除映射（在删除刚体之前）
+        m_rigidBodyToEntity.erase(rigidBody);
+        m_entityToRigidBody.erase(it);
+        
+        // 从物理世界移除（如果刚体在世界中）
+        // 注意：Bullet 的 removeRigidBody 可以安全处理不在世界中的刚体
+        try {
+            if (m_bulletWorld) {
+                m_bulletWorld->removeRigidBody(rigidBody);
+            }
+        } catch (...) {
+            // 忽略异常（刚体可能不在世界中）
+        }
+        
+        // 清理形状（检查是否被共享）
+        auto shapeIt = m_entityToShape.find(entity);
+        if (shapeIt != m_entityToShape.end()) {
+            btCollisionShape* shape = shapeIt->second;
+            if (shape) {
+                // 从形状到实体的反向映射中移除该实体
+                auto shapeToEntitiesIt = m_shapeToEntities.find(shape);
+                if (shapeToEntitiesIt != m_shapeToEntities.end()) {
+                    shapeToEntitiesIt->second.erase(entity);
+                    // 如果该形状不再被任何实体使用，才删除它
+                    if (shapeToEntitiesIt->second.empty()) {
+                        BulletShapeAdapter::DestroyShape(shape);
+                        m_shapeToEntities.erase(shapeToEntitiesIt);
+                    }
+                    // 否则，形状被其他实体共享，不删除
+                } else {
+                    // 如果不在反向映射中（不应该发生），使用 DestroyShape 的安全删除
+                    BulletShapeAdapter::DestroyShape(shape);
+                }
+            }
+            m_entityToShape.erase(shapeIt);
+        }
+        
+        // 最后删除刚体
+        delete rigidBody;
+    }
+    
+    // 清除所有映射（应该已经为空）
     m_entityToRigidBody.clear();
     m_rigidBodyToEntity.clear();
+    m_entityToShape.clear();
+    m_shapeToEntities.clear();
     
     // 智能指针会自动清理，但需要按顺序销毁
     // 先销毁世界（会清理所有刚体）
@@ -219,6 +300,259 @@ ECS::EntityID BulletWorldAdapter::GetEntity(btRigidBody* rigidBody) const {
         return it->second;
     }
     return ECS::EntityID::Invalid();
+}
+
+bool BulletWorldAdapter::AddRigidBody(ECS::EntityID entity,
+                                      const RigidBodyComponent& rigidBody,
+                                      const ColliderComponent& collider) {
+    // ==================== 2.2.1 实现刚体添加 ====================
+    if (!m_bulletWorld || !entity.IsValid()) {
+        return false;
+    }
+    
+    // 检查是否已存在
+    if (m_entityToRigidBody.find(entity) != m_entityToRigidBody.end()) {
+        // 如果已存在，先移除旧的
+        RemoveRigidBody(entity);
+    }
+    
+    // 1. 创建碰撞形状
+    btCollisionShape* shape = BulletShapeAdapter::CreateShape(collider);
+    if (!shape) {
+        return false;
+    }
+    
+    // 2. 计算局部惯性
+    btVector3 localInertia(0.0f, 0.0f, 0.0f);
+    float mass = 0.0f;
+    if (rigidBody.type == RigidBodyComponent::BodyType::Dynamic && rigidBody.mass > 0.0f) {
+        mass = rigidBody.mass;
+        // 从惯性张量提取对角线元素
+        localInertia.setX(rigidBody.inertiaTensor(0, 0));
+        localInertia.setY(rigidBody.inertiaTensor(1, 1));
+        localInertia.setZ(rigidBody.inertiaTensor(2, 2));
+        
+        // 如果惯性张量无效，从形状计算
+        if (localInertia.length2() < 1e-6f) {
+            shape->calculateLocalInertia(mass, localInertia);
+        }
+    }
+    
+    // 3. 创建刚体构造信息
+    btRigidBody::btRigidBodyConstructionInfo rbInfo(
+        mass,
+        nullptr,  // motionState（将在同步时设置变换）
+        shape,
+        localInertia
+    );
+    
+    // 4. 创建 Bullet 刚体
+    btRigidBody* bulletBody = new btRigidBody(rbInfo);
+    if (!bulletBody) {
+        BulletShapeAdapter::DestroyShape(shape);
+        return false;
+    }
+    
+    // 5. 同步刚体属性（使用适配器）
+    BulletRigidBodyAdapter adapter(bulletBody, entity);
+    adapter.SyncToBullet(rigidBody);
+    
+    // 6. 设置材质属性（摩擦和弹性）
+    if (collider.material) {
+        bulletBody->setFriction(collider.material->friction);
+        bulletBody->setRestitution(collider.material->restitution);
+    }
+    
+    // 7. 设置碰撞层和掩码
+    if (bulletBody->getBroadphaseHandle()) {
+        bulletBody->getBroadphaseHandle()->m_collisionFilterGroup = collider.collisionLayer;
+        bulletBody->getBroadphaseHandle()->m_collisionFilterMask = collider.collisionMask;
+    }
+    
+    // 8. 设置触发器标志
+    if (collider.isTrigger) {
+        int flags = bulletBody->getCollisionFlags();
+        flags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
+        bulletBody->setCollisionFlags(flags);
+    }
+    
+    // 9. 添加到物理世界
+    m_bulletWorld->addRigidBody(bulletBody);
+    
+    // 10. 更新映射
+    AddRigidBodyMapping(entity, bulletBody);
+    m_entityToShape[entity] = shape;
+    
+    // 更新形状到实体的反向映射（用于跟踪共享）
+    m_shapeToEntities[shape].insert(entity);
+    
+    return true;
+}
+
+bool BulletWorldAdapter::RemoveRigidBody(ECS::EntityID entity) {
+    // ==================== 2.2.2 实现刚体移除 ====================
+    if (!m_bulletWorld || !entity.IsValid()) {
+        return false;
+    }
+    
+    // 查找刚体
+    auto it = m_entityToRigidBody.find(entity);
+    if (it == m_entityToRigidBody.end()) {
+        return false;  // 不存在
+    }
+    
+    btRigidBody* rigidBody = it->second;
+    
+    // 1. 从物理世界移除（如果刚体在世界中）
+    // 注意：检查刚体是否在世界中，避免移除不存在的刚体导致问题
+    // Bullet 的 removeRigidBody 可以安全处理不在世界中的刚体，但为了明确性，我们检查
+    try {
+        // 尝试移除刚体（如果不在世界中，Bullet 会安全处理）
+        m_bulletWorld->removeRigidBody(rigidBody);
+    } catch (...) {
+        // 忽略异常（刚体可能不在世界中）
+    }
+    
+    // 2. 获取并释放形状（检查是否被共享）
+    auto shapeIt = m_entityToShape.find(entity);
+    if (shapeIt != m_entityToShape.end()) {
+        btCollisionShape* shape = shapeIt->second;
+        
+        // 从形状到实体的反向映射中移除该实体
+        auto shapeToEntitiesIt = m_shapeToEntities.find(shape);
+        if (shapeToEntitiesIt != m_shapeToEntities.end()) {
+            shapeToEntitiesIt->second.erase(entity);
+            
+            // 如果该形状不再被任何实体使用，才删除它
+            if (shapeToEntitiesIt->second.empty()) {
+                BulletShapeAdapter::DestroyShape(shape);
+                m_shapeToEntities.erase(shapeToEntitiesIt);
+            }
+            // 否则，形状被其他实体共享，不删除
+        } else {
+            // 如果不在反向映射中（不应该发生），使用 DestroyShape 的安全删除
+            BulletShapeAdapter::DestroyShape(shape);
+        }
+        
+        m_entityToShape.erase(shapeIt);
+    }
+    
+    // 3. 释放刚体
+    delete rigidBody;
+    
+    // 4. 清理映射
+    RemoveRigidBodyMapping(entity);
+    
+    return true;
+}
+
+bool BulletWorldAdapter::UpdateRigidBody(ECS::EntityID entity,
+                                         const RigidBodyComponent& rigidBody,
+                                         const ColliderComponent& collider) {
+    // ==================== 2.2.3 实现刚体更新检测 ====================
+    if (!m_bulletWorld || !entity.IsValid()) {
+        return false;
+    }
+    
+    // 查找刚体
+    auto it = m_entityToRigidBody.find(entity);
+    if (it == m_entityToRigidBody.end()) {
+        // 如果不存在，尝试添加
+        return AddRigidBody(entity, rigidBody, collider);
+    }
+    
+    btRigidBody* bulletBody = it->second;
+    
+    // 1. 检查形状是否需要更新
+    auto shapeIt = m_entityToShape.find(entity);
+    btCollisionShape* currentShape = (shapeIt != m_entityToShape.end()) ? shapeIt->second : nullptr;
+    
+    bool shapeChanged = false;
+    if (!currentShape || BulletShapeAdapter::NeedsShapeUpdate(currentShape, collider)) {
+        // 形状需要更新，创建新形状
+        btCollisionShape* newShape = BulletShapeAdapter::UpdateShape(currentShape, collider);
+        if (newShape && newShape != currentShape) {
+            // 形状已改变，需要替换
+            shapeChanged = true;
+            
+            // 保存旧形状
+            btCollisionShape* oldShape = currentShape;
+            
+            // 更新形状引用
+            m_entityToShape[entity] = newShape;
+            
+            // 更新刚体的形状
+            bulletBody->setCollisionShape(newShape);
+            
+            // 重新计算惯性（如果质量改变）
+            if (rigidBody.type == RigidBodyComponent::BodyType::Dynamic && rigidBody.mass > 0.0f) {
+                btVector3 localInertia(0.0f, 0.0f, 0.0f);
+                btVector3 localInertiaFromTensor(
+                    rigidBody.inertiaTensor(0, 0),
+                    rigidBody.inertiaTensor(1, 1),
+                    rigidBody.inertiaTensor(2, 2)
+                );
+                
+                if (localInertiaFromTensor.length2() < 1e-6f) {
+                    newShape->calculateLocalInertia(rigidBody.mass, localInertia);
+                } else {
+                    localInertia = localInertiaFromTensor;
+                }
+                
+                bulletBody->setMassProps(rigidBody.mass, localInertia);
+            }
+            
+            // 释放旧形状（如果不同，并检查是否被共享）
+            if (oldShape && oldShape != newShape) {
+                // 从形状到实体的反向映射中移除该实体
+                auto oldShapeIt = m_shapeToEntities.find(oldShape);
+                if (oldShapeIt != m_shapeToEntities.end()) {
+                    oldShapeIt->second.erase(entity);
+                    // 如果旧形状不再被任何实体使用，删除它
+                    if (oldShapeIt->second.empty()) {
+                        BulletShapeAdapter::DestroyShape(oldShape);
+                        m_shapeToEntities.erase(oldShapeIt);
+                    }
+                    // 否则，形状被其他实体共享，不删除
+                } else {
+                    // 如果不在反向映射中（不应该发生），使用 DestroyShape 的安全删除
+                    BulletShapeAdapter::DestroyShape(oldShape);
+                }
+            }
+            
+            // 更新新形状到实体的反向映射
+            if (newShape) {
+                m_shapeToEntities[newShape].insert(entity);
+            }
+        }
+    }
+    
+    // 2. 同步刚体属性
+    BulletRigidBodyAdapter adapter(bulletBody, entity);
+    adapter.SyncToBullet(rigidBody);
+    
+    // 3. 更新材质属性
+    if (collider.material) {
+        bulletBody->setFriction(collider.material->friction);
+        bulletBody->setRestitution(collider.material->restitution);
+    }
+    
+    // 4. 更新碰撞层和掩码
+    if (bulletBody->getBroadphaseHandle()) {
+        bulletBody->getBroadphaseHandle()->m_collisionFilterGroup = collider.collisionLayer;
+        bulletBody->getBroadphaseHandle()->m_collisionFilterMask = collider.collisionMask;
+    }
+    
+    // 5. 更新触发器标志
+    int flags = bulletBody->getCollisionFlags();
+    if (collider.isTrigger) {
+        flags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
+    } else {
+        flags &= ~btCollisionObject::CF_NO_CONTACT_RESPONSE;
+    }
+    bulletBody->setCollisionFlags(flags);
+    
+    return true;
 }
 
 } // namespace Render::Physics::BulletAdapter

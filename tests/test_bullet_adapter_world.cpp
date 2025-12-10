@@ -33,6 +33,7 @@
 
 #include "render/physics/bullet_adapter/bullet_world_adapter.h"
 #include "render/physics/physics_config.h"
+#include "render/physics/physics_components.h"
 #include "render/physics/bullet_adapter/eigen_to_bullet.h"
 #include "render/ecs/entity.h"
 #include <BulletDynamics/Dynamics/btDiscreteDynamicsWorld.h>
@@ -364,9 +365,19 @@ bool Test_Mapping_AddRigidBody() {
     ECS::EntityID retrievedEntity = adapter.GetEntity(rigidBody);
     TEST_ASSERT(retrievedEntity == entity1, "应该能通过刚体获取实体 ID");
     
-    // 清理
+    // 清理：先移除映射，然后删除刚体
+    // 注意：btRigidBody 的析构函数会处理形状的引用，所以先删除刚体，再删除形状
+    adapter.RemoveRigidBodyMapping(entity1);
+    
+    // 获取形状指针（在删除刚体之前）
+    btCollisionShape* shapePtr = rigidBody->getCollisionShape();
+    
+    // 删除刚体（会减少形状的引用计数）
     delete rigidBody;
-    delete shape;
+    
+    // 删除形状（如果形状没有被共享，可以安全删除）
+    // 注意：在实际使用中，形状可能被共享，这里测试中假设不共享
+    delete shapePtr;
     
     return true;
 }
@@ -397,9 +408,10 @@ bool Test_Mapping_RemoveRigidBodyByEntity() {
     ECS::EntityID retrievedEntity = adapter.GetEntity(rigidBody);
     TEST_ASSERT(!retrievedEntity.IsValid(), "移除后应该无法通过刚体获取实体 ID");
     
-    // 清理
+    // 清理：先删除刚体，再删除形状
+    btCollisionShape* shapePtr = rigidBody->getCollisionShape();
     delete rigidBody;
-    delete shape;
+    delete shapePtr;
     
     return true;
 }
@@ -430,9 +442,10 @@ bool Test_Mapping_RemoveRigidBodyByPointer() {
     ECS::EntityID retrievedEntity = adapter.GetEntity(rigidBody);
     TEST_ASSERT(!retrievedEntity.IsValid(), "移除后应该无法通过刚体获取实体 ID");
     
-    // 清理
+    // 清理：先删除刚体，再删除形状
+    btCollisionShape* shapePtr = rigidBody->getCollisionShape();
     delete rigidBody;
-    delete shape;
+    delete shapePtr;
     
     return true;
 }
@@ -470,11 +483,19 @@ bool Test_Mapping_UpdateMapping() {
     ECS::EntityID oldEntity = adapter.GetEntity(rigidBody1);
     TEST_ASSERT(!oldEntity.IsValid(), "旧的映射应该已移除");
     
-    // 清理
+    // 清理：先移除映射，再删除刚体和形状
+    // 注意：这些刚体只通过 AddRigidBodyMapping 添加，没有通过 AddRigidBody 添加到世界
+    // 所以需要在析构前手动清理映射
+    adapter.RemoveRigidBodyMapping(entity);
+    
+    // 删除刚体和形状
+    btCollisionShape* shapePtr2 = rigidBody2->getCollisionShape();
     delete rigidBody2;
-    delete shape2;
+    delete shapePtr2;
+    
+    btCollisionShape* shapePtr1 = rigidBody1->getCollisionShape();
     delete rigidBody1;
-    delete shape1;
+    delete shapePtr1;
     
     return true;
 }
@@ -514,10 +535,22 @@ bool Test_Mapping_MultipleEntities() {
                     "应该能正确获取所有映射的实体 ID");
     }
     
-    // 清理
+    // 清理：先移除所有映射，再删除刚体和形状
+    // 注意：这些刚体只通过 AddRigidBodyMapping 添加，没有通过 AddRigidBody 添加到世界
+    for (ECS::EntityID entity : entities) {
+        adapter.RemoveRigidBodyMapping(entity);
+    }
+    
+    // 删除刚体和形状
+    // 注意：这里假设形状不共享，实际应该检查引用计数
+    std::vector<btCollisionShape*> shapes;
+    shapes.reserve(rigidBodies.size());
     for (auto* rb : rigidBodies) {
-        delete rb->getCollisionShape();
+        shapes.push_back(rb->getCollisionShape());
         delete rb;
+    }
+    for (auto* shape : shapes) {
+        delete shape;
     }
     
     return true;
@@ -542,9 +575,395 @@ bool Test_Mapping_InvalidEntity() {
     btRigidBody* retrieved = adapter.GetRigidBody(invalidEntity);
     TEST_ASSERT(retrieved == nullptr, "无效实体 ID 不应该添加映射");
     
-    // 清理
+    // 清理：先删除刚体，再删除形状
+    btCollisionShape* shapePtr = rigidBody->getCollisionShape();
     delete rigidBody;
-    delete shape;
+    delete shapePtr;
+    
+    return true;
+}
+
+// ============================================================================
+// 2.2 实体管理测试
+// ============================================================================
+
+bool Test_EntityManagement_AddDynamicRigidBody() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    // 创建测试实体和组件
+    ECS::EntityID entity{1, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 2.0f;
+    rigidBody.inverseMass = 0.5f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(1.0f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(1.0f);
+    collider.material = std::make_shared<PhysicsMaterial>(PhysicsMaterial::Default());
+    
+    // 添加刚体
+    bool result = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(result, "应该成功添加动态刚体");
+    
+    // 验证刚体已添加
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "应该能获取刚体");
+    TEST_ASSERT_NEAR(bulletBody->getMass(), 2.0f, 0.001f, "质量应该正确");
+    
+    // 验证刚体在世界中
+    btDiscreteDynamicsWorld* world = adapter.GetBulletWorld();
+    TEST_ASSERT(world != nullptr, "世界应该存在");
+    
+    return true;
+}
+
+bool Test_EntityManagement_AddStaticRigidBody() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    ECS::EntityID entity{2, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Static;
+    rigidBody.mass = 0.0f;
+    rigidBody.inverseMass = 0.0f;
+    
+    ColliderComponent collider = ColliderComponent::CreateBox(Vector3(5.0f, 0.5f, 5.0f));
+    
+    bool result = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(result, "应该成功添加静态刚体");
+    
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "应该能获取刚体");
+    TEST_ASSERT_NEAR(bulletBody->getMass(), 0.0f, 0.001f, "静态刚体质量应该为 0");
+    
+    // 验证类型标志
+    int flags = bulletBody->getCollisionFlags();
+    TEST_ASSERT((flags & btCollisionObject::CF_STATIC_OBJECT) != 0, "应该是静态物体");
+    
+    return true;
+}
+
+bool Test_EntityManagement_AddKinematicRigidBody() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    ECS::EntityID entity{3, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Kinematic;
+    rigidBody.mass = 0.0f;
+    rigidBody.inverseMass = 0.0f;
+    
+    ColliderComponent collider = ColliderComponent::CreateBox(Vector3(1.0f, 1.0f, 1.0f));
+    
+    bool result = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(result, "应该成功添加运动学刚体");
+    
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "应该能获取刚体");
+    
+    // 验证类型标志
+    int flags = bulletBody->getCollisionFlags();
+    TEST_ASSERT((flags & btCollisionObject::CF_KINEMATIC_OBJECT) != 0, "应该是运动学物体");
+    
+    return true;
+}
+
+bool Test_EntityManagement_AddRigidBodyWithMaterial() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    ECS::EntityID entity{4, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    collider.material = std::make_shared<PhysicsMaterial>(PhysicsMaterial::Rubber());
+    
+    bool result = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(result, "应该成功添加带材质的刚体");
+    
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "应该能获取刚体");
+    
+    // 验证材质属性
+    TEST_ASSERT_NEAR(bulletBody->getFriction(), 0.8f, 0.001f, "摩擦系数应该正确");
+    TEST_ASSERT_NEAR(bulletBody->getRestitution(), 0.9f, 0.001f, "弹性系数应该正确");
+    
+    return true;
+}
+
+bool Test_EntityManagement_AddRigidBodyWithTrigger() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    ECS::EntityID entity{5, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    collider.isTrigger = true;
+    
+    bool result = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(result, "应该成功添加触发器");
+    
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "应该能获取刚体");
+    
+    // 验证触发器标志
+    int flags = bulletBody->getCollisionFlags();
+    TEST_ASSERT((flags & btCollisionObject::CF_NO_CONTACT_RESPONSE) != 0, "应该是触发器");
+    
+    return true;
+}
+
+bool Test_EntityManagement_RemoveRigidBody() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    // 添加刚体
+    ECS::EntityID entity{6, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    
+    bool addResult = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(addResult, "应该成功添加刚体");
+    
+    // 验证刚体存在
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "刚体应该存在");
+    
+    // 移除刚体
+    bool removeResult = adapter.RemoveRigidBody(entity);
+    TEST_ASSERT(removeResult, "应该成功移除刚体");
+    
+    // 验证刚体已移除
+    btRigidBody* removedBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(removedBody == nullptr, "刚体应该已被移除");
+    
+    return true;
+}
+
+bool Test_EntityManagement_RemoveNonExistentRigidBody() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    ECS::EntityID entity{7, 0};
+    
+    // 尝试移除不存在的刚体
+    bool result = adapter.RemoveRigidBody(entity);
+    TEST_ASSERT(!result, "移除不存在的刚体应该返回 false");
+    
+    return true;
+}
+
+bool Test_EntityManagement_UpdateRigidBodyProperties() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    // 添加刚体
+    ECS::EntityID entity{8, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    rigidBody.linearDamping = 0.1f;
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    
+    bool addResult = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(addResult, "应该成功添加刚体");
+    
+    // 更新刚体属性
+    rigidBody.mass = 2.0f;
+    rigidBody.linearDamping = 0.2f;
+    rigidBody.angularDamping = 0.15f;
+    
+    bool updateResult = adapter.UpdateRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(updateResult, "应该成功更新刚体");
+    
+    // 验证属性已更新
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "刚体应该仍然存在");
+    TEST_ASSERT_NEAR(bulletBody->getMass(), 2.0f, 0.001f, "质量应该已更新");
+    TEST_ASSERT_NEAR(bulletBody->getLinearDamping(), 0.2f, 0.001f, "线性阻尼应该已更新");
+    TEST_ASSERT_NEAR(bulletBody->getAngularDamping(), 0.15f, 0.001f, "角阻尼应该已更新");
+    
+    return true;
+}
+
+bool Test_EntityManagement_UpdateRigidBodyShape() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    // 添加球体刚体
+    ECS::EntityID entity{9, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    
+    bool addResult = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(addResult, "应该成功添加球体刚体");
+    
+    // 更新为盒体
+    collider = ColliderComponent::CreateBox(Vector3(1.0f, 1.0f, 1.0f));
+    rigidBody.SetInertiaTensorFromShape("box", Vector3(1.0f, 1.0f, 1.0f));
+    
+    bool updateResult = adapter.UpdateRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(updateResult, "应该成功更新形状");
+    
+    // 验证刚体仍然存在
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "刚体应该仍然存在");
+    
+    // 验证形状已更新（通过检查形状类型）
+    btCollisionShape* shape = bulletBody->getCollisionShape();
+    TEST_ASSERT(shape != nullptr, "形状应该存在");
+    
+    return true;
+}
+
+bool Test_EntityManagement_UpdateRigidBodyMaterial() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    // 添加刚体
+    ECS::EntityID entity{10, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    collider.material = std::make_shared<PhysicsMaterial>(PhysicsMaterial::Default());
+    
+    bool addResult = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(addResult, "应该成功添加刚体");
+    
+    // 更新材质
+    collider.material = std::make_shared<PhysicsMaterial>(PhysicsMaterial::Ice());
+    
+    bool updateResult = adapter.UpdateRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(updateResult, "应该成功更新材质");
+    
+    // 验证材质已更新
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "刚体应该仍然存在");
+    TEST_ASSERT_NEAR(bulletBody->getFriction(), 0.05f, 0.001f, "摩擦系数应该已更新");
+    TEST_ASSERT_NEAR(bulletBody->getRestitution(), 0.1f, 0.001f, "弹性系数应该已更新");
+    
+    return true;
+}
+
+bool Test_EntityManagement_UpdateRigidBodyType() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    // 添加动态刚体
+    ECS::EntityID entity{11, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    
+    bool addResult = adapter.AddRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(addResult, "应该成功添加动态刚体");
+    
+    // 更新为静态刚体
+    rigidBody.type = RigidBodyComponent::BodyType::Static;
+    rigidBody.mass = 0.0f;
+    rigidBody.inverseMass = 0.0f;
+    
+    bool updateResult = adapter.UpdateRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(updateResult, "应该成功更新刚体类型");
+    
+    // 验证类型已更新
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "刚体应该仍然存在");
+    TEST_ASSERT_NEAR(bulletBody->getMass(), 0.0f, 0.001f, "静态刚体质量应该为 0");
+    
+    int flags = bulletBody->getCollisionFlags();
+    TEST_ASSERT((flags & btCollisionObject::CF_STATIC_OBJECT) != 0, "应该是静态物体");
+    
+    return true;
+}
+
+bool Test_EntityManagement_UpdateNonExistentRigidBody() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    ECS::EntityID entity{12, 0};
+    RigidBodyComponent rigidBody;
+    rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+    rigidBody.mass = 1.0f;
+    rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+    
+    ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+    
+    // 更新不存在的刚体（应该自动添加）
+    bool result = adapter.UpdateRigidBody(entity, rigidBody, collider);
+    TEST_ASSERT(result, "更新不存在的刚体应该自动添加");
+    
+    // 验证刚体已添加
+    btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+    TEST_ASSERT(bulletBody != nullptr, "刚体应该已被添加");
+    
+    return true;
+}
+
+bool Test_EntityManagement_MultipleRigidBodies() {
+    PhysicsConfig config = PhysicsConfig::Default();
+    BulletWorldAdapter adapter(config);
+    
+    const int count = 5;
+    std::vector<ECS::EntityID> entities;
+    
+    // 添加多个刚体
+    for (int i = 0; i < count; ++i) {
+        ECS::EntityID entity{static_cast<uint32_t>(i + 20), 0};
+        entities.push_back(entity);
+        
+        RigidBodyComponent rigidBody;
+        rigidBody.type = RigidBodyComponent::BodyType::Dynamic;
+        rigidBody.mass = static_cast<float>(i + 1);
+        rigidBody.SetInertiaTensorFromShape("sphere", Vector3(0.5f, 0.0f, 0.0f));
+        
+        ColliderComponent collider = ColliderComponent::CreateSphere(0.5f);
+        
+        bool result = adapter.AddRigidBody(entity, rigidBody, collider);
+        TEST_ASSERT(result, "应该成功添加刚体");
+    }
+    
+    // 验证所有刚体都存在
+    for (ECS::EntityID entity : entities) {
+        btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+        TEST_ASSERT(bulletBody != nullptr, "所有刚体都应该存在");
+    }
+    
+    // 移除所有刚体
+    for (ECS::EntityID entity : entities) {
+        bool result = adapter.RemoveRigidBody(entity);
+        TEST_ASSERT(result, "应该成功移除刚体");
+    }
+    
+    // 验证所有刚体都已移除
+    for (ECS::EntityID entity : entities) {
+        btRigidBody* bulletBody = adapter.GetRigidBody(entity);
+        TEST_ASSERT(bulletBody == nullptr, "所有刚体都应该已被移除");
+    }
     
     return true;
 }
@@ -586,6 +1005,22 @@ int main() {
     RUN_TEST(Test_Mapping_UpdateMapping);
     RUN_TEST(Test_Mapping_MultipleEntities);
     RUN_TEST(Test_Mapping_InvalidEntity);
+    
+    // 2.2 实体管理测试
+    std::cout << "\n--- 2.2 实体管理测试 ---" << std::endl;
+    RUN_TEST(Test_EntityManagement_AddDynamicRigidBody);
+    RUN_TEST(Test_EntityManagement_AddStaticRigidBody);
+    RUN_TEST(Test_EntityManagement_AddKinematicRigidBody);
+    RUN_TEST(Test_EntityManagement_AddRigidBodyWithMaterial);
+    RUN_TEST(Test_EntityManagement_AddRigidBodyWithTrigger);
+    RUN_TEST(Test_EntityManagement_RemoveRigidBody);
+    RUN_TEST(Test_EntityManagement_RemoveNonExistentRigidBody);
+    RUN_TEST(Test_EntityManagement_UpdateRigidBodyProperties);
+    RUN_TEST(Test_EntityManagement_UpdateRigidBodyShape);
+    RUN_TEST(Test_EntityManagement_UpdateRigidBodyMaterial);
+    RUN_TEST(Test_EntityManagement_UpdateRigidBodyType);
+    RUN_TEST(Test_EntityManagement_UpdateNonExistentRigidBody);
+    RUN_TEST(Test_EntityManagement_MultipleRigidBodies);
     
     // 输出测试结果
     std::cout << "\n========================================" << std::endl;

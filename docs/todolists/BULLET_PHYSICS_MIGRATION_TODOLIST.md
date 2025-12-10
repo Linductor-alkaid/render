@@ -216,23 +216,23 @@
 
 ### 2.2 实体管理
 
-- [ ] **2.2.1** 实现刚体添加
-  - [ ] `AddRigidBody(ECS::EntityID, const RigidBodyComponent&, const ColliderComponent&)`
-  - [ ] 创建 `btRigidBody`
-  - [ ] 创建并附加 `btCollisionShape`
-  - [ ] 添加到 `btDiscreteDynamicsWorld`
-  - [ ] 更新实体映射
+- [x] **2.2.1** 实现刚体添加
+  - [x] `AddRigidBody(ECS::EntityID, const RigidBodyComponent&, const ColliderComponent&)`
+  - [x] 创建 `btRigidBody`
+  - [x] 创建并附加 `btCollisionShape`
+  - [x] 添加到 `btDiscreteDynamicsWorld`
+  - [x] 更新实体映射
 
-- [ ] **2.2.2** 实现刚体移除
-  - [ ] `RemoveRigidBody(ECS::EntityID)`
-  - [ ] 从 `btDiscreteDynamicsWorld` 移除
-  - [ ] 清理实体映射
-  - [ ] 释放 Bullet 对象（注意形状共享）
+- [x] **2.2.2** 实现刚体移除
+  - [x] `RemoveRigidBody(ECS::EntityID)`
+  - [x] 从 `btDiscreteDynamicsWorld` 移除
+  - [x] 清理实体映射
+  - [x] 释放 Bullet 对象（注意形状共享）
 
-- [ ] **2.2.3** 实现刚体更新检测
-  - [ ] 检测组件变化（质量、形状、类型等）
-  - [ ] 自动更新对应的 Bullet 对象
-  - [ ] 处理形状替换
+- [x] **2.2.3** 实现刚体更新检测
+  - [x] 检测组件变化（质量、形状、类型等）
+  - [x] 自动更新对应的 Bullet 对象
+  - [x] 处理形状替换
 
 **验证标准**:
 - ✅ 刚体正确添加到物理世界
