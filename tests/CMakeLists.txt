@@ -45,6 +45,9 @@ add_executable(test_ccd_basic test_ccd_basic.cpp)
 add_executable(test_ccd_sphere test_ccd_sphere.cpp)
 add_executable(test_ccd_integration test_ccd_integration.cpp)
 
+# PhysicsWorld 条件编译测试（无论是否启用 Bullet 都能编译）
+add_executable(test_physics_world_conditional_compile test_physics_world_conditional_compile.cpp)
+
 # Bullet Adapter 测试（仅在启用 Bullet 时编译）
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     add_executable(test_bullet_adapter_eigen_to_bullet test_bullet_adapter_eigen_to_bullet.cpp)
@@ -85,6 +88,7 @@ target_link_libraries(test_physics_full_pipeline PRIVATE RenderEngine)
 target_link_libraries(test_ccd_basic PRIVATE RenderEngine)
 target_link_libraries(test_ccd_sphere PRIVATE RenderEngine)
 target_link_libraries(test_ccd_integration PRIVATE RenderEngine)
+target_link_libraries(test_physics_world_conditional_compile PRIVATE RenderEngine)
 
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     target_link_libraries(test_bullet_adapter_eigen_to_bullet PRIVATE RenderEngine)
@@ -125,6 +129,10 @@ target_compile_definitions(test_physics_full_pipeline PRIVATE PROJECT_SOURCE_DIR
 target_compile_definitions(test_ccd_basic PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(test_ccd_sphere PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
 target_compile_definitions(test_ccd_integration PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+target_compile_definitions(test_physics_world_conditional_compile PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
+    target_compile_definitions(test_physics_world_conditional_compile PRIVATE USE_BULLET_PHYSICS)
+endif()
 
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     target_compile_definitions(test_bullet_adapter_eigen_to_bullet PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
@@ -180,6 +188,7 @@ if(MSVC)
         target_compile_options(test_bullet_adapter_world PRIVATE /utf-8)
         target_compile_options(test_bullet_adapter_collision PRIVATE /utf-8)
         target_compile_options(test_bullet_adapter_material PRIVATE /utf-8)
+        target_compile_options(test_physics_world_conditional_compile PRIVATE /utf-8)
     endif()
 endif()
 
@@ -213,6 +222,7 @@ add_test(NAME test_physics_full_pipeline COMMAND test_physics_full_pipeline)
 add_test(NAME test_ccd_basic COMMAND test_ccd_basic)
 add_test(NAME test_ccd_sphere COMMAND test_ccd_sphere)
 add_test(NAME test_ccd_integration COMMAND test_ccd_integration)
+add_test(NAME test_physics_world_conditional_compile COMMAND test_physics_world_conditional_compile)
 
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     add_test(NAME test_bullet_adapter_eigen_to_bullet COMMAND test_bullet_adapter_eigen_to_bullet)

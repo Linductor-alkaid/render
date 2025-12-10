@@ -364,6 +364,10 @@ ECS::EntityID BulletWorldAdapter::GetEntity(btRigidBody* rigidBody) const {
     return ECS::EntityID::Invalid();
 }
 
+bool BulletWorldAdapter::HasRigidBody(ECS::EntityID entity) const {
+    return m_entityToRigidBody.find(entity) != m_entityToRigidBody.end();
+}
+
 bool BulletWorldAdapter::AddRigidBody(ECS::EntityID entity,
                                       const RigidBodyComponent& rigidBody,
                                       const ColliderComponent& collider) {
@@ -811,6 +815,30 @@ void BulletWorldAdapter::SetMaterialGetter(std::function<std::shared_ptr<Physics
     if (m_materialCallback) {
         BulletMaterialCallback::SetMaterialGetter(std::move(getter));
     }
+}
+
+// ==================== 3.1 ECS 同步 ====================
+
+void BulletWorldAdapter::SyncToECS(ECS::EntityID entity, RigidBodyComponent& rigidBody) {
+    btRigidBody* bulletBody = GetRigidBody(entity);
+    if (!bulletBody) {
+        return;
+    }
+    
+    // 从 Bullet 同步位置和旋转
+    const btTransform& transform = bulletBody->getWorldTransform();
+    btVector3 pos = transform.getOrigin();
+    btQuaternion rot = transform.getRotation();
+    
+    // 同步到 RigidBodyComponent（注意：这里只同步物理状态，TransformComponent 由 PhysicsTransformSync 处理）
+    // 如果需要，可以在这里更新 rigidBody 的内部状态
+    
+    // 同步速度
+    const btVector3& linearVel = bulletBody->getLinearVelocity();
+    const btVector3& angularVel = bulletBody->getAngularVelocity();
+    
+    // 注意：RigidBodyComponent 可能没有直接存储速度的字段
+    // 这里暂时不更新，后续在 3.2 中完善
 }
 
 } // namespace Render::Physics::BulletAdapter

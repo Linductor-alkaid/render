@@ -141,6 +141,13 @@ public:
      */
     ECS::EntityID GetEntity(btRigidBody* rigidBody) const;
     
+    /**
+     * @brief 检查实体是否有刚体
+     * @param entity 实体 ID
+     * @return 是否存在
+     */
+    bool HasRigidBody(ECS::EntityID entity) const;
+    
     // ==================== 2.2 实体管理 ====================
     
     /**
@@ -185,6 +192,15 @@ public:
      * @return 碰撞对列表
      */
     const std::vector<BulletContactCallback::CollisionPair>& GetCollisionPairs() const;
+    
+    // ==================== 3.1 ECS 同步 ====================
+    
+    /**
+     * @brief 同步 Bullet 状态到 ECS 组件
+     * @param entity 实体 ID
+     * @param rigidBody 刚体组件（将被更新）
+     */
+    void SyncToECS(ECS::EntityID entity, RigidBodyComponent& rigidBody);
     
     // ==================== 2.4 物理材质处理 ====================
     

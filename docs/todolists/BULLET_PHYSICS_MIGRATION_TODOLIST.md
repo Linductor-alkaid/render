@@ -301,14 +301,15 @@
 
 ### 3.1 条件编译支持
 
-- [ ] **3.1.1** 修改 PhysicsWorld 头文件
-  - [ ] 添加 `#ifdef USE_BULLET_PHYSICS` 条件编译
-  - [ ] 添加 `BulletWorldAdapter` 成员变量
-  - [ ] 保持原有实现可用（向后兼容）
+- [x] **3.1.1** 修改 PhysicsWorld 头文件
+  - [x] 添加 `#ifdef USE_BULLET_PHYSICS` 条件编译
+  - [x] 添加 `BulletWorldAdapter` 成员变量
+  - [x] 保持原有实现可用（向后兼容）
 
-- [ ] **3.1.2** 修改 PhysicsWorld 实现
-  - [ ] 在构造函数中根据条件编译选择后端
-  - [ ] 保持原有实现不变
+- [x] **3.1.2** 修改 PhysicsWorld 实现
+  - [x] 在构造函数中根据条件编译选择后端
+  - [x] 保持原有实现不变（通过 `StepLegacy()` 方法）
+  - [x] 实现 `SyncECSToBullet()` 和 `SyncBulletToECS()` 方法
 
 **验证标准**:
 - ✅ 可以通过编译选项切换后端

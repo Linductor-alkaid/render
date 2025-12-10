@@ -24,6 +24,13 @@
 #include "physics_components.h"
 #include "physics_transform_sync.h"
 
+#ifdef USE_BULLET_PHYSICS
+// 前向声明 Bullet 适配器（避免循环依赖）
+namespace Render::Physics::BulletAdapter {
+class BulletWorldAdapter;
+}
+#endif
+
 namespace Render {
 
 namespace ECS {
@@ -53,8 +60,10 @@ public:
     
     /**
      * @brief 析构函数
+     * 
+     * @note 需要在实现文件中定义，因为需要完整类型来删除 unique_ptr
      */
-    ~PhysicsWorld() = default;
+    ~PhysicsWorld();
     
     /**
      * @brief 物理步进（每帧调用）
@@ -100,12 +109,58 @@ public:
      */
     void InterpolateTransforms(float alpha);
     
+#ifdef USE_BULLET_PHYSICS
+    /**
+     * @brief 获取 Bullet 适配器（用于高级操作）
+     * @return BulletWorldAdapter 指针，如果未启用 Bullet 则返回 nullptr
+     */
+    BulletAdapter::BulletWorldAdapter* GetBulletAdapter() {
+        return m_bulletAdapter.get();
+    }
+    
+    /**
+     * @brief 获取 Bullet 适配器（常量版本）
+     */
+    const BulletAdapter::BulletWorldAdapter* GetBulletAdapter() const {
+        return m_bulletAdapter.get();
+    }
+#endif
+    
+private:
+    /**
+     * @brief 原有实现（向后兼容，当不使用 Bullet 时使用）
+     */
+    void StepLegacy(float deltaTime);
+    
+#ifdef USE_BULLET_PHYSICS
+    /**
+     * @brief 同步 ECS 组件到 Bullet（添加/更新/移除刚体）
+     */
+    void SyncECSToBullet();
+    
+    /**
+     * @brief 同步 Bullet 结果到 ECS（位置、旋转、速度等）
+     */
+    void SyncBulletToECS();
+#endif
+    
 private:
     ECS::World* m_ecsWorld;
     PhysicsConfig m_config;
     
     // 物理-渲染同步器
     std::unique_ptr<PhysicsTransformSync> m_transformSync;
+    
+#ifdef USE_BULLET_PHYSICS
+    // ==================== 3.1 条件编译支持 ====================
+    // Bullet 物理引擎适配器（当 USE_BULLET_PHYSICS 定义时使用）
+    std::unique_ptr<BulletAdapter::BulletWorldAdapter> m_bulletAdapter;
+    
+    // 标记是否使用 Bullet 后端
+    bool m_useBulletBackend = true;
+#else
+    // 原有实现保持不变（向后兼容）
+#endif
 };
 
 } // namespace Physics
