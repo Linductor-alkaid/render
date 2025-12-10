@@ -48,6 +48,7 @@ add_executable(test_ccd_integration test_ccd_integration.cpp)
 # Bullet Adapter 测试（仅在启用 Bullet 时编译）
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     add_executable(test_bullet_adapter_eigen_to_bullet test_bullet_adapter_eigen_to_bullet.cpp)
+    add_executable(test_bullet_adapter_shape test_bullet_adapter_shape.cpp)
 endif()
 
 target_link_libraries(mesh_tangent_test PRIVATE RenderEngine)
@@ -83,6 +84,7 @@ target_link_libraries(test_ccd_integration PRIVATE RenderEngine)
 
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     target_link_libraries(test_bullet_adapter_eigen_to_bullet PRIVATE RenderEngine)
+    target_link_libraries(test_bullet_adapter_shape PRIVATE RenderEngine)
 endif()
 
 target_compile_definitions(mesh_tangent_test PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
@@ -119,6 +121,8 @@ target_compile_definitions(test_ccd_integration PRIVATE PROJECT_SOURCE_DIR="${PR
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     target_compile_definitions(test_bullet_adapter_eigen_to_bullet PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
     target_compile_definitions(test_bullet_adapter_eigen_to_bullet PRIVATE USE_BULLET_PHYSICS)
+    target_compile_definitions(test_bullet_adapter_shape PRIVATE PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR_POSIX}")
+    target_compile_definitions(test_bullet_adapter_shape PRIVATE USE_BULLET_PHYSICS)
 endif()
 
 if(MSVC)
@@ -155,6 +159,7 @@ if(MSVC)
     
     if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
         target_compile_options(test_bullet_adapter_eigen_to_bullet PRIVATE /utf-8)
+        target_compile_options(test_bullet_adapter_shape PRIVATE /utf-8)
     endif()
 endif()
 
@@ -191,4 +196,5 @@ add_test(NAME test_ccd_integration COMMAND test_ccd_integration)
 
 if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
     add_test(NAME test_bullet_adapter_eigen_to_bullet COMMAND test_bullet_adapter_eigen_to_bullet)
+    add_test(NAME test_bullet_adapter_shape COMMAND test_bullet_adapter_shape)
 endif()

@@ -45,8 +45,20 @@ public:
      * @brief 更新现有形状的参数
      * @param shape 现有形状（必须与 collider 的类型匹配）
      * @param collider 碰撞体组件
+     * @return 如果形状参数已改变，返回新创建的形状（需要调用者替换旧形状）；否则返回 nullptr
+     * @note 如果返回非空指针，调用者需要：
+     *       1. 将新形状设置到 btRigidBody
+     *       2. 调用 DestroyShape 释放旧形状
      */
-    static void UpdateShape(btCollisionShape* shape, const ColliderComponent& collider);
+    static btCollisionShape* UpdateShape(btCollisionShape* shape, const ColliderComponent& collider);
+    
+    /**
+     * @brief 检查形状参数是否需要更新
+     * @param shape 现有形状
+     * @param collider 碰撞体组件
+     * @return true 如果参数已改变，需要重新创建形状
+     */
+    static bool NeedsShapeUpdate(btCollisionShape* shape, const ColliderComponent& collider);
     
     /**
      * @brief 释放形状（用于清理）

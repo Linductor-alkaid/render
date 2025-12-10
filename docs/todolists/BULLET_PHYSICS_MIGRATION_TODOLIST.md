@@ -91,33 +91,33 @@
 
 ### 1.3 形状适配器
 
-- [ ] **1.3.1** 实现基础形状创建
-  - [ ] `BulletShapeAdapter::CreateShape(const ColliderComponent&)`
-  - [ ] 支持 `ShapeType::Sphere` → `btSphereShape`
-  - [ ] 支持 `ShapeType::Box` → `btBoxShape`
-  - [ ] 支持 `ShapeType::Capsule` → `btCapsuleShape`
-  - [ ] 编写单元测试
+- [x] **1.3.1** 实现基础形状创建
+  - [x] `BulletShapeAdapter::CreateShape(const ColliderComponent&)`
+  - [x] 支持 `ShapeType::Sphere` → `btSphereShape`
+  - [x] 支持 `ShapeType::Box` → `btBoxShape`
+  - [x] 支持 `ShapeType::Capsule` → `btCapsuleShape`
+  - [x] 编写单元测试
 
-- [ ] **1.3.2** 实现复杂形状创建
-  - [ ] 支持 `ShapeType::ConvexHull` → `btConvexHullShape`
-  - [ ] 支持 `ShapeType::Mesh` → `btBvhTriangleMeshShape`
-  - [ ] 处理网格数据转换（`Mesh` → Bullet 网格）
-  - [ ] 编写单元测试
+- [x] **1.3.2** 实现复杂形状创建
+  - [x] 支持 `ShapeType::ConvexHull` → `btConvexHullShape`
+  - [x] 支持 `ShapeType::Mesh` → `btBvhTriangleMeshShape`
+  - [x] 处理网格数据转换（`Mesh` → Bullet 网格）
+  - [x] 编写单元测试
 
-- [ ] **1.3.3** 实现形状更新逻辑
-  - [ ] `UpdateShape(btCollisionShape*, const ColliderComponent&)`
-  - [ ] 处理形状参数动态修改
-  - [ ] 处理形状类型切换
+- [x] **1.3.3** 实现形状更新逻辑
+  - [x] `UpdateShape(btCollisionShape*, const ColliderComponent&)`
+  - [x] 处理形状参数动态修改
+  - [x] 处理形状类型切换
 
-- [ ] **1.3.4** 实现形状局部变换
-  - [ ] 处理 `ColliderComponent::center` 偏移
-  - [ ] 处理 `ColliderComponent::rotation` 旋转
-  - [ ] 使用 `btTransform` 存储局部变换
+- [x] **1.3.4** 实现形状局部变换
+  - [x] 处理 `ColliderComponent::center` 偏移
+  - [x] 处理 `ColliderComponent::rotation` 旋转
+  - [x] 使用 `btTransform` 存储局部变换
 
-- [ ] **1.3.5** 实现形状共享优化
-  - [ ] 创建形状缓存机制
-  - [ ] 相同参数的形状只创建一次
-  - [ ] 实现形状引用计数管理
+- [x] **1.3.5** 实现形状共享优化
+  - [x] 创建形状缓存机制
+  - [x] 相同参数的形状只创建一次
+  - [x] 实现形状引用计数管理
 
 **验证标准**:
 - ✅ 所有形状类型正确创建
