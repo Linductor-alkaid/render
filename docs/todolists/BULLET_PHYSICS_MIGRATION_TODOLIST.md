@@ -243,25 +243,25 @@
 
 ### 2.3 碰撞检测集成
 
-- [ ] **2.3.1** 实现碰撞层和掩码过滤
-  - [ ] 同步 `ColliderComponent::collisionLayer` → `m_collisionFilterGroup`
-  - [ ] 同步 `ColliderComponent::collisionMask` → `m_collisionFilterMask`
-  - [ ] 实现自定义碰撞过滤回调
+- [x] **2.3.1** 实现碰撞层和掩码过滤
+  - [x] 同步 `ColliderComponent::collisionLayer` → `m_collisionFilterGroup`
+  - [x] 同步 `ColliderComponent::collisionMask` → `m_collisionFilterMask`
+  - [x] 实现自定义碰撞过滤回调（在 `BulletContactCallback::needsCollision()` 中）
 
-- [ ] **2.3.2** 实现触发器检测
-  - [ ] 处理 `ColliderComponent::isTrigger` → `CF_NO_CONTACT_RESPONSE`
-  - [ ] 实现触发器事件回调
-  - [ ] 同步触发器状态到 ECS
+- [x] **2.3.2** 实现触发器检测
+  - [x] 处理 `ColliderComponent::isTrigger` → `CF_NO_CONTACT_RESPONSE`
+  - [x] 实现触发器事件回调（基础实现完成，触发器判断在 PhysicsWorld 中根据 ColliderComponent 处理）
+  - [x] 同步触发器状态到 ECS（通过事件系统）
 
-- [ ] **2.3.3** 实现碰撞事件回调
-  - [ ] 创建 `BulletContactCallback` 类
-  - [ ] 实现 `addSingleResult()` 方法
-  - [ ] 收集碰撞信息（接触点、法线、深度）
-  - [ ] 触发 ECS 碰撞事件
+- [x] **2.3.3** 实现碰撞事件回调
+  - [x] 创建 `BulletContactCallback` 类
+  - [x] 实现 `addSingleResult()` 方法
+  - [x] 收集碰撞信息（接触点、法线、深度）
+  - [x] 触发 ECS 碰撞事件（在 `BulletWorldAdapter::SendCollisionEvents()` 中）
 
-- [ ] **2.3.4** 实现碰撞结果同步
-  - [ ] 同步碰撞信息到 `ColliderComponent`
-  - [ ] 触发碰撞事件（如果需要）
+- [x] **2.3.4** 实现碰撞结果同步
+  - [x] 同步碰撞信息到 `ColliderComponent`（通过事件系统）
+  - [x] 触发碰撞事件（CollisionEnterEvent, CollisionStayEvent, CollisionExitEvent）
 
 **验证标准**:
 - ✅ 碰撞层过滤正确工作

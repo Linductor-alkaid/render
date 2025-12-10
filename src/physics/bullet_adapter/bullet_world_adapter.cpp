@@ -22,7 +22,10 @@
 #include "render/physics/bullet_adapter/eigen_to_bullet.h"
 #include "render/physics/bullet_adapter/bullet_shape_adapter.h"
 #include "render/physics/bullet_adapter/bullet_rigid_body_adapter.h"
+#include "render/physics/bullet_adapter/bullet_contact_callback.h"
 #include "render/physics/physics_components.h"
+#include "render/physics/physics_events.h"
+#include "render/application/event_bus.h"
 #include <BulletDynamics/Dynamics/btDiscreteDynamicsWorld.h>
 #include <BulletDynamics/Dynamics/btRigidBody.h>
 #include <BulletCollision/BroadphaseCollision/btDbvtBroadphase.h>
@@ -30,6 +33,7 @@
 #include <BulletCollision/CollisionDispatch/btCollisionDispatcher.h>
 #include <BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.h>
 #include <BulletCollision/CollisionShapes/btCollisionShape.h>
+#include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 #include <vector>
 
 namespace Render::Physics::BulletAdapter {
@@ -59,6 +63,13 @@ BulletWorldAdapter::BulletWorldAdapter(const PhysicsConfig& config) {
     
     // ==================== 2.1.2 世界配置同步 ====================
     SyncConfig(config);
+    
+    // ==================== 2.3.3 碰撞事件回调 ====================
+    // 创建碰撞回调对象
+    m_contactCallback = std::make_unique<BulletContactCallback>(
+        m_entityToRigidBody,
+        m_rigidBodyToEntity
+    );
 }
 
 BulletWorldAdapter::~BulletWorldAdapter() {
@@ -176,6 +187,15 @@ void BulletWorldAdapter::Step(float deltaTime) {
     // 例如：如果 deltaTime = 0.05s, fixedTimeStep = 0.016s, maxSubSteps = 5
     // Bullet 会执行 3 个子步（0.016 + 0.016 + 0.018），剩余时间会累积到下一帧
     m_bulletWorld->stepSimulation(deltaTime, maxSubSteps, fixedTimeStep);
+    
+    // ==================== 2.3.4 碰撞结果同步 ====================
+    // 收集碰撞信息
+    CollectCollisions();
+    
+    // 发送碰撞事件
+    if (m_eventBus) {
+        SendCollisionEvents();
+    }
 }
 
 void BulletWorldAdapter::SetGravity(const Vector3& gravity) {
@@ -363,21 +383,17 @@ bool BulletWorldAdapter::AddRigidBody(ECS::EntityID entity,
         bulletBody->setRestitution(collider.material->restitution);
     }
     
-    // 7. 设置碰撞层和掩码
-    if (bulletBody->getBroadphaseHandle()) {
-        bulletBody->getBroadphaseHandle()->m_collisionFilterGroup = collider.collisionLayer;
-        bulletBody->getBroadphaseHandle()->m_collisionFilterMask = collider.collisionMask;
-    }
-    
-    // 8. 设置触发器标志
+    // 7. 设置触发器标志
     if (collider.isTrigger) {
         int flags = bulletBody->getCollisionFlags();
         flags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
         bulletBody->setCollisionFlags(flags);
     }
     
-    // 9. 添加到物理世界
-    m_bulletWorld->addRigidBody(bulletBody);
+    // 8. 添加到物理世界（同时设置碰撞层和掩码）
+    // Bullet 的 addRigidBody 方法可以接受碰撞层和掩码作为参数
+    // 参数：body, group, mask
+    m_bulletWorld->addRigidBody(bulletBody, collider.collisionLayer, collider.collisionMask);
     
     // 10. 更新映射
     AddRigidBodyMapping(entity, bulletBody);
@@ -538,9 +554,26 @@ bool BulletWorldAdapter::UpdateRigidBody(ECS::EntityID entity,
     }
     
     // 4. 更新碰撞层和掩码
+    // 如果碰撞层或掩码改变，需要重新添加到世界
+    // 先检查是否需要更新
+    bool needReadd = false;
     if (bulletBody->getBroadphaseHandle()) {
-        bulletBody->getBroadphaseHandle()->m_collisionFilterGroup = collider.collisionLayer;
-        bulletBody->getBroadphaseHandle()->m_collisionFilterMask = collider.collisionMask;
+        int currentGroup = bulletBody->getBroadphaseHandle()->m_collisionFilterGroup;
+        int currentMask = bulletBody->getBroadphaseHandle()->m_collisionFilterMask;
+        
+        if (currentGroup != collider.collisionLayer || currentMask != collider.collisionMask) {
+            needReadd = true;
+        }
+    } else {
+        // 如果没有 broadphase handle，也需要重新添加
+        needReadd = true;
+    }
+    
+    if (needReadd) {
+        // 从世界中移除
+        m_bulletWorld->removeRigidBody(bulletBody);
+        // 重新添加到世界（使用新的碰撞层和掩码）
+        m_bulletWorld->addRigidBody(bulletBody, collider.collisionLayer, collider.collisionMask);
     }
     
     // 5. 更新触发器标志
@@ -553,6 +586,176 @@ bool BulletWorldAdapter::UpdateRigidBody(ECS::EntityID entity,
     bulletBody->setCollisionFlags(flags);
     
     return true;
+}
+
+// ==================== 2.3 碰撞检测集成 ====================
+
+void BulletWorldAdapter::SetEventBus(Application::EventBus* eventBus) {
+    m_eventBus = eventBus;
+}
+
+const std::vector<BulletContactCallback::CollisionPair>& BulletWorldAdapter::GetCollisionPairs() const {
+    return m_currentCollisionPairs;
+}
+
+void BulletWorldAdapter::CollectCollisions() {
+    // ==================== 2.3.3 碰撞事件回调 ====================
+    if (!m_bulletWorld || !m_contactCallback) {
+        return;
+    }
+    
+    // 清空上一帧的收集结果
+    m_contactCallback->Clear();
+    m_currentCollisionPairs.clear();
+    
+    // 遍历所有碰撞对，收集碰撞信息
+    // Bullet 在 stepSimulation 后已经计算了所有碰撞对
+    // 我们需要遍历所有接触约束来获取碰撞信息
+    
+    int numManifolds = m_dispatcher->getNumManifolds();
+    for (int i = 0; i < numManifolds; ++i) {
+        btPersistentManifold* manifold = m_dispatcher->getManifoldByIndexInternal(i);
+        if (!manifold || manifold->getNumContacts() == 0) {
+            continue;
+        }
+        
+        // 获取碰撞对象
+        const btCollisionObject* objA = static_cast<const btCollisionObject*>(manifold->getBody0());
+        const btCollisionObject* objB = static_cast<const btCollisionObject*>(manifold->getBody1());
+        
+        if (!objA || !objB) {
+            continue;
+        }
+        
+        // 转换为刚体
+        const btRigidBody* bodyA = btRigidBody::upcast(objA);
+        const btRigidBody* bodyB = btRigidBody::upcast(objB);
+        
+        if (!bodyA || !bodyB) {
+            continue;
+        }
+        
+        // 查找对应的实体ID
+        auto itA = m_rigidBodyToEntity.find(const_cast<btRigidBody*>(bodyA));
+        auto itB = m_rigidBodyToEntity.find(const_cast<btRigidBody*>(bodyB));
+        
+        if (itA == m_rigidBodyToEntity.end() || itB == m_rigidBodyToEntity.end()) {
+            continue;  // 不是我们管理的实体
+        }
+        
+        ECS::EntityID entityA = itA->second;
+        ECS::EntityID entityB = itB->second;
+        
+        // 确保 entityA < entityB（用于一致性）
+        if (entityB < entityA) {
+            std::swap(entityA, entityB);
+        }
+        
+        // 构建接触流形
+        ContactManifold manifoldData;
+        
+        // 获取法线（从第一个接触点）
+        if (manifold->getNumContacts() > 0) {
+            const btManifoldPoint& pt = manifold->getContactPoint(0);
+            btVector3 normalWorldOnB = pt.m_normalWorldOnB;
+            manifoldData.SetNormal(FromBullet(normalWorldOnB));
+        }
+        
+        // 收集所有接触点（最多4个）
+        int numContacts = std::min(manifold->getNumContacts(), 4);
+        for (int j = 0; j < numContacts; ++j) {
+            const btManifoldPoint& pt = manifold->getContactPoint(j);
+            
+            // 获取接触点位置（世界空间）
+            btVector3 pointWorldOnB = pt.getPositionWorldOnB();
+            Vector3 contactPosition = FromBullet(pointWorldOnB);
+            
+            // 获取穿透深度（正值表示穿透）
+            float penetration = pt.getDistance();
+            
+            // 获取局部空间接触点
+            btVector3 localPointA = pt.m_localPointA;
+            btVector3 localPointB = pt.m_localPointB;
+            
+            Vector3 localA = FromBullet(localPointA);
+            Vector3 localB = FromBullet(localPointB);
+            
+            // 添加接触点
+            manifoldData.AddContact(contactPosition, localA, localB, penetration);
+        }
+        
+        // 添加到碰撞对列表
+        m_currentCollisionPairs.emplace_back(entityA, entityB, manifoldData);
+    }
+}
+
+void BulletWorldAdapter::SendCollisionEvents() {
+    // ==================== 2.3.4 碰撞结果同步 ====================
+    if (!m_eventBus) {
+        return;
+    }
+    
+    // 构建当前帧碰撞对的哈希集合（用于快速查找）
+    std::unordered_set<uint64_t> currentPairs;
+    for (const auto& pair : m_currentCollisionPairs) {
+        currentPairs.insert(HashPair(pair.entityA, pair.entityB));
+    }
+    
+    // 检测碰撞事件（需要访问 ColliderComponent 来判断是否为触发器）
+    // 注意：这里我们需要访问 ECS 来获取 ColliderComponent，但 BulletWorldAdapter 不应该直接依赖 ECS
+    // 所以我们需要在外部（PhysicsWorld）处理触发器判断，或者通过回调传递信息
+    // 为了简化，我们先实现基础的碰撞事件，触发器判断在外部处理
+    
+    // 检测新的碰撞（Enter）
+    for (const auto& pair : m_currentCollisionPairs) {
+        uint64_t pairHash = HashPair(pair.entityA, pair.entityB);
+        
+        // 检查上一帧是否存在
+        bool foundInPrevious = false;
+        for (const auto& prevPair : m_previousCollisionPairs) {
+            if (HashPair(prevPair.entityA, prevPair.entityB) == pairHash) {
+                foundInPrevious = true;
+                break;
+            }
+        }
+        
+        if (!foundInPrevious) {
+            // 新的碰撞 - 发送 Enter 事件
+            // 注意：这里我们不知道是否为触发器，所以先发送普通碰撞事件
+            // 触发器判断应该在 PhysicsWorld 中根据 ColliderComponent 处理
+            m_eventBus->Publish(CollisionEnterEvent(pair.entityA, pair.entityB, pair.manifold));
+        } else {
+            // 持续碰撞 - 发送 Stay 事件
+            m_eventBus->Publish(CollisionStayEvent(pair.entityA, pair.entityB, pair.manifold));
+        }
+    }
+    
+    // 检测碰撞结束（Exit）
+    for (const auto& prevPair : m_previousCollisionPairs) {
+        uint64_t pairHash = HashPair(prevPair.entityA, prevPair.entityB);
+        
+        if (currentPairs.find(pairHash) == currentPairs.end()) {
+            // 碰撞结束 - 发送 Exit 事件
+            m_eventBus->Publish(CollisionExitEvent(prevPair.entityA, prevPair.entityB));
+        }
+    }
+    
+    // 更新上一帧的碰撞对
+    m_previousCollisionPairs = m_currentCollisionPairs;
+}
+
+uint64_t BulletWorldAdapter::HashPair(ECS::EntityID a, ECS::EntityID b) {
+    // 确保 a < b（用于一致性）
+    if (b < a) {
+        std::swap(a, b);
+    }
+    
+    // 使用简单的哈希组合
+    uint64_t hashA = static_cast<uint64_t>(a.index);
+    uint64_t hashB = static_cast<uint64_t>(b.index);
+    
+    // 使用位操作组合哈希值
+    return (hashA << 32) | hashB;
 }
 
 } // namespace Render::Physics::BulletAdapter

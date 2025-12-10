@@ -22,9 +22,11 @@
 
 #include "render/physics/physics_config.h"
 #include "render/ecs/entity.h"
+#include "render/physics/bullet_adapter/bullet_contact_callback.h"
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 // 前向声明
 class btDiscreteDynamicsWorld;
@@ -39,6 +41,10 @@ class btCollisionShape;
 namespace Render::Physics {
 struct RigidBodyComponent;
 struct ColliderComponent;
+}
+
+namespace Render::Application {
+class EventBus;
 }
 
 namespace Render::Physics::BulletAdapter {
@@ -159,6 +165,38 @@ public:
                          const RigidBodyComponent& rigidBody,
                          const ColliderComponent& collider);
 
+    // ==================== 2.3 碰撞检测集成 ====================
+    
+    /**
+     * @brief 设置事件总线（用于发送碰撞事件）
+     * @param eventBus 事件总线指针
+     */
+    void SetEventBus(Application::EventBus* eventBus);
+    
+    /**
+     * @brief 获取当前帧的碰撞对
+     * @return 碰撞对列表
+     */
+    const std::vector<BulletContactCallback::CollisionPair>& GetCollisionPairs() const;
+
+private:
+    // ==================== 2.3.3 碰撞事件回调 ====================
+    
+    /**
+     * @brief 收集碰撞信息
+     */
+    void CollectCollisions();
+    
+    /**
+     * @brief 发送碰撞事件（Enter/Stay/Exit）
+     */
+    void SendCollisionEvents();
+    
+    /**
+     * @brief 计算碰撞对的哈希值
+     */
+    static uint64_t HashPair(ECS::EntityID a, ECS::EntityID b);
+
 private:
     std::unique_ptr<btDiscreteDynamicsWorld> m_bulletWorld;
     std::unique_ptr<btBroadphaseInterface> m_broadphase;
@@ -176,6 +214,21 @@ private:
     
     // 保存配置（用于 Step() 方法中的固定时间步长等参数）
     PhysicsConfig m_config;
+    
+    // ==================== 2.3 碰撞检测集成 ====================
+    
+    // 事件总线（用于发送碰撞事件）
+    Application::EventBus* m_eventBus = nullptr;
+    
+    // 碰撞回调对象
+    std::unique_ptr<BulletContactCallback> m_contactCallback;
+    
+    // 当前帧的碰撞对
+    std::vector<BulletContactCallback::CollisionPair> m_currentCollisionPairs;
+    
+    // 上一帧的碰撞对（用于检测 Enter/Stay/Exit）
+    // 使用完整的碰撞对信息，而不仅仅是哈希值，以便在 Exit 时能够恢复实体ID
+    std::vector<BulletContactCallback::CollisionPair> m_previousCollisionPairs;
 };
 
 } // namespace Render::Physics::BulletAdapter

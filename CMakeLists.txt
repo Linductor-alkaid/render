@@ -545,6 +545,7 @@ if(ENABLE_PHYSICS AND USE_BULLET_PHYSICS)
         src/physics/bullet_adapter/bullet_world_adapter.cpp
         src/physics/bullet_adapter/bullet_rigid_body_adapter.cpp
         src/physics/bullet_adapter/bullet_shape_adapter.cpp
+        src/physics/bullet_adapter/bullet_contact_callback.cpp
     )
 endif()
 
