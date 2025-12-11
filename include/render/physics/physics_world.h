@@ -142,6 +142,18 @@ private:
      * @brief 同步 Bullet 结果到 ECS（位置、旋转、速度等）
      */
     void SyncBulletToECS();
+    
+    /**
+     * @brief TransformComponent变化事件处理
+     * @param entity 实体ID
+     * @param transformComp TransformComponent引用
+     * 
+     * @note 此方法在TransformComponent变化时被调用
+     * @note 只同步Kinematic/Static物体，Dynamic物体由物理模拟驱动
+     * 
+     * @see 阶段三 3.2 变化处理逻辑
+     */
+    void OnTransformComponentChanged(ECS::EntityID entity, const ECS::TransformComponent& transformComp);
 #endif
     
 private:
@@ -158,6 +170,30 @@ private:
     
     // 标记是否使用 Bullet 后端
     bool m_useBulletBackend = true;
+    
+    // ==================== 3.1.1 Transform变化事件回调ID ====================
+    // 用于取消注册TransformComponent变化事件回调
+    uint64_t m_transformChangeCallbackId = 0;
+    
+    // ==================== 3.3.2 性能统计（可选，仅在DEBUG模式下使用）====================
+    #ifdef DEBUG
+    struct TransformSyncStats {
+        size_t totalSyncs = 0;           ///< 总同步次数
+        size_t kinematicSyncs = 0;       ///< Kinematic物体同步次数
+        size_t staticSyncs = 0;          ///< Static物体同步次数
+        size_t skippedDynamic = 0;       ///< 跳过的Dynamic物体数量
+        size_t skippedNoRigidBody = 0;   ///< 跳过的不带刚体的实体数量
+        
+        void Reset() {
+            totalSyncs = 0;
+            kinematicSyncs = 0;
+            staticSyncs = 0;
+            skippedDynamic = 0;
+            skippedNoRigidBody = 0;
+        }
+    };
+    TransformSyncStats m_transformSyncStats;  ///< Transform同步统计信息
+    #endif
 #else
     // 原有实现保持不变（向后兼容）
 #endif

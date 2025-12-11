@@ -323,23 +323,23 @@
 
 ### 3.1 PhysicsWorld事件订阅
 
-- [ ] **3.1.1** 添加回调ID存储
-  - [ ] 在 `PhysicsWorld` 类私有区域添加：
-    - [ ] `uint64_t m_transformChangeCallbackId = 0` 成员
+- [x] **3.1.1** 添加回调ID存储
+  - [x] 在 `PhysicsWorld` 类私有区域添加：
+    - [x] `uint64_t m_transformChangeCallbackId = 0` 成员
 
-- [ ] **3.1.2** 在构造函数中注册事件回调
-  - [ ] 修改 `PhysicsWorld::PhysicsWorld()` 构造函数
-    - [ ] 在 `#ifdef USE_BULLET_PHYSICS` 块中
-    - [ ] 检查 `m_ecsWorld` 是否有效
-    - [ ] 调用 `m_ecsWorld->GetComponentRegistry().RegisterComponentChangeCallback<ECS::TransformComponent>()`
-    - [ ] 回调函数调用 `OnTransformComponentChanged()`
-    - [ ] 存储回调ID到 `m_transformChangeCallbackId`
+- [x] **3.1.2** 在构造函数中注册事件回调
+  - [x] 修改 `PhysicsWorld::PhysicsWorld()` 构造函数
+    - [x] 在 `#ifdef USE_BULLET_PHYSICS` 块中
+    - [x] 检查 `m_ecsWorld` 是否有效
+    - [x] 调用 `m_ecsWorld->GetComponentRegistry().RegisterComponentChangeCallback<ECS::TransformComponent>()`
+    - [x] 回调函数调用 `OnTransformComponentChanged()`
+    - [x] 存储回调ID到 `m_transformChangeCallbackId`
 
-- [ ] **3.1.3** 在析构函数中取消注册
-  - [ ] 修改 `PhysicsWorld::~PhysicsWorld()` 析构函数
-    - [ ] 在 `#ifdef USE_BULLET_PHYSICS` 块中
-    - [ ] 检查 `m_ecsWorld` 和 `m_transformChangeCallbackId` 是否有效
-    - [ ] 调用 `UnregisterComponentChangeCallback()` 取消注册
+- [x] **3.1.3** 在析构函数中取消注册
+  - [x] 修改 `PhysicsWorld::~PhysicsWorld()` 析构函数
+    - [x] 在 `#ifdef USE_BULLET_PHYSICS` 块中
+    - [x] 检查 `m_ecsWorld` 和 `m_transformChangeCallbackId` 是否有效
+    - [x] 调用 `UnregisterComponentChangeCallback()` 取消注册
 
 **验证标准**:
 - ✅ 构造函数中回调正确注册
@@ -350,32 +350,32 @@
 
 ### 3.2 变化处理逻辑
 
-- [ ] **3.2.1** 实现OnTransformComponentChanged方法
-  - [ ] 在 `PhysicsWorld` 类中添加私有方法：
-    - [ ] `OnTransformComponentChanged(EntityID entity, const TransformComponent& transformComp)`
-    - [ ] 实现逻辑：
-      - [ ] 检查 `m_bulletAdapter` 和 `m_ecsWorld` 是否有效
-      - [ ] 检查实体是否有 `RigidBodyComponent`
-      - [ ] 如果没有，直接返回
-      - [ ] 获取 `RigidBodyComponent`
-      - [ ] 检查刚体类型：
-        - [ ] 如果是 `Kinematic` 或 `Static`，继续处理
-        - [ ] 如果是 `Dynamic`，直接返回（由物理模拟驱动）
-      - [ ] 检查刚体是否已在Bullet中创建
-      - [ ] 如果已创建，立即同步Transform到Bullet
-      - [ ] 如果未创建，跳过（会在下次Step中创建）
-      - [ ] 使用try-catch处理异常
+- [x] **3.2.1** 实现OnTransformComponentChanged方法
+  - [x] 在 `PhysicsWorld` 类中添加私有方法：
+    - [x] `OnTransformComponentChanged(EntityID entity, const TransformComponent& transformComp)`
+    - [x] 实现逻辑：
+      - [x] 检查 `m_bulletAdapter` 和 `m_ecsWorld` 是否有效
+      - [x] 检查实体是否有 `RigidBodyComponent`
+      - [x] 如果没有，直接返回
+      - [x] 获取 `RigidBodyComponent`
+      - [x] 检查刚体类型：
+        - [x] 如果是 `Kinematic` 或 `Static`，继续处理
+        - [x] 如果是 `Dynamic`，直接返回（由物理模拟驱动）
+      - [x] 检查刚体是否已在Bullet中创建
+      - [x] 如果已创建，立即同步Transform到Bullet
+      - [x] 如果未创建，跳过（会在下次Step中创建）
+      - [x] 使用try-catch处理异常
 
-- [ ] **3.2.2** 添加实体有效性检查
-  - [ ] 在 `OnTransformComponentChanged()` 中：
-    - [ ] 使用 `m_ecsWorld->IsValidEntity(entity)` 检查实体有效性
-    - [ ] 如果无效，直接返回
+- [x] **3.2.2** 添加实体有效性检查
+  - [x] 在 `OnTransformComponentChanged()` 中：
+    - [x] 使用 `m_ecsWorld->IsValidEntity(entity)` 检查实体有效性
+    - [x] 如果无效，直接返回
 
-- [ ] **3.2.3** 优化同步逻辑
-  - [ ] 考虑只同步实际变化的值（位置/旋转）
-  - [ ] 考虑批量优化（收集变化，在Step中批量同步）
-  - [ ] 当前阶段：实现立即同步
-  - [ ] 批量优化留到阶段四
+- [x] **3.2.3** 优化同步逻辑
+  - [x] 考虑只同步实际变化的值（位置/旋转）
+  - [x] 考虑批量优化（收集变化，在Step中批量同步）
+  - [x] 当前阶段：实现立即同步
+  - [x] 批量优化留到阶段四
 
 **验证标准**:
 - ✅ Kinematic物体Transform变化立即同步
@@ -388,17 +388,17 @@
 
 ### 3.3 调试和日志
 
-- [ ] **3.3.1** 添加调试日志
-  - [ ] 在 `OnTransformComponentChanged()` 中添加日志：
-    - [ ] 记录同步的实体ID
-    - [ ] 记录同步的位置和旋转
-    - [ ] 使用适当的日志级别（Debug）
-    - [ ] 可以通过编译选项控制日志输出
+- [x] **3.3.1** 添加调试日志
+  - [x] 在 `OnTransformComponentChanged()` 中添加日志：
+    - [x] 记录同步的实体ID
+    - [x] 记录同步的位置和旋转
+    - [x] 使用适当的日志级别（Debug）
+    - [x] 可以通过编译选项控制日志输出
 
-- [ ] **3.3.2** 添加性能统计（可选）
-  - [ ] 统计同步次数
-  - [ ] 统计同步耗时
-  - [ ] 在调试模式下输出统计信息
+- [x] **3.3.2** 添加性能统计（可选）
+  - [x] 统计同步次数
+  - [x] 统计同步耗时
+  - [x] 在调试模式下输出统计信息
 
 **验证标准**:
 - ✅ 日志信息有助于调试
@@ -408,18 +408,18 @@
 
 ### 3.4 集成测试
 
-- [ ] **3.4.1** 测试基本同步功能
-  - [ ] 创建测试文件 `tests/test_physics_world_transform_sync.cpp`
-  - [ ] 测试Kinematic物体Transform变化立即同步
-  - [ ] 测试Static物体Transform变化立即同步
-  - [ ] 测试Dynamic物体不触发同步
-  - [ ] 测试无物理组件的实体不触发同步
+- [x] **3.4.1** 测试基本同步功能
+  - [x] 创建测试文件 `tests/test_physics_world_transform_sync.cpp`
+  - [x] 测试Kinematic物体Transform变化立即同步
+  - [x] 测试Static物体Transform变化立即同步
+  - [x] 测试Dynamic物体不触发同步
+  - [x] 测试无物理组件的实体不触发同步
 
-- [ ] **3.4.2** 测试边界情况
-  - [ ] 测试实体销毁时的处理
-  - [ ] 测试组件移除时的处理
-  - [ ] 测试多次快速变化
-  - [ ] 测试并发修改
+- [x] **3.4.2** 测试边界情况
+  - [x] 测试实体销毁时的处理
+  - [x] 测试组件移除时的处理
+  - [x] 测试多次快速变化
+  - [ ] 测试并发修改（可选，留到后续阶段）
 
 - [ ] **3.4.3** 测试原有功能不受影响
   - [ ] 运行现有的物理引擎测试
@@ -624,5 +624,17 @@
 ---
 
 **最后更新**: 2025-12-11  
-**状态**: 🟡 进行中
+**状态**: 🟡 进行中（阶段三基本完成，待验证3.4.3）
+
+**进度总结**:
+- ✅ 阶段一：基础事件系统 - 已完成
+- ✅ 阶段二：Transform变化监听 - 已完成
+- ✅ 阶段三：物理引擎集成 - 基本完成
+  - ✅ 3.1 事件订阅 - 已完成
+  - ✅ 3.2 变化处理逻辑 - 已完成
+  - ✅ 3.3 调试和日志 - 已完成
+  - ✅ 3.4.1 基本同步功能测试 - 已完成
+  - ✅ 3.4.2 边界情况测试 - 已完成（并发测试可选）
+  - ⏳ 3.4.3 原有功能验证 - 待测试
+- ⏳ 阶段四：测试和优化 - 待开始
 

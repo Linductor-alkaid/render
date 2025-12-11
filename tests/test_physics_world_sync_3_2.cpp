@@ -352,7 +352,7 @@ static bool Test_SyncBulletToECS_DynamicTransform() {
     // 10步 × 0.016秒 = 0.16秒，重力 -9.8 m/s²
     // 理论下降距离 = 0.5 * 9.8 * 0.16² ≈ 0.125米
     // 但考虑到数值误差和Bullet的积分方法，允许更大的误差范围
-    TEST_ASSERT(finalPosition.y() > initialPosition.y() - 5.0f, 
+    TEST_ASSERT(finalPosition.y() > initialPosition.y() - 1.0f, 
         "下降距离应该合理（考虑时间步长和数值误差）");
     
     // 验证位置大致正确（使用物理公式：y = y0 + v0*t + 0.5*a*t^2）

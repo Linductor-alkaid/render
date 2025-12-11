@@ -22,7 +22,10 @@
 #include "render/physics/physics_systems.h"
 #include "render/physics/physics_transform_sync.h"
 #include "render/ecs/world.h"
+#include "render/ecs/components.h"
+#include "render/physics/physics_components.h"
 #include "render/math_utils.h"
+#include "render/logger.h"
 #include <memory>
 #include <unordered_set>
 
@@ -66,6 +69,21 @@ PhysicsWorld::PhysicsWorld(ECS::World* ecsWorld, const PhysicsConfig& config)
         }
         return nullptr;
     });
+    
+    // ==================== 3.1.2 注册TransformComponent变化事件回调 ====================
+    if (m_ecsWorld) {
+        m_transformChangeCallbackId = m_ecsWorld->GetComponentRegistry()
+            .RegisterComponentChangeCallback<ECS::TransformComponent>(
+                [this](ECS::EntityID entity, const ECS::TransformComponent& transformComp) {
+                    OnTransformComponentChanged(entity, transformComp);
+                }
+            );
+        
+        Logger::GetInstance().DebugFormat(
+            "[PhysicsWorld] 已注册TransformComponent变化事件回调，回调ID: %llu",
+            static_cast<unsigned long long>(m_transformChangeCallbackId)
+        );
+    }
 #else
     // 使用原有实现（向后兼容）
     m_useBulletBackend = false;
@@ -79,6 +97,23 @@ PhysicsWorld::~PhysicsWorld() {
     // 析构函数需要完整类型来删除 unique_ptr
     // 在 cpp 文件中定义，确保 BulletWorldAdapter 的完整定义可见
 #ifdef USE_BULLET_PHYSICS
+    // ==================== 3.1.3 取消注册TransformComponent变化事件回调 ====================
+    if (m_ecsWorld && m_transformChangeCallbackId != 0) {
+        try {
+            m_ecsWorld->GetComponentRegistry()
+                .UnregisterComponentChangeCallback(m_transformChangeCallbackId);
+            
+            Logger::GetInstance().DebugFormat(
+                "[PhysicsWorld] 已取消注册TransformComponent变化事件回调，回调ID: %llu",
+                static_cast<unsigned long long>(m_transformChangeCallbackId)
+            );
+        } catch (...) {
+            // 忽略取消注册时的异常（ECS World可能已经部分销毁）
+            Logger::GetInstance().Warning("[PhysicsWorld] 取消注册TransformComponent变化事件回调时发生异常");
+        }
+        m_transformChangeCallbackId = 0;
+    }
+    
     // m_bulletAdapter 会在 unique_ptr 析构时自动删除
     // 但需要确保此时 BulletWorldAdapter 的完整定义可见
     // 由于已经在 cpp 文件中包含了 bullet_world_adapter.h，所以完整类型可见
@@ -127,6 +162,31 @@ void PhysicsWorld::Step(float deltaTime) {
             alpha = MathUtils::Clamp(alpha, 0.0f, 1.0f);
             m_transformSync->InterpolateTransforms(m_ecsWorld, alpha);
         }
+        
+        // ==================== 3.3.2 输出性能统计信息（定期）====================
+        #ifdef DEBUG
+        static int statsOutputCounter = 0;
+        if (++statsOutputCounter >= 300) {  // 每300帧输出一次统计信息（假设60FPS，约5秒）
+            if (m_transformSyncStats.totalSyncs > 0 || 
+                m_transformSyncStats.skippedDynamic > 0 || 
+                m_transformSyncStats.skippedNoRigidBody > 0) {
+                Logger::GetInstance().InfoFormat(
+                    "[PhysicsWorld] Transform同步统计（最近%d帧）："
+                    "总同步=%zu, Kinematic=%zu, Static=%zu, "
+                    "跳过Dynamic=%zu, 跳过无刚体=%zu",
+                    statsOutputCounter,
+                    m_transformSyncStats.totalSyncs,
+                    m_transformSyncStats.kinematicSyncs,
+                    m_transformSyncStats.staticSyncs,
+                    m_transformSyncStats.skippedDynamic,
+                    m_transformSyncStats.skippedNoRigidBody
+                );
+                // 重置统计（可选：如果想要累计统计，可以注释掉这行）
+                m_transformSyncStats.Reset();
+            }
+            statsOutputCounter = 0;
+        }
+        #endif
     } else {
         // 回退到原有实现（不应该发生，但为了安全）
         StepLegacy(deltaTime);
@@ -295,6 +355,80 @@ void PhysicsWorld::SyncBulletToECS() {
         } catch (...) {
             // 忽略组件访问错误
         }
+    }
+}
+
+// ==================== 3.2 TransformComponent变化事件处理 ====================
+
+void PhysicsWorld::OnTransformComponentChanged(ECS::EntityID entity, 
+                                                 const ECS::TransformComponent& transformComp) {
+    if (!m_bulletAdapter || !m_ecsWorld) {
+        return;
+    }
+    
+    // 检查实体有效性
+    if (!m_ecsWorld->IsValidEntity(entity)) {
+        return;
+    }
+    
+    // 检查实体是否有物理组件
+    if (!m_ecsWorld->HasComponent<RigidBodyComponent>(entity)) {
+        #ifdef DEBUG
+        m_transformSyncStats.skippedNoRigidBody++;
+        #endif
+        return;  // 没有物理组件，不需要同步
+    }
+    
+    try {
+        auto& body = m_ecsWorld->GetComponent<RigidBodyComponent>(entity);
+        
+        // 只同步Kinematic/Static物体
+        // Dynamic物体由物理模拟驱动，不应从ECS同步
+        if (body.type == RigidBodyComponent::BodyType::Kinematic ||
+            body.type == RigidBodyComponent::BodyType::Static) {
+            
+            // 检查是否已在Bullet中创建
+            if (m_bulletAdapter->HasRigidBody(entity)) {
+                // 立即同步到Bullet
+                Vector3 position = transformComp.GetPosition();
+                Quaternion rotation = transformComp.GetRotation();
+                
+                m_bulletAdapter->SyncTransformToBullet(entity, position, rotation);
+                
+                // ==================== 3.3.2 性能统计 ====================
+                #ifdef DEBUG
+                m_transformSyncStats.totalSyncs++;
+                if (body.type == RigidBodyComponent::BodyType::Kinematic) {
+                    m_transformSyncStats.kinematicSyncs++;
+                } else if (body.type == RigidBodyComponent::BodyType::Static) {
+                    m_transformSyncStats.staticSyncs++;
+                }
+                #endif
+                
+                // ==================== 3.3.1 调试日志 ====================
+                #ifdef DEBUG
+                Logger::GetInstance().DebugFormat(
+                    "[PhysicsWorld] TransformComponent变化已同步到Bullet，实体: %u, 类型: %d, "
+                    "位置: (%.3f, %.3f, %.3f), 旋转: (w:%.3f, x:%.3f, y:%.3f, z:%.3f)",
+                    entity.index, static_cast<int>(body.type),
+                    position.x(), position.y(), position.z(),
+                    rotation.w(), rotation.x(), rotation.y(), rotation.z()
+                );
+                #endif
+            }
+            // 如果刚体尚未创建，会在下次Step()中创建
+        } else {
+            // Dynamic物体，不触发同步
+            #ifdef DEBUG
+            m_transformSyncStats.skippedDynamic++;
+            #endif
+        }
+    } catch (...) {
+        // 忽略组件访问错误（实体可能已被销毁）
+        Logger::GetInstance().WarningFormat(
+            "[PhysicsWorld] OnTransformComponentChanged处理实体 %u 时发生异常",
+            entity.index
+        );
     }
 }
 #endif

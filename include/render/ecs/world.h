@@ -137,26 +137,36 @@ public:
     
     /**
      * @brief 添加组件
-     * @tparam T 组件类型（排除TransformComponent，使用特化版本）
+     * @tparam T 组件类型
      * @param entity 实体 ID
      * @param component 组件数据
      */
     template<typename T>
-    typename std::enable_if<!std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, TransformComponent>>::type
-    AddComponent(EntityID entity, const T& component) {
-        m_componentRegistry.AddComponent(entity, component);
+    void AddComponent(EntityID entity, const T& component) {
+        if constexpr (std::is_same_v<std::remove_cv_t<T>, TransformComponent>) {
+            // TransformComponent特殊处理：调用特化版本
+            AddComponent(entity, static_cast<const TransformComponent&>(component));
+        } else {
+            // 其他组件：直接添加到注册表
+            m_componentRegistry.AddComponent(entity, component);
+        }
     }
     
     /**
      * @brief 添加组件（移动语义）
-     * @tparam T 组件类型（排除TransformComponent，使用特化版本）
+     * @tparam T 组件类型
      * @param entity 实体 ID
      * @param component 组件数据
      */
     template<typename T>
-    typename std::enable_if<!std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, TransformComponent>>::type
-    AddComponent(EntityID entity, T&& component) {
-        m_componentRegistry.AddComponent(entity, std::move(component));
+    void AddComponent(EntityID entity, T&& component) {
+        if constexpr (std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, TransformComponent>) {
+            // TransformComponent特殊处理：调用特化版本
+            AddComponent(entity, static_cast<TransformComponent&&>(component));
+        } else {
+            // 其他组件：直接添加到注册表
+            m_componentRegistry.AddComponent(entity, std::move(component));
+        }
     }
     
     /**
