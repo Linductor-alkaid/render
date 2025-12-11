@@ -24,26 +24,26 @@
 
 ### 1.1 组件变化事件类型定义
 
-- [ ] **1.1.1** 创建组件事件头文件
-  - [ ] 创建 `include/render/ecs/component_events.h`
-  - [ ] 添加文件头注释和版权信息
-  - [ ] 包含必要的头文件（`entity.h`, `types.h`, `<typeindex>`）
+- [x] **1.1.1** 创建组件事件头文件
+  - [x] 创建 `include/render/ecs/component_events.h`
+  - [x] 添加文件头注释和版权信息
+  - [x] 包含必要的头文件（`entity.h`, `types.h`, `<typeindex>`）
 
-- [ ] **1.1.2** 定义组件变化事件基类
-  - [ ] 定义 `ComponentChangeEvent` 结构体
-    - [ ] 包含 `EntityID entity` 成员
-    - [ ] 包含 `std::type_index componentType` 成员
-    - [ ] 添加构造函数
-  - [ ] 编写文档注释
+- [x] **1.1.2** 定义组件变化事件基类
+  - [x] 定义 `ComponentChangeEvent` 结构体
+    - [x] 包含 `EntityID entity` 成员
+    - [x] 包含 `std::type_index componentType` 成员
+    - [x] 添加构造函数
+  - [x] 编写文档注释
 
-- [ ] **1.1.3** 定义TransformComponent变化事件
-  - [ ] 定义 `TransformComponentChangeEvent` 结构体
-    - [ ] 继承自 `ComponentChangeEvent`
-    - [ ] 包含 `Vector3 position` 成员
-    - [ ] 包含 `Quaternion rotation` 成员
-    - [ ] 包含 `Vector3 scale` 成员
-    - [ ] 添加构造函数
-  - [ ] 编写文档注释
+- [x] **1.1.3** 定义TransformComponent变化事件
+  - [x] 定义 `TransformComponentChangeEvent` 结构体
+    - [x] 继承自 `ComponentChangeEvent`
+    - [x] 包含 `Vector3 position` 成员
+    - [x] 包含 `Quaternion rotation` 成员
+    - [x] 包含 `Vector3 scale` 成员
+    - [x] 添加构造函数
+  - [x] 编写文档注释
 
 **验证标准**:
 - ✅ 文件可以编译
@@ -54,41 +54,41 @@
 
 ### 1.2 ComponentRegistry扩展
 
-- [ ] **1.2.1** 添加回调存储结构
-  - [ ] 在 `ComponentRegistry` 私有区域添加：
-    - [ ] `ComponentChangeCallbackRecord` 结构体
-      - [ ] `uint64_t id` 成员
-      - [ ] `std::type_index componentType` 成员
-      - [ ] `std::function<void(EntityID, const void*)> callback` 成员（类型擦除）
-    - [ ] `std::atomic<uint64_t> m_nextCallbackId{1}` 成员
-    - [ ] `std::vector<ComponentChangeCallbackRecord> m_componentChangeCallbacks` 成员
-    - [ ] `mutable std::mutex m_callbackMutex` 成员
+- [x] **1.2.1** 添加回调存储结构
+  - [x] 在 `ComponentRegistry` 私有区域添加：
+    - [x] `ComponentChangeCallbackRecord` 结构体
+      - [x] `uint64_t id` 成员
+      - [x] `std::type_index componentType` 成员
+      - [x] `std::function<void(EntityID, const void*)> callback` 成员（类型擦除）
+    - [x] `std::atomic<uint64_t> m_nextCallbackId{1}` 成员
+    - [x] `std::vector<ComponentChangeCallbackRecord> m_componentChangeCallbacks` 成员
+    - [x] `mutable std::mutex m_callbackMutex` 成员
 
-- [ ] **1.2.2** 实现回调注册接口
-  - [ ] 添加 `RegisterComponentChangeCallback<T>()` 模板方法
-    - [ ] 参数：`ComponentChangeCallback<T> callback`
-    - [ ] 返回：`uint64_t` 回调ID
-    - [ ] 实现逻辑：
-      - [ ] 生成唯一回调ID
-      - [ ] 创建类型擦除的回调包装
-      - [ ] 存储到回调列表
-      - [ ] 返回回调ID
-    - [ ] 添加线程安全保护（使用 `m_callbackMutex`）
-    - [ ] 编写文档注释
+- [x] **1.2.2** 实现回调注册接口
+  - [x] 添加 `RegisterComponentChangeCallback<T>()` 模板方法
+    - [x] 参数：`ComponentChangeCallback<T> callback`
+    - [x] 返回：`uint64_t` 回调ID
+    - [x] 实现逻辑：
+      - [x] 生成唯一回调ID
+      - [x] 创建类型擦除的回调包装
+      - [x] 存储到回调列表
+      - [x] 返回回调ID
+    - [x] 添加线程安全保护（使用 `m_callbackMutex`）
+    - [x] 编写文档注释
 
-- [ ] **1.2.3** 实现回调取消注册接口
-  - [ ] 添加 `UnregisterComponentChangeCallback(uint64_t callbackId)` 方法
-    - [ ] 从回调列表中移除指定ID的回调
-    - [ ] 添加线程安全保护
-    - [ ] 编写文档注释
+- [x] **1.2.3** 实现回调取消注册接口
+  - [x] 添加 `UnregisterComponentChangeCallback(uint64_t callbackId)` 方法
+    - [x] 从回调列表中移除指定ID的回调
+    - [x] 添加线程安全保护
+    - [x] 编写文档注释
 
-- [ ] **1.2.4** 实现组件变化通知接口
-  - [ ] 添加 `OnComponentChanged<T>(EntityID entity, const T& component)` 模板方法
-    - [ ] 查找所有匹配组件类型的回调
-    - [ ] 调用每个回调（类型安全的转换）
-    - [ ] 添加线程安全保护
-    - [ ] 处理回调异常（避免一个回调失败影响其他回调）
-    - [ ] 编写文档注释
+- [x] **1.2.4** 实现组件变化通知接口
+  - [x] 添加 `OnComponentChanged<T>(EntityID entity, const T& component)` 模板方法
+    - [x] 查找所有匹配组件类型的回调
+    - [x] 调用每个回调（类型安全的转换）
+    - [x] 添加线程安全保护
+    - [x] 处理回调异常（避免一个回调失败影响其他回调）
+    - [x] 编写文档注释
 
 **验证标准**:
 - ✅ 回调可以正确注册和取消注册
@@ -100,28 +100,30 @@
 
 ### 1.3 ComponentArray扩展
 
-- [ ] **1.3.1** 添加变化回调支持
-  - [ ] 在 `ComponentArray<T>` 私有区域添加：
-    - [ ] `std::function<void(EntityID, const T&)> m_changeCallback` 成员
+- [x] **1.3.1** 添加变化回调支持
+  - [x] 在 `ComponentArray<T>` 私有区域添加：
+    - [x] `std::function<void(EntityID, const T&)> m_changeCallback` 成员
 
-- [ ] **1.3.2** 实现变化回调设置接口
-  - [ ] 添加 `SetChangeCallback(std::function<void(EntityID, const T&)> callback)` 方法
-    - [ ] 存储回调函数
-    - [ ] 编写文档注释
+- [x] **1.3.2** 实现变化回调设置接口
+  - [x] 添加 `SetChangeCallback(std::function<void(EntityID, const T&)> callback)` 方法
+    - [x] 存储回调函数
+    - [x] 编写文档注释
+  - [x] 添加 `ClearChangeCallback()` 方法
 
-- [ ] **1.3.3** 修改Add方法支持变化通知
-  - [ ] 在 `Add(EntityID entity, const T& component)` 中：
-    - [ ] 保持原有逻辑
-    - [ ] 如果设置了回调，在添加后调用回调
-    - [ ] 注意：回调在持有写锁的情况下调用
+- [x] **1.3.3** 修改Add方法支持变化通知
+  - [x] 在 `Add(EntityID entity, const T& component)` 中：
+    - [x] 保持原有逻辑
+    - [x] 如果设置了回调，在添加后调用回调
+    - [x] 注意：回调在持有写锁的情况下调用
+  - [x] 在 `Add(EntityID entity, T&& component)` 中也添加回调支持
 
-- [ ] **1.3.4** 处理Get方法的变化通知
-  - [ ] 注意：`Get()` 返回引用，实际修改在外部
-  - [ ] 考虑方案：
-    - [ ] 方案A：在 `ComponentRegistry::GetComponent()` 中检测变化（需要比较旧值）
-    - [ ] 方案B：要求外部在修改后调用 `OnComponentChanged()`（不推荐）
-    - [ ] 方案C：在 `Transform` 类中直接触发事件（推荐，见阶段二）
-  - [ ] 选择方案C，本阶段暂不实现Get的变化通知
+- [x] **1.3.4** 处理Get方法的变化通知
+  - [x] 注意：`Get()` 返回引用，实际修改在外部
+  - [x] 考虑方案：
+    - [x] 方案A：在 `ComponentRegistry::GetComponent()` 中检测变化（需要比较旧值）
+    - [x] 方案B：要求外部在修改后调用 `OnComponentChanged()`（不推荐）
+    - [x] 方案C：在 `Transform` 类中直接触发事件（推荐，见阶段二）
+  - [x] 选择方案C，本阶段暂不实现Get的变化通知
 
 **验证标准**:
 - ✅ Add组件时回调被正确调用
@@ -132,23 +134,28 @@
 
 ### 1.4 单元测试
 
-- [ ] **1.4.1** 测试事件类型定义
-  - [ ] 创建测试文件 `tests/test_component_events.cpp`
-  - [ ] 测试 `ComponentChangeEvent` 构造
-  - [ ] 测试 `TransformComponentChangeEvent` 构造
-  - [ ] 验证类型信息正确
+- [x] **1.4.1** 测试事件类型定义
+  - [x] 创建测试文件 `tests/test_component_events_system.cpp`（统一测试文件）
+  - [x] 测试 `ComponentChangeEvent` 构造
+  - [x] 测试 `TransformComponentChangeEvent` 构造
+  - [x] 验证类型信息正确
+  - [x] 测试继承关系
 
-- [ ] **1.4.2** 测试ComponentRegistry回调机制
-  - [ ] 创建测试文件 `tests/test_component_registry_events.cpp`
-  - [ ] 测试回调注册
-  - [ ] 测试回调调用
-  - [ ] 测试回调取消注册
-  - [ ] 测试多个回调
-  - [ ] 测试线程安全
+- [x] **1.4.2** 测试ComponentRegistry回调机制
+  - [x] 创建测试文件 `tests/test_component_events_system.cpp`（统一测试文件）
+  - [x] 测试回调注册
+  - [x] 测试回调调用
+  - [x] 测试回调取消注册
+  - [x] 测试多个回调
+  - [x] 测试线程安全
+  - [x] 测试类型安全
+  - [x] 测试异常处理
 
-- [ ] **1.4.3** 测试ComponentArray变化通知
-  - [ ] 测试Add时的变化通知
-  - [ ] 测试回调设置和清除
+- [x] **1.4.3** 测试ComponentArray变化通知
+  - [x] 测试Add时的变化通知
+  - [x] 测试回调设置和清除
+  - [x] 测试移动语义
+  - [x] 测试异常处理
 
 **验证标准**:
 - ✅ 所有单元测试通过
