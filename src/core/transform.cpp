@@ -55,6 +55,7 @@ namespace Render {
 #define m_worldCache m_coldData->worldCache
 #define m_dataMutex m_coldData->dataMutex
 #define m_hierarchyMutex m_coldData->hierarchyMutex
+#define m_changeCallback m_coldData->changeCallback
 
 // 静态成员初始化
 std::atomic<uint64_t> Transform::s_nextGlobalId{1};
@@ -124,12 +125,31 @@ void Transform::SetPosition(const Vector3& position) {
         return;
     }
     
-    m_position = position;
-    MarkDirtyNoLock();
-    lock.unlock();  // 释放数据锁，因为InvalidateChildrenCache需要层级锁
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_position.isApprox(position, MathUtils::EPSILON);
     
-    // 递归使所有子节点的缓存失效（因为父节点变化会影响所有子节点的世界变换）
-    InvalidateChildrenCache();
+    if (changed) {
+        m_position = position;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效（因为父节点变化会影响所有子节点的世界变换）
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 Transform::Result Transform::TrySetPosition(const Vector3& position) {
@@ -384,9 +404,27 @@ Vector3 Transform::GetWorldPositionIterative() const {
 
 void Transform::Translate(const Vector3& translation) {
     std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+    
+    // 检查平移是否有效（非零）
+    if (translation.squaredNorm() < MathUtils::EPSILON * MathUtils::EPSILON) {
+        return;  // 零平移，不需要通知
+    }
+    
     m_position += translation;
     MarkDirtyNoLock();
+    
+    // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+    ChangeCallback callback = m_changeCallback;
     lock.unlock();  // 释放数据锁
+    
+    // 调用回调（不持有锁，避免死锁）
+    if (callback) {
+        try {
+            callback(this);
+        } catch (...) {
+            // 忽略回调异常
+        }
+    }
     
     // 递归使所有子节点的缓存失效
     InvalidateChildrenCache();
@@ -395,6 +433,11 @@ void Transform::Translate(const Vector3& translation) {
 void Transform::TranslateWorld(const Vector3& translation) {
     // 使用写锁保护数据访问
     std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+    
+    // 检查平移是否有效（非零）
+    if (translation.squaredNorm() < MathUtils::EPSILON * MathUtils::EPSILON) {
+        return;  // 零平移，不需要通知
+    }
     
     Vector3 localTranslation;
     auto parentNode = m_node ? m_node->parent.lock() : nullptr;
@@ -409,6 +452,22 @@ void Transform::TranslateWorld(const Vector3& translation) {
     
     m_position += localTranslation;
     MarkDirtyNoLock();
+    
+    // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+    ChangeCallback callback = m_changeCallback;
+    lock.unlock();  // 释放数据锁
+    
+    // 调用回调（不持有锁，避免死锁）
+    if (callback) {
+        try {
+            callback(this);
+        } catch (...) {
+            // 忽略回调异常
+        }
+    }
+    
+    // 递归使所有子节点的缓存失效
+    InvalidateChildrenCache();
 }
 
 // ============================================================================
@@ -420,14 +479,15 @@ void Transform::SetRotation(const Quaternion& rotation) {
     
     // 检查四元数的模长，避免零四元数导致除零错误
     float norm = rotation.norm();
+    Quaternion normalizedRotation;
     if (norm < MathUtils::EPSILON) {
         HANDLE_ERROR(RENDER_WARNING(ErrorCode::TransformInvalidRotation,
             "Transform::SetRotation: 四元数接近零向量，使用单位四元数替代"));
-        m_rotation = Quaternion::Identity();
+        normalizedRotation = Quaternion::Identity();
     } else {
         // 手动归一化：访问系数并除以模长
         float invNorm = 1.0f / norm;
-        m_rotation = Quaternion(
+        normalizedRotation = Quaternion(
             rotation.w() * invNorm,
             rotation.x() * invNorm,
             rotation.y() * invNorm,
@@ -435,11 +495,33 @@ void Transform::SetRotation(const Quaternion& rotation) {
         );
     }
     
-    MarkDirtyNoLock();
-    lock.unlock();  // 释放数据锁
+    // 检查值是否真正变化（避免重复通知）
+    // 四元数比较：检查是否表示相同的旋转（考虑四元数的双重覆盖）
+    bool changed = !m_rotation.coeffs().isApprox(normalizedRotation.coeffs(), MathUtils::EPSILON) &&
+                   !m_rotation.coeffs().isApprox(-normalizedRotation.coeffs(), MathUtils::EPSILON);
     
-    // 递归使所有子节点的缓存失效
-    InvalidateChildrenCache();
+    if (changed) {
+        m_rotation = normalizedRotation;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 Transform::Result Transform::TrySetRotation(const Quaternion& rotation) {
@@ -484,22 +566,68 @@ Transform::Result Transform::TrySetRotation(const Quaternion& rotation) {
 
 void Transform::SetRotationEuler(const Vector3& euler) {
     std::unique_lock<std::shared_mutex> lock(m_dataMutex);
-    m_rotation = MathUtils::FromEuler(euler.x(), euler.y(), euler.z());
-    MarkDirtyNoLock();
-    lock.unlock();  // 释放数据锁
     
-    // 递归使所有子节点的缓存失效
-    InvalidateChildrenCache();
+    Quaternion newRotation = MathUtils::FromEuler(euler.x(), euler.y(), euler.z());
+    
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_rotation.coeffs().isApprox(newRotation.coeffs(), MathUtils::EPSILON) &&
+                   !m_rotation.coeffs().isApprox(-newRotation.coeffs(), MathUtils::EPSILON);
+    
+    if (changed) {
+        m_rotation = newRotation;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 void Transform::SetRotationEulerDegrees(const Vector3& euler) {
     std::unique_lock<std::shared_mutex> lock(m_dataMutex);
-    m_rotation = MathUtils::FromEulerDegrees(euler.x(), euler.y(), euler.z());
-    MarkDirtyNoLock();
-    lock.unlock();  // 释放数据锁
     
-    // 递归使所有子节点的缓存失效
-    InvalidateChildrenCache();
+    Quaternion newRotation = MathUtils::FromEulerDegrees(euler.x(), euler.y(), euler.z());
+    
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_rotation.coeffs().isApprox(newRotation.coeffs(), MathUtils::EPSILON) &&
+                   !m_rotation.coeffs().isApprox(-newRotation.coeffs(), MathUtils::EPSILON);
+    
+    if (changed) {
+        m_rotation = newRotation;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 Vector3 Transform::GetRotationEuler() const {
@@ -567,13 +695,39 @@ void Transform::Rotate(const Quaternion& rotation) {
     
     // 手动归一化
     float invNorm = 1.0f / norm;
-    m_rotation = Quaternion(
+    Quaternion normalizedRotation(
         newRotation.w() * invNorm,
         newRotation.x() * invNorm,
         newRotation.y() * invNorm,
         newRotation.z() * invNorm
     );
-    MarkDirtyNoLock();
+    
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_rotation.coeffs().isApprox(normalizedRotation.coeffs(), MathUtils::EPSILON) &&
+                   !m_rotation.coeffs().isApprox(-normalizedRotation.coeffs(), MathUtils::EPSILON);
+    
+    if (changed) {
+        m_rotation = normalizedRotation;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 void Transform::RotateAround(const Vector3& axis, float angle) {
@@ -598,13 +752,39 @@ void Transform::RotateAround(const Vector3& axis, float angle) {
     
     // 手动归一化
     float invNorm = 1.0f / norm;
-    m_rotation = Quaternion(
+    Quaternion normalizedRotation(
         newRotation.w() * invNorm,
         newRotation.x() * invNorm,
         newRotation.y() * invNorm,
         newRotation.z() * invNorm
     );
-    MarkDirtyNoLock();
+    
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_rotation.coeffs().isApprox(normalizedRotation.coeffs(), MathUtils::EPSILON) &&
+                   !m_rotation.coeffs().isApprox(-normalizedRotation.coeffs(), MathUtils::EPSILON);
+    
+    if (changed) {
+        m_rotation = normalizedRotation;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
@@ -654,12 +834,39 @@ void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
         
         // 手动归一化本地旋转
         float invLocalNorm = 1.0f / localNorm;
-        m_rotation = Quaternion(
+        Quaternion normalizedRotation(
             localRot.w() * invLocalNorm,
             localRot.x() * invLocalNorm,
             localRot.y() * invLocalNorm,
             localRot.z() * invLocalNorm
         );
+        
+        // 检查值是否真正变化（避免重复通知）
+        bool changed = !m_rotation.coeffs().isApprox(normalizedRotation.coeffs(), MathUtils::EPSILON) &&
+                       !m_rotation.coeffs().isApprox(-normalizedRotation.coeffs(), MathUtils::EPSILON);
+        
+        if (changed) {
+            m_rotation = normalizedRotation;
+            MarkDirtyNoLock();
+            
+            // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+            ChangeCallback callback = m_changeCallback;
+            lock.unlock();  // 释放数据锁
+            
+            // 调用回调（不持有锁，避免死锁）
+            if (callback) {
+                try {
+                    callback(this);
+                } catch (...) {
+                    // 忽略回调异常
+                }
+            }
+            
+            // 递归使所有子节点的缓存失效
+            InvalidateChildrenCache();
+        } else {
+            lock.unlock();  // 值未变化，直接释放锁
+        }
     } else {
         lock.lock();
         Quaternion newRotation = rot * m_rotation;
@@ -667,19 +874,45 @@ void Transform::RotateAroundWorld(const Vector3& axis, float angle) {
         if (norm < MathUtils::EPSILON) {
             HANDLE_ERROR(RENDER_WARNING(ErrorCode::InvalidArgument,
                 "Transform::RotateAroundWorld: 旋转结果异常，保持原旋转"));
+            lock.unlock();
             return;
         }
         // 手动归一化
         float invNorm = 1.0f / norm;
-        m_rotation = Quaternion(
+        Quaternion normalizedRotation(
             newRotation.w() * invNorm,
             newRotation.x() * invNorm,
             newRotation.y() * invNorm,
             newRotation.z() * invNorm
         );
+        
+        // 检查值是否真正变化（避免重复通知）
+        bool changed = !m_rotation.coeffs().isApprox(normalizedRotation.coeffs(), MathUtils::EPSILON) &&
+                       !m_rotation.coeffs().isApprox(-normalizedRotation.coeffs(), MathUtils::EPSILON);
+        
+        if (changed) {
+            m_rotation = normalizedRotation;
+            MarkDirtyNoLock();
+            
+            // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+            ChangeCallback callback = m_changeCallback;
+            lock.unlock();  // 释放数据锁
+            
+            // 调用回调（不持有锁，避免死锁）
+            if (callback) {
+                try {
+                    callback(this);
+                } catch (...) {
+                    // 忽略回调异常
+                }
+            }
+            
+            // 递归使所有子节点的缓存失效
+            InvalidateChildrenCache();
+        } else {
+            lock.unlock();  // 值未变化，直接释放锁
+        }
     }
-    
-    MarkDirtyNoLock();
 }
 
 void Transform::LookAt(const Vector3& target, const Vector3& up) {
@@ -698,15 +931,41 @@ void Transform::LookAt(const Vector3& target, const Vector3& up) {
     
     Quaternion lookRotation = MathUtils::LookRotation(-direction, up);
     
+    Quaternion newRotation;
     auto parentNode = m_node ? m_node->parent.lock() : nullptr;
     if (parentNode && parentNode->transform) {
         Quaternion parentRot = parentNode->transform->GetWorldRotation();
-        m_rotation = parentRot.inverse() * lookRotation;
+        newRotation = parentRot.inverse() * lookRotation;
     } else {
-        m_rotation = lookRotation;
+        newRotation = lookRotation;
     }
     
-    MarkDirtyNoLock();
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_rotation.coeffs().isApprox(newRotation.coeffs(), MathUtils::EPSILON) &&
+                   !m_rotation.coeffs().isApprox(-newRotation.coeffs(), MathUtils::EPSILON);
+    
+    if (changed) {
+        m_rotation = newRotation;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 // ============================================================================
@@ -743,12 +1002,31 @@ void Transform::SetScale(const Vector3& scale) {
         safeScale.z() = (safeScale.z() >= 0.0f) ? MIN_SCALE : -MIN_SCALE;
     }
     
-    m_scale = safeScale;
-    MarkDirtyNoLock();
-    lock.unlock();  // 释放数据锁
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_scale.isApprox(safeScale, MathUtils::EPSILON);
     
-    // 递归使所有子节点的缓存失效
-    InvalidateChildrenCache();
+    if (changed) {
+        m_scale = safeScale;
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 Transform::Result Transform::TrySetScale(const Vector3& scale) {
@@ -883,8 +1161,41 @@ Matrix4 Transform::GetWorldMatrix() const {
 
 void Transform::SetFromMatrix(const Matrix4& matrix) {
     std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+    
+    // 保存旧值用于比较
+    Vector3 oldPosition = m_position;
+    Quaternion oldRotation = m_rotation;
+    Vector3 oldScale = m_scale;
+    
     MathUtils::DecomposeMatrix(matrix, m_position, m_rotation, m_scale);
-    MarkDirtyNoLock();
+    
+    // 检查值是否真正变化（避免重复通知）
+    bool changed = !m_position.isApprox(oldPosition, MathUtils::EPSILON) ||
+                   !m_rotation.coeffs().isApprox(oldRotation.coeffs(), MathUtils::EPSILON) &&
+                   !m_rotation.coeffs().isApprox(-oldRotation.coeffs(), MathUtils::EPSILON) ||
+                   !m_scale.isApprox(oldScale, MathUtils::EPSILON);
+    
+    if (changed) {
+        MarkDirtyNoLock();
+        
+        // 通知变化（在持有锁的情况下复制回调，然后释放锁调用）
+        ChangeCallback callback = m_changeCallback;
+        lock.unlock();  // 释放数据锁
+        
+        // 调用回调（不持有锁，避免死锁）
+        if (callback) {
+            try {
+                callback(this);
+            } catch (...) {
+                // 忽略回调异常
+            }
+        }
+        
+        // 递归使所有子节点的缓存失效
+        InvalidateChildrenCache();
+    } else {
+        lock.unlock();  // 值未变化，直接释放锁
+    }
 }
 
 Transform::Result Transform::TrySetFromMatrix(const Matrix4& matrix) {
@@ -1918,6 +2229,44 @@ void Transform::TransformDirections(const std::vector<Vector3>& localDirections,
                            localDirections.data(),
                            worldDirections.data(),
                            count);
+}
+
+// ============================================================================
+// 组件变化回调支持
+// ============================================================================
+
+void Transform::SetChangeCallback(ChangeCallback callback) {
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+    m_coldData->changeCallback = std::move(callback);
+}
+
+void Transform::ClearChangeCallback() {
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+    m_coldData->changeCallback = nullptr;
+}
+
+void Transform::NotifyChanged() {
+    // 注意：此方法应该在持有锁的情况下调用
+    // 但我们不能在持有锁的情况下调用回调，避免死锁
+    // 所以我们需要先复制回调，然后释放锁再调用
+    
+    // 注意：此方法现在主要用于内部调用，但实际通知逻辑
+    // 已经在SetPosition、SetRotation、SetScale等方法中实现
+    // 这里保留作为辅助方法，供未来扩展使用
+    
+    std::unique_lock<std::shared_mutex> lock(m_dataMutex);
+    ChangeCallback callback = m_changeCallback;
+    lock.unlock();  // 释放锁
+    
+    // 如果设置了回调，调用它
+    if (callback) {
+        try {
+            callback(this);
+        } catch (...) {
+            // 忽略回调异常，避免影响Transform操作
+            // 在实际项目中可以考虑记录日志
+        }
+    }
 }
 
 } // namespace Render

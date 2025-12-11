@@ -32,6 +32,7 @@
 #include <iostream>
 #include <memory>
 #include <algorithm>
+#include <functional>
 
 namespace Render {
 
@@ -748,6 +749,48 @@ public:
         }
     }
     
+    // ========================================================================
+    // 组件变化回调支持
+    // ========================================================================
+    
+    /**
+     * @brief 变化回调函数类型
+     */
+    using ChangeCallback = std::function<void(const Transform*)>;
+    
+    /**
+     * @brief 设置变化回调
+     * @param callback 回调函数 void(const Transform*)
+     * 
+     * @note 当位置、旋转或缩放发生变化时调用回调
+     * @note 回调在持有锁的情况下调用，注意避免死锁
+     * @note 线程安全
+     * 
+     * @example 使用示例
+     * @code
+     * transform->SetChangeCallback([](const Transform* t) {
+     *     // 处理Transform变化
+     * });
+     * @endcode
+     */
+    void SetChangeCallback(ChangeCallback callback);
+    
+    /**
+     * @brief 清除变化回调
+     * 
+     * @note 线程安全
+     */
+    void ClearChangeCallback();
+    
+    /**
+     * @brief 通知变化（内部使用）
+     * 
+     * @note 在值真正变化后调用，避免重复通知
+     * @note 在持有锁的情况下调用，注意避免死锁
+     * @note 处理回调异常，避免影响Transform操作
+     */
+    void NotifyChanged();
+    
 private:
     // ========================================================================
     // P1-2.3: 内存布局优化 - 热数据与冷数据分离
@@ -817,8 +860,12 @@ private:
         mutable std::shared_mutex dataMutex;    // 读写锁：保护数据访问
         mutable std::mutex hierarchyMutex;      // 层级锁：保护父子关系操作
         
+        // 组件变化回调（不常访问，放在冷数据区）
+        ChangeCallback changeCallback;          // 变化回调函数
+        
         explicit ColdData(Transform* owner)
             : node(std::make_shared<TransformNode>(owner))
+            , changeCallback(nullptr)
         {}
     };
     mutable std::unique_ptr<ColdData> m_coldData;  // mutable: 允许在 const 方法中访问锁和缓存

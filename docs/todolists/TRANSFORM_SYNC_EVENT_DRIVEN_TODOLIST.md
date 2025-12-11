@@ -171,53 +171,64 @@
 
 ### 2.1 Transform类扩展
 
-- [ ] **2.1.1** 添加变化回调支持
-  - [ ] 在 `Transform` 类私有区域添加：
-    - [ ] `using ChangeCallback = std::function<void(const Transform*)>` 类型别名
-    - [ ] `ChangeCallback m_changeCallback` 成员
-    - [ ] 考虑线程安全（使用 `m_coldData->dataMutex` 保护）
+- [x] **2.1.1** 添加变化回调支持
+  - [x] 在 `Transform` 类私有区域添加：
+    - [x] `using ChangeCallback = std::function<void(const Transform*)>` 类型别名（在公共接口中定义）
+    - [x] `ChangeCallback changeCallback` 成员（在ColdData中）
+    - [x] 考虑线程安全（使用 `m_coldData->dataMutex` 保护）
 
-- [ ] **2.1.2** 实现变化回调设置接口
-  - [ ] 添加 `SetChangeCallback(ChangeCallback callback)` 方法
-    - [ ] 存储回调函数
-    - [ ] 添加线程安全保护
-    - [ ] 编写文档注释
+- [x] **2.1.2** 实现变化回调设置接口
+  - [x] 添加 `SetChangeCallback(ChangeCallback callback)` 方法
+    - [x] 存储回调函数
+    - [x] 添加线程安全保护
+    - [x] 编写文档注释
 
-- [ ] **2.1.3** 实现变化回调清除接口
-  - [ ] 添加 `ClearChangeCallback()` 方法
-    - [ ] 清除回调函数
-    - [ ] 添加线程安全保护
-    - [ ] 编写文档注释
+- [x] **2.1.3** 实现变化回调清除接口
+  - [x] 添加 `ClearChangeCallback()` 方法
+    - [x] 清除回调函数
+    - [x] 添加线程安全保护
+    - [x] 编写文档注释
 
-- [ ] **2.1.4** 实现变化通知辅助方法
-  - [ ] 添加私有方法 `NotifyChanged()`
-    - [ ] 检查回调是否设置
-    - [ ] 如果设置，调用回调
-    - [ ] 注意：在持有锁的情况下调用，避免死锁
-    - [ ] 处理回调异常
+- [x] **2.1.4** 实现变化通知辅助方法
+  - [x] 添加私有方法 `NotifyChanged()`
+    - [x] 检查回调是否设置
+    - [x] 如果设置，调用回调
+    - [x] 注意：在持有锁的情况下调用，避免死锁
+    - [x] 处理回调异常
 
-- [ ] **2.1.5** 在SetPosition中触发通知
-  - [ ] 修改 `SetPosition(const Vector3& position)` 方法
-    - [ ] 保持原有逻辑
-    - [ ] 在位置实际变化后调用 `NotifyChanged()`
-    - [ ] 注意：只在值真正变化时通知（避免重复通知）
+- [x] **2.1.5** 在SetPosition中触发通知
+  - [x] 修改 `SetPosition(const Vector3& position)` 方法
+    - [x] 保持原有逻辑
+    - [x] 在位置实际变化后调用回调
+    - [x] 注意：只在值真正变化时通知（避免重复通知）
 
-- [ ] **2.1.6** 在SetRotation中触发通知
-  - [ ] 修改 `SetRotation(const Quaternion& rotation)` 方法
-    - [ ] 保持原有逻辑
-    - [ ] 在旋转实际变化后调用 `NotifyChanged()`
-    - [ ] 注意：只在值真正变化时通知
+- [x] **2.1.6** 在SetRotation中触发通知
+  - [x] 修改 `SetRotation(const Quaternion& rotation)` 方法
+    - [x] 保持原有逻辑
+    - [x] 在旋转实际变化后调用回调
+    - [x] 注意：只在值真正变化时通知
 
-- [ ] **2.1.7** 在SetScale中触发通知
-  - [ ] 修改 `SetScale(const Vector3& scale)` 方法
-    - [ ] 保持原有逻辑
-    - [ ] 在缩放实际变化后调用 `NotifyChanged()`
-    - [ ] 注意：只在值真正变化时通知
+- [x] **2.1.7** 在SetScale中触发通知
+  - [x] 修改 `SetScale(const Vector3& scale)` 方法
+    - [x] 保持原有逻辑
+    - [x] 在缩放实际变化后调用回调
+    - [x] 注意：只在值真正变化时通知
+  - [x] `SetScale(float)` 方法调用 `SetScale(Vector3)`，已包含通知逻辑
 
-- [ ] **2.1.8** 在其他修改方法中触发通知
-  - [ ] 检查 `Translate()`, `Rotate()`, `SetFromMatrix()` 等方法
-  - [ ] 在适当位置添加 `NotifyChanged()` 调用
-  - [ ] 确保不重复通知
+- [x] **2.1.8** 在其他修改方法中触发通知
+  - [x] 检查 `Translate()`, `Rotate()`, `SetFromMatrix()` 等方法
+  - [x] 在适当位置添加回调调用
+  - [x] 确保不重复通知
+  - [x] 已修改的方法：
+    - [x] `Translate()` - 添加通知
+    - [x] `TranslateWorld()` - 添加通知
+    - [x] `Rotate()` - 添加通知
+    - [x] `RotateAround()` - 添加通知
+    - [x] `RotateAroundWorld()` - 添加通知
+    - [x] `SetRotationEuler()` - 添加通知
+    - [x] `SetRotationEulerDegrees()` - 添加通知
+    - [x] `SetFromMatrix()` - 添加通知
+    - [x] `LookAt()` - 添加通知
 
 **验证标准**:
 - ✅ Transform变化时回调被正确调用
