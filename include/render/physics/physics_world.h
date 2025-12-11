@@ -154,6 +154,14 @@ private:
      * @see 阶段三 3.2 变化处理逻辑
      */
     void OnTransformComponentChanged(ECS::EntityID entity, const ECS::TransformComponent& transformComp);
+    
+    /**
+     * @brief 应用力场到所有受影响的刚体
+     * 
+     * @note 在物理步进前调用，应用所有力场的影响
+     * @see 阶段三 3.3.1 力场应用
+     */
+    void ApplyForceFields();
 #endif
     
 private:
@@ -174,6 +182,10 @@ private:
     // ==================== 3.1.1 Transform变化事件回调ID ====================
     // 用于取消注册TransformComponent变化事件回调
     uint64_t m_transformChangeCallbackId = 0;
+    
+    // ==================== 3.3.2 固定时间步长累积器 ====================
+    // 用于跟踪累积的时间，实现固定时间步长的子步长逻辑
+    float m_timeAccumulator = 0.0f;
     
     // ==================== 3.3.2 性能统计（可选，仅在DEBUG模式下使用）====================
     #ifdef DEBUG

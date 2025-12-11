@@ -76,6 +76,22 @@ void World::Shutdown() {
     
     std::unique_lock lock(m_mutex);
     
+    // 关键：在清空组件之前，先清除所有Transform的回调
+    // 这样可以避免在Shutdown期间，Transform的变化回调仍然被触发，
+    // 导致访问已销毁的组件注册表
+    // 注意：需要在锁释放后调用，避免嵌套锁
+    lock.unlock();
+    
+    m_componentRegistry.ForEachComponent<TransformComponent>(
+        [](EntityID entity, TransformComponent& transformComp) {
+            if (transformComp.transform) {
+                transformComp.transform->ClearChangeCallback();
+            }
+        }
+    );
+    
+    lock.lock();
+    
     // 销毁所有系统
     for (auto& system : m_systems) {
         system->OnDestroy();
@@ -103,7 +119,9 @@ void World::DestroyEntity(EntityID entity) {
     // 2.2.5: 在销毁实体时，如果实体有TransformComponent，清除回调
     if (m_componentRegistry.HasComponent<TransformComponent>(entity)) {
         TransformComponent& comp = m_componentRegistry.GetComponent<TransformComponent>(entity);
-        comp.DisconnectChangeCallback();
+        if (comp.transform) {
+            comp.transform->ClearChangeCallback();
+        }
     }
     
     // 移除实体的所有组件
@@ -174,9 +192,99 @@ void World::SortSystems() {
 // ==================== TransformComponent 特殊处理 ====================
 
 void World::SetupTransformChangeCallback(EntityID entity, TransformComponent& transformComp) {
-    // 使用TransformComponent的辅助方法连接变化回调
-    auto worldPtr = shared_from_this();
-    transformComp.ConnectChangeCallback(entity, worldPtr);
+    // 检查transform是否有效
+    if (!transformComp.transform) {
+        return;
+    }
+    
+    // 使用weak_ptr来安全地检查World是否仍然有效
+    // 这样可以避免在World销毁后访问它导致的崩溃
+    std::weak_ptr<World> worldWeak = shared_from_this();
+    
+    // 设置Transform的变化回调
+    // 当Transform变化时，触发ComponentRegistry的组件变化事件
+    transformComp.transform->SetChangeCallback(
+        [worldWeak, entity](const Transform* transform) {
+            Logger::GetInstance().DebugFormat(
+                "[World] Transform change callback invoked for entity %u", entity.index
+            );
+            
+            // 尝试获取World的shared_ptr，如果World已被销毁，lock()会返回空指针
+            auto worldPtr = worldWeak.lock();
+            if (!worldPtr) {
+                Logger::GetInstance().DebugFormat(
+                    "[World] World has been destroyed, skipping component change event for entity %u", entity.index
+                );
+                return;
+            }
+            
+            // 注意：回调在Transform的锁释放后调用，所以可以安全地访问World
+            // 但是需要检查实体和组件是否仍然有效
+            
+            // 检查World是否已初始化
+            // 如果World还没有初始化或正在关闭，不应该触发组件变化事件，避免崩溃
+            if (!worldPtr->IsInitialized()) {
+                Logger::GetInstance().DebugFormat(
+                    "[World] World not initialized yet, skipping component change event for entity %u", entity.index
+                );
+                return;
+            }
+            
+            // 快速检查：实体是否有效
+            if (!worldPtr->IsValidEntity(entity)) {
+                Logger::GetInstance().DebugFormat(
+                    "[World] Entity %u is invalid, skipping component change event", entity.index
+                );
+                return;
+            }
+            
+            // 快速检查：组件是否存在
+            // 使用try-catch包裹，因为ComponentRegistry可能正在被清空
+            bool hasComponent = false;
+            try {
+                hasComponent = worldPtr->GetComponentRegistry().HasComponent<TransformComponent>(entity);
+            } catch (...) {
+                Logger::GetInstance().DebugFormat(
+                    "[World] Failed to check component existence for entity %u, skipping", entity.index
+                );
+                return;
+            }
+            
+            if (!hasComponent) {
+                Logger::GetInstance().DebugFormat(
+                    "[World] Entity %u has no TransformComponent, skipping component change event", entity.index
+                );
+                return;
+            }
+            
+            // 获取组件的最新值并触发事件
+            try {
+                const TransformComponent& comp = 
+                    worldPtr->GetComponentRegistry().GetComponent<TransformComponent>(entity);
+                
+                Logger::GetInstance().DebugFormat(
+                    "[World] Calling OnComponentChanged for entity %u", entity.index
+                );
+                
+                // 触发组件变化事件
+                worldPtr->GetComponentRegistry().OnComponentChanged(entity, comp);
+            } catch (const std::exception& e) {
+                Logger::GetInstance().WarningFormat(
+                    "[World] Exception in change callback for entity %u: %s", entity.index, e.what()
+                );
+            } catch (...) {
+                // 忽略异常，避免影响Transform的变化通知
+                // 可能的原因：组件已被移除，或实体已被销毁，或World正在关闭
+                Logger::GetInstance().WarningFormat(
+                    "[World] Unknown exception in change callback for entity %u", entity.index
+                );
+            }
+        }
+    );
+    
+    Logger::GetInstance().DebugFormat(
+        "[World] Connected change callback for entity %u", entity.index
+    );
 }
 
 void World::AddComponent(EntityID entity, const TransformComponent& component) {

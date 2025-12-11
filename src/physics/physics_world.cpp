@@ -31,7 +31,9 @@
 
 #ifdef USE_BULLET_PHYSICS
 #include "render/physics/bullet_adapter/bullet_world_adapter.h"
+#include "render/physics/bullet_adapter/eigen_to_bullet.h"
 #include "render/application/event_bus.h"
+#include <BulletDynamics/Dynamics/btRigidBody.h>
 #endif
 
 namespace Render {
@@ -128,37 +130,63 @@ void PhysicsWorld::Step(float deltaTime) {
     }
 
 #ifdef USE_BULLET_PHYSICS
-    // ==================== 3.1.2 使用 Bullet 后端 ====================
+    // ==================== 3.3.1 使用 Bullet 后端 ====================
     if (m_useBulletBackend && m_bulletAdapter) {
-        // 1. 渲染 → 物理同步（Kinematic/Static 物体）
-        if (m_transformSync) {
-            m_transformSync->SyncTransformToPhysics(m_ecsWorld, deltaTime);
+        // ==================== 3.3.2 固定时间步长处理 ====================
+        // 累积时间
+        m_timeAccumulator += deltaTime;
+        
+        // 获取固定时间步长和最大子步数
+        float fixedDeltaTime = m_config.fixedDeltaTime;
+        int maxSubSteps = m_config.maxSubSteps;
+        
+        // 执行固定时间步长的子步长循环
+        int stepCount = 0;
+        while (m_timeAccumulator >= fixedDeltaTime && stepCount < maxSubSteps) {
+            // 1. 渲染 → 物理同步（Kinematic/Static 物体）
+            // 注意：只在第一个子步长时同步，避免重复同步
+            if (stepCount == 0 && m_transformSync) {
+                m_transformSync->SyncTransformToPhysics(m_ecsWorld, fixedDeltaTime);
+            }
+            
+            // 2. 同步 ECS 组件到 Bullet（添加/更新/移除刚体）
+            SyncECSToBullet();
+            
+            // 3. 应用力场（如果有）
+            ApplyForceFields();
+            
+            // 4. Bullet 物理更新（使用固定时间步长）
+            m_bulletAdapter->Step(fixedDeltaTime);
+            
+            // 5. 同步 Bullet 结果到 ECS（位置、旋转、速度等）
+            SyncBulletToECS();
+            
+            // 累积时间减少
+            m_timeAccumulator -= fixedDeltaTime;
+            stepCount++;
         }
         
-        // 2. 同步 ECS 组件到 Bullet（添加/更新/移除刚体）
-        SyncECSToBullet();
+        // 如果帧时间过长，重置累积器防止螺旋死亡
+        if (stepCount >= maxSubSteps) {
+            Logger::GetInstance().WarningFormat(
+                "[PhysicsWorld] 帧时间过长（%f秒），重置物理累积器（已执行%d个子步长）",
+                deltaTime, stepCount
+            );
+            m_timeAccumulator = 0.0f;
+        }
         
-        // 3. Bullet 物理更新
-        m_bulletAdapter->Step(deltaTime);
-        
-        // 4. 同步 Bullet 结果到 ECS（位置、旋转、速度等）
-        SyncBulletToECS();
-        
-        // 5. 物理 → 渲染同步（动态物体）
+        // 6. 物理 → 渲染同步（动态物体）
+        // 注意：只在所有子步长完成后同步一次
         if (m_transformSync) {
             m_transformSync->SyncPhysicsToTransform(m_ecsWorld);
         }
         
-        // 6. 插值变换（平滑渲染）
+        // 7. 插值变换（平滑渲染）
         // ==================== 3.2.4 插值变换 ====================
-        // Bullet 使用固定时间步长，需要在渲染前进行插值
-        // 插值因子由固定时间步长和实际时间步长计算
+        // 计算插值因子 alpha = 累积时间 / 固定时间步长
+        // 这表示当前帧距离下一个固定时间步长的进度
         if (m_transformSync) {
-            // 计算插值因子 alpha = (实际时间 - 已累积的固定时间步长) / 固定时间步长
-            // 这里简化处理，使用固定时间步长的一半作为插值因子
-            // 更精确的实现需要跟踪累积时间
-            float fixedDeltaTime = m_config.fixedDeltaTime;
-            float alpha = (fixedDeltaTime > 1e-6f) ? (deltaTime / fixedDeltaTime) : 1.0f;
+            float alpha = (fixedDeltaTime > 1e-6f) ? (m_timeAccumulator / fixedDeltaTime) : 0.0f;
             alpha = MathUtils::Clamp(alpha, 0.0f, 1.0f);
             m_transformSync->InterpolateTransforms(m_ecsWorld, alpha);
         }
@@ -429,6 +457,186 @@ void PhysicsWorld::OnTransformComponentChanged(ECS::EntityID entity,
             "[PhysicsWorld] OnTransformComponentChanged处理实体 %u 时发生异常",
             entity.index
         );
+    }
+}
+
+// ==================== 3.3.1 力场应用 ====================
+
+void PhysicsWorld::ApplyForceFields() {
+    if (!m_ecsWorld || !m_bulletAdapter) {
+        return;
+    }
+    
+    // 查询所有力场
+    auto forceFieldEntities = m_ecsWorld->Query<ECS::TransformComponent, ForceFieldComponent>();
+    
+    // 如果没有力场，直接返回
+    if (forceFieldEntities.empty()) {
+        return;
+    }
+    
+    // 查询所有具有 RigidBodyComponent 的实体
+    auto rigidBodyEntities = m_ecsWorld->Query<ECS::TransformComponent, RigidBodyComponent>();
+    
+    for (ECS::EntityID entity : rigidBodyEntities) {
+        if (!m_ecsWorld->IsValidEntity(entity)) {
+            continue;
+        }
+        
+        try {
+            // 检查是否有 RigidBodyComponent 和 TransformComponent
+            if (!m_ecsWorld->HasComponent<RigidBodyComponent>(entity) ||
+                !m_ecsWorld->HasComponent<ECS::TransformComponent>(entity)) {
+                continue;
+            }
+            
+            auto& body = m_ecsWorld->GetComponent<RigidBodyComponent>(entity);
+            auto& transform = m_ecsWorld->GetComponent<ECS::TransformComponent>(entity);
+            
+            // 跳过静态和运动学物体
+            if (body.IsStatic() || body.IsKinematic()) {
+                continue;
+            }
+            
+            // 检查是否在 Bullet 中有对应的刚体
+            if (!m_bulletAdapter->HasRigidBody(entity)) {
+                continue;
+            }
+            
+            // 获取 Bullet 刚体
+            btRigidBody* bulletBody = m_bulletAdapter->GetRigidBody(entity);
+            if (!bulletBody) {
+                continue;
+            }
+            
+            // 跳过休眠物体（Bullet 会自动处理休眠）
+            // Bullet 的激活状态：ACTIVE_TAG = 1, ISLAND_SLEEPING = 4
+            // 我们只对激活的物体应用力场
+            // 注意：ISLAND_SLEEPING 在 btCollisionObject.h 中定义为枚举值
+            int activationState = bulletBody->getActivationState();
+            // 使用数字常量，因为 ISLAND_SLEEPING 是 Bullet 的枚举值
+            if (activationState == 4) {  // ISLAND_SLEEPING
+                continue;
+            }
+            
+            // 获取刚体位置
+            Vector3 bodyPosition = transform.GetPosition();
+            
+            // 计算所有力场的影响
+            Vector3 totalForce = Vector3::Zero();
+            
+            for (ECS::EntityID fieldEntity : forceFieldEntities) {
+                if (!m_ecsWorld->IsValidEntity(fieldEntity)) {
+                    continue;
+                }
+                
+                try {
+                    if (!m_ecsWorld->HasComponent<ForceFieldComponent>(fieldEntity) ||
+                        !m_ecsWorld->HasComponent<ECS::TransformComponent>(fieldEntity)) {
+                        continue;
+                    }
+                    
+                    auto& field = m_ecsWorld->GetComponent<ForceFieldComponent>(fieldEntity);
+                    auto& fieldTransform = m_ecsWorld->GetComponent<ECS::TransformComponent>(fieldEntity);
+                    
+                    // 力场禁用时不产生任何力
+                    if (!field.enabled) {
+                        continue;
+                    }
+                    
+                    // 检查碰撞层过滤
+                    if (m_ecsWorld->HasComponent<ColliderComponent>(entity)) {
+                        auto& collider = m_ecsWorld->GetComponent<ColliderComponent>(entity);
+                        if ((collider.collisionLayer & field.affectLayers) == 0) {
+                            continue;  // 不匹配的层，跳过
+                        }
+                    }
+                    
+                    Vector3 fieldPosition = fieldTransform.GetPosition();
+                    Vector3 toBody = bodyPosition - fieldPosition;
+                    float distance = toBody.norm();
+                    
+                    // 检查是否在影响范围内
+                    if (field.radius > 0.0f) {
+                        if (field.affectOnlyInside && distance > field.radius) {
+                            continue;  // 在范围外，不影响
+                        }
+                    }
+                    
+                    // 计算力场强度（考虑衰减）
+                    float strength = field.strength;
+                    if (field.radius > 0.0f && distance > 0.0f) {
+                        if (field.linearFalloff) {
+                            // 线性衰减
+                            float falloff = 1.0f - (distance / field.radius);
+                            falloff = std::max(field.minFalloff, falloff);
+                            strength *= falloff;
+                        } else {
+                            // 平方反比衰减（类似重力）
+                            float falloff = 1.0f / (1.0f + distance * distance);
+                            falloff = std::max(field.minFalloff, falloff);
+                            strength *= falloff;
+                        }
+                    }
+                    
+                    // 根据力场类型计算力
+                    Vector3 force = Vector3::Zero();
+                    
+                    switch (field.type) {
+                        case ForceFieldComponent::Type::Gravity:
+                        case ForceFieldComponent::Type::Wind: {
+                            // 方向力
+                            force = field.direction.normalized() * strength * body.mass;
+                            break;
+                        }
+                        
+                        case ForceFieldComponent::Type::Radial: {
+                            // 径向力
+                            if (distance > 0.001f) {
+                                Vector3 direction = toBody / distance;
+                                force = direction * strength * body.mass;
+                            }
+                            break;
+                        }
+                        
+                        case ForceFieldComponent::Type::Vortex: {
+                            // 涡流力（垂直于径向和轴的方向）
+                            if (distance > 0.001f) {
+                                Vector3 radial = toBody / distance;
+                                Vector3 tangent = radial.cross(field.direction.normalized());
+                                if (tangent.norm() > 0.001f) {
+                                    tangent.normalize();
+                                    force = tangent * strength * body.mass;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    
+                    totalForce += force;
+                    
+                } catch (...) {
+                    // 忽略组件访问错误
+                }
+            }
+            
+            // 应用累加的力到 Bullet 刚体
+            if (!totalForce.isZero(1e-6f)) {
+                // 使用 Bullet 的 applyForce 方法
+                // 参数：力向量（世界空间），作用点（世界空间，使用质心则传入刚体位置）
+                btVector3 bulletForce = BulletAdapter::ToBullet(totalForce);
+                
+                // 如果力场作用在质心，直接应用力
+                // 否则需要计算扭矩（这里简化处理，假设力作用在质心）
+                bulletBody->applyForce(bulletForce, btVector3(0, 0, 0));
+                
+                // 唤醒刚体（如果它处于休眠状态）
+                bulletBody->activate(true);
+            }
+            
+        } catch (...) {
+            // 忽略组件访问错误
+        }
     }
 }
 #endif

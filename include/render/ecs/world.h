@@ -180,7 +180,9 @@ public:
             // TransformComponent特殊处理：先清理回调
             if (HasComponent<TransformComponent>(entity)) {
                 TransformComponent& comp = GetComponent<TransformComponent>(entity);
-                comp.DisconnectChangeCallback();
+                if (comp.transform) {
+                    comp.transform->ClearChangeCallback();
+                }
             }
         }
         m_componentRegistry.RemoveComponent<T>(entity);

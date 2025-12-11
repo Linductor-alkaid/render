@@ -49,6 +49,9 @@ void PhysicsUpdateSystem::Update(float deltaTime) {
         return;
     }
     
+    // 注意：物理同步标志由PhysicsWorld::Update统一管理
+    // 这里不需要设置标志，因为PhysicsWorld会在调用Update之前设置标志
+    
     // 先恢复上一帧物理解算结果，避免插值写回污染
     RestoreSimulatedTransforms();
     

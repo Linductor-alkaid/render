@@ -351,17 +351,17 @@
 
 ### 3.3 PhysicsWorld::Step() 实现
 
-- [ ] **3.3.1** 实现 Bullet 版本的 Step()
-  - [ ] 1. 同步 ECS → Bullet（所有组件）
-  - [ ] 2. 应用力场（如果有）
-  - [ ] 3. 调用 `BulletWorldAdapter::Step()`
-  - [ ] 4. 同步 Bullet → ECS（所有结果）
-  - [ ] 5. 插值变换
+- [x] **3.3.1** 实现 Bullet 版本的 Step()
+  - [x] 1. 同步 ECS → Bullet（所有组件）
+  - [x] 2. 应用力场（如果有）
+  - [x] 3. 调用 `BulletWorldAdapter::Step()`
+  - [x] 4. 同步 Bullet → ECS（所有结果）
+  - [x] 5. 插值变换
 
-- [ ] **3.3.2** 处理固定时间步长
-  - [ ] 实现子步长逻辑
-  - [ ] 处理 `maxSubSteps` 限制
-  - [ ] 处理时间累积
+- [x] **3.3.2** 处理固定时间步长
+  - [x] 实现子步长逻辑
+  - [x] 处理 `maxSubSteps` 限制
+  - [x] 处理时间累积
 
 **验证标准**:
 - ✅ Step() 方法正确执行完整物理更新流程

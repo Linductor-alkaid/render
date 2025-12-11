@@ -20,7 +20,6 @@
  */
 #include "render/ecs/components.h"
 #include "render/ecs/world.h"
-#include "render/ecs/component_registry.h"
 #include "render/logger.h"
 
 namespace Render {
@@ -149,87 +148,6 @@ bool TransformComponent::ValidateParentEntity(World* world) {
     }
     
     return true;
-}
-
-bool TransformComponent::ConnectChangeCallback(EntityID entity, std::shared_ptr<World> worldPtr) {
-    // 检查transform是否有效
-    if (!transform) {
-        Logger::GetInstance().WarningFormat(
-            "[TransformComponent] ConnectChangeCallback: Transform is null"
-        );
-        return false;
-    }
-    
-    // 检查worldPtr是否有效
-    if (!worldPtr) {
-        Logger::GetInstance().WarningFormat(
-            "[TransformComponent] ConnectChangeCallback: World pointer is null"
-        );
-        return false;
-    }
-    
-    // 设置Transform的变化回调
-    // 当Transform变化时，触发ComponentRegistry的组件变化事件
-    transform->SetChangeCallback(
-        [worldPtr, entity](const Transform* transform) {
-            Logger::GetInstance().DebugFormat(
-                "[TransformComponent] Transform change callback invoked for entity %u", entity.index
-            );
-            
-            // 注意：回调在Transform的锁释放后调用，所以可以安全地访问World
-            // 但是需要检查实体和组件是否仍然有效
-            
-            // 快速检查：实体是否有效
-            if (!worldPtr->IsValidEntity(entity)) {
-                Logger::GetInstance().DebugFormat(
-                    "[TransformComponent] Entity %u is invalid, skipping component change event", entity.index
-                );
-                return;
-            }
-            
-            // 快速检查：组件是否存在
-            if (!worldPtr->GetComponentRegistry().HasComponent<TransformComponent>(entity)) {
-                Logger::GetInstance().DebugFormat(
-                    "[TransformComponent] Entity %u has no TransformComponent, skipping component change event", entity.index
-                );
-                return;
-            }
-            
-            // 获取组件的最新值并触发事件
-            try {
-                const TransformComponent& comp = 
-                    worldPtr->GetComponentRegistry().GetComponent<TransformComponent>(entity);
-                
-                Logger::GetInstance().DebugFormat(
-                    "[TransformComponent] Calling OnComponentChanged for entity %u", entity.index
-                );
-                
-                // 触发组件变化事件
-                worldPtr->GetComponentRegistry().OnComponentChanged(entity, comp);
-            } catch (const std::exception& e) {
-                Logger::GetInstance().WarningFormat(
-                    "[TransformComponent] Exception in change callback for entity %u: %s", entity.index, e.what()
-                );
-            } catch (...) {
-                // 忽略异常，避免影响Transform的变化通知
-                // 可能的原因：组件已被移除，或实体已被销毁
-                Logger::GetInstance().WarningFormat(
-                    "[TransformComponent] Unknown exception in change callback for entity %u", entity.index
-                );
-            }
-        }
-    );
-    
-    Logger::GetInstance().DebugFormat(
-        "[TransformComponent] Connected change callback for entity %u", entity.index
-    );
-    return true;
-}
-
-void TransformComponent::DisconnectChangeCallback() {
-    if (transform) {
-        transform->ClearChangeCallback();
-    }
 }
 
 } // namespace ECS
