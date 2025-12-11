@@ -46,6 +46,16 @@ void World::Initialize() {
     m_initialized = true;
     
     Logger::GetInstance().InfoFormat("[World] World initialized");
+    
+    // 2.2.2: 在初始化完成后，遍历所有现有的TransformComponent并设置回调
+    // 注意：需要在锁释放后调用，避免嵌套锁
+    lock.unlock();
+    
+    m_componentRegistry.ForEachComponent<TransformComponent>(
+        [this](EntityID entity, TransformComponent& transformComp) {
+            SetupTransformChangeCallback(entity, transformComp);
+        }
+    );
 }
 
 void World::PostInitialize() {
@@ -89,6 +99,12 @@ EntityID World::CreateEntity(const EntityDescriptor& desc) {
 
 void World::DestroyEntity(EntityID entity) {
     Logger::GetInstance().DebugFormat("[World] DestroyEntity: Removing components for entity index=%u", entity.index);
+    
+    // 2.2.5: 在销毁实体时，如果实体有TransformComponent，清除回调
+    if (m_componentRegistry.HasComponent<TransformComponent>(entity)) {
+        TransformComponent& comp = m_componentRegistry.GetComponent<TransformComponent>(entity);
+        comp.DisconnectChangeCallback();
+    }
     
     // 移除实体的所有组件
     m_componentRegistry.RemoveAllComponents(entity);
@@ -153,6 +169,32 @@ void World::SortSystems() {
         [](const std::unique_ptr<System>& a, const std::unique_ptr<System>& b) {
             return a->GetPriority() < b->GetPriority();
         });
+}
+
+// ==================== TransformComponent 特殊处理 ====================
+
+void World::SetupTransformChangeCallback(EntityID entity, TransformComponent& transformComp) {
+    // 使用TransformComponent的辅助方法连接变化回调
+    auto worldPtr = shared_from_this();
+    transformComp.ConnectChangeCallback(entity, worldPtr);
+}
+
+void World::AddComponent(EntityID entity, const TransformComponent& component) {
+    // 2.2.3: 在添加组件后，调用SetupTransformChangeCallback设置回调
+    m_componentRegistry.AddComponent(entity, component);
+    
+    // 获取刚添加的组件引用（用于设置回调）
+    TransformComponent& addedComp = m_componentRegistry.GetComponent<TransformComponent>(entity);
+    SetupTransformChangeCallback(entity, addedComp);
+}
+
+void World::AddComponent(EntityID entity, TransformComponent&& component) {
+    // 2.2.3: 在添加组件后，调用SetupTransformChangeCallback设置回调
+    m_componentRegistry.AddComponent(entity, std::move(component));
+    
+    // 获取刚添加的组件引用（用于设置回调）
+    TransformComponent& addedComp = m_componentRegistry.GetComponent<TransformComponent>(entity);
+    SetupTransformChangeCallback(entity, addedComp);
 }
 
 } // namespace ECS

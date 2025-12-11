@@ -21,6 +21,7 @@
 #pragma once
 
 #include "entity.h"
+#include "render/logger.h"
 #include <unordered_map>
 #include <memory>
 #include <shared_mutex>
@@ -720,6 +721,11 @@ template<typename T>
 void ComponentRegistry::OnComponentChanged(EntityID entity, const T& component) {
     std::type_index typeIndex = std::type_index(typeid(T));
     
+    Logger::GetInstance().DebugFormat(
+        "[ComponentRegistry] OnComponentChanged called for entity %u, type=%s, total callbacks=%zu",
+        entity.index, typeIndex.name(), m_componentChangeCallbacks.size()
+    );
+    
     // 获取回调列表的副本（避免在回调执行期间持有锁）
     std::vector<ComponentChangeCallbackRecord> callbacksToInvoke;
     {
@@ -733,16 +739,37 @@ void ComponentRegistry::OnComponentChanged(EntityID entity, const T& component) 
         }
     }
     
+    Logger::GetInstance().DebugFormat(
+        "[ComponentRegistry] Found %zu matching callbacks for entity %u", 
+        callbacksToInvoke.size(), entity.index
+    );
+    
     // 调用每个回调（不在持有锁的情况下调用，避免死锁）
     // 处理回调异常，避免一个回调失败影响其他回调
-    for (const auto& record : callbacksToInvoke) {
+    for (size_t i = 0; i < callbacksToInvoke.size(); ++i) {
         try {
+            const auto& record = callbacksToInvoke[i];
             if (record.callback) {
+                Logger::GetInstance().DebugFormat(
+                    "[ComponentRegistry] Invoking callback %zu for entity %u", i, entity.index
+                );
                 record.callback(entity, &component);
+            } else {
+                Logger::GetInstance().WarningFormat(
+                    "[ComponentRegistry] Callback %zu for entity %u is null", i, entity.index
+                );
             }
+        } catch (const std::exception& e) {
+            Logger::GetInstance().WarningFormat(
+                "[ComponentRegistry] Exception in callback %zu for entity %u: %s", 
+                i, entity.index, e.what()
+            );
         } catch (...) {
             // 忽略回调异常，继续执行其他回调
-            // 在实际项目中可以考虑记录日志
+            Logger::GetInstance().WarningFormat(
+                "[ComponentRegistry] Unknown exception in callback %zu for entity %u", 
+                i, entity.index
+            );
         }
     }
 }

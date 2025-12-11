@@ -48,6 +48,7 @@ namespace ECS {
 
 // 前向声明
 class World;
+class ComponentRegistry;
 
 // ============================================================
 // Transform 组件（避免反复创建销毁）
@@ -157,6 +158,44 @@ struct TransformComponent {
      * @note 如果父实体已销毁，会自动清除父子关系
      */
     bool ValidateParentEntity(World* world);
+    
+    // ==================== 变化回调连接 ====================
+    
+    /**
+     * @brief 连接Transform变化回调到组件变化事件
+     * 
+     * 设置Transform的变化回调，当Transform变化时自动触发ComponentRegistry的组件变化事件。
+     * 这是World集成Transform变化事件系统的核心方法。
+     * 
+     * @param entity 实体ID
+     * @param worldPtr World的shared_ptr（用于回调中的生命周期管理）
+     * @return 如果成功设置回调返回 true，如果transform为空返回 false
+     * 
+     * @note 此方法会清除之前设置的回调（如果存在）
+     * @note 回调在Transform的锁释放后调用，可以安全地访问World
+     * @note 回调中会检查实体和组件的有效性，自动处理组件已被移除的情况
+     * 
+     * @example 使用示例
+     * @code
+     * auto world = std::make_shared<World>();
+     * EntityID entity = world->CreateEntity();
+     * TransformComponent comp;
+     * world->AddComponent(entity, comp);
+     * 
+     * // 连接变化回调
+     * comp.ConnectChangeCallback(entity, world);
+     * @endcode
+     */
+    bool ConnectChangeCallback(EntityID entity, std::shared_ptr<World> worldPtr);
+    
+    /**
+     * @brief 清除Transform的变化回调
+     * 
+     * 移除之前通过ConnectChangeCallback设置的回调。
+     * 
+     * @note 通常在移除组件或销毁实体时调用
+     */
+    void DisconnectChangeCallback();
     
     // ==================== 兼容性接口（原始指针）====================
     

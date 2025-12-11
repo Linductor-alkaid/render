@@ -23,12 +23,16 @@
 #include "entity.h"
 #include "entity_manager.h"
 #include "component_registry.h"
+#include "component_events.h"
+#include "components.h"
 #include "system.h"
+#include "render/transform.h"
 #include <vector>
 #include <memory>
 #include <shared_mutex>
 #include <algorithm>
 #include <chrono>
+#include <type_traits>
 
 namespace Render {
 namespace ECS {
@@ -118,24 +122,40 @@ public:
     }
     
     /**
+     * @brief 添加TransformComponent（特化版本，自动设置变化回调）
+     * @param entity 实体 ID
+     * @param component 组件数据
+     */
+    void AddComponent(EntityID entity, const TransformComponent& component);
+    
+    /**
+     * @brief 添加TransformComponent（移动语义特化版本，自动设置变化回调）
+     * @param entity 实体 ID
+     * @param component 组件数据
+     */
+    void AddComponent(EntityID entity, TransformComponent&& component);
+    
+    /**
      * @brief 添加组件
-     * @tparam T 组件类型
+     * @tparam T 组件类型（排除TransformComponent，使用特化版本）
      * @param entity 实体 ID
      * @param component 组件数据
      */
     template<typename T>
-    void AddComponent(EntityID entity, const T& component) {
+    typename std::enable_if<!std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, TransformComponent>>::type
+    AddComponent(EntityID entity, const T& component) {
         m_componentRegistry.AddComponent(entity, component);
     }
     
     /**
      * @brief 添加组件（移动语义）
-     * @tparam T 组件类型
+     * @tparam T 组件类型（排除TransformComponent，使用特化版本）
      * @param entity 实体 ID
      * @param component 组件数据
      */
     template<typename T>
-    void AddComponent(EntityID entity, T&& component) {
+    typename std::enable_if<!std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, TransformComponent>>::type
+    AddComponent(EntityID entity, T&& component) {
         m_componentRegistry.AddComponent(entity, std::move(component));
     }
     
@@ -146,6 +166,13 @@ public:
      */
     template<typename T>
     void RemoveComponent(EntityID entity) {
+        if constexpr (std::is_same_v<T, TransformComponent>) {
+            // TransformComponent特殊处理：先清理回调
+            if (HasComponent<TransformComponent>(entity)) {
+                TransformComponent& comp = GetComponent<TransformComponent>(entity);
+                comp.DisconnectChangeCallback();
+            }
+        }
         m_componentRegistry.RemoveComponent<T>(entity);
     }
     
@@ -347,6 +374,17 @@ private:
      * @brief 按优先级排序系统
      */
     void SortSystems();
+    
+    /**
+     * @brief 设置Transform变化回调
+     * 
+     * 为TransformComponent的Transform对象设置变化回调
+     * 当Transform变化时，会触发组件变化事件
+     * 
+     * @param entity 实体ID
+     * @param transformComp TransformComponent引用
+     */
+    void SetupTransformChangeCallback(EntityID entity, TransformComponent& transformComp);
     
     EntityManager m_entityManager;         ///< 实体管理器
     ComponentRegistry m_componentRegistry; ///< 组件注册表

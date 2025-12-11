@@ -240,35 +240,35 @@
 
 ### 2.2 World集成
 
-- [ ] **2.2.1** 添加Transform变化回调设置方法
-  - [ ] 在 `World` 类中添加私有方法：
-    - [ ] `SetupTransformChangeCallback(EntityID entity, TransformComponent& transformComp)`
-    - [ ] 实现逻辑：
-      - [ ] 检查 `transformComp.transform` 是否有效
-      - [ ] 设置Transform的变化回调
-      - [ ] 回调中触发组件变化事件：
-        - [ ] 检查实体是否仍有TransformComponent
-        - [ ] 调用 `ComponentRegistry::OnComponentChanged()`
+- [x] **2.2.1** 添加Transform变化回调设置方法
+  - [x] 在 `World` 类中添加私有方法：
+    - [x] `SetupTransformChangeCallback(EntityID entity, TransformComponent& transformComp)`
+    - [x] 实现逻辑：
+      - [x] 检查 `transformComp.transform` 是否有效
+      - [x] 设置Transform的变化回调
+      - [x] 回调中触发组件变化事件：
+        - [x] 检查实体是否仍有TransformComponent
+        - [x] 调用 `ComponentRegistry::OnComponentChanged()`
 
-- [ ] **2.2.2** 在Initialize中设置现有组件回调
-  - [ ] 修改 `World::Initialize()` 方法
-    - [ ] 在初始化完成后，遍历所有现有的TransformComponent
-    - [ ] 为每个组件调用 `SetupTransformChangeCallback()`
+- [x] **2.2.2** 在Initialize中设置现有组件回调
+  - [x] 修改 `World::Initialize()` 方法
+    - [x] 在初始化完成后，遍历所有现有的TransformComponent
+    - [x] 为每个组件调用 `SetupTransformChangeCallback()`
 
-- [ ] **2.2.3** 在AddComponent中设置新组件回调
-  - [ ] 修改 `World::AddComponent<TransformComponent>()` 方法
-    - [ ] 在添加组件后
-    - [ ] 调用 `SetupTransformChangeCallback()` 设置回调
+- [x] **2.2.3** 在AddComponent中设置新组件回调
+  - [x] 修改 `World::AddComponent<TransformComponent>()` 方法
+    - [x] 在添加组件后
+    - [x] 调用 `SetupTransformChangeCallback()` 设置回调
 
-- [ ] **2.2.4** 在RemoveComponent中清理回调
-  - [ ] 修改 `World::RemoveComponent<TransformComponent>()` 方法
-    - [ ] 在移除组件前
-    - [ ] 清除Transform的变化回调（调用 `ClearChangeCallback()`）
+- [x] **2.2.4** 在RemoveComponent中清理回调
+  - [x] 修改 `World::RemoveComponent<TransformComponent>()` 方法
+    - [x] 在移除组件前
+    - [x] 清除Transform的变化回调（调用 `ClearChangeCallback()`）
 
-- [ ] **2.2.5** 在DestroyEntity中清理回调
-  - [ ] 修改 `World::DestroyEntity()` 方法
-    - [ ] 在销毁实体时
-    - [ ] 如果实体有TransformComponent，清除回调
+- [x] **2.2.5** 在DestroyEntity中清理回调
+  - [x] 修改 `World::DestroyEntity()` 方法
+    - [x] 在销毁实体时
+    - [x] 如果实体有TransformComponent，清除回调
 
 **验证标准**:
 - ✅ 新添加的TransformComponent自动设置回调
@@ -280,10 +280,10 @@
 
 ### 2.3 TransformComponent扩展（可选）
 
-- [ ] **2.3.1** 添加变化回调连接辅助方法（可选）
-  - [ ] 如果需要，在 `TransformComponent` 中添加：
-    - [ ] `SetChangeCallback(std::function<void(EntityID, const TransformComponent&)> callback)` 方法
-    - [ ] 注意：需要EntityID，实际在World中设置更合适
+- [x] **2.3.1** 添加变化回调连接辅助方法（可选）
+  - [x] 如果需要，在 `TransformComponent` 中添加：
+    - [x] `SetChangeCallback(std::function<void(EntityID, const TransformComponent&)> callback)` 方法
+    - [x] 注意：需要EntityID，实际在World中设置更合适
   - [ ] 如果不需要，跳过此任务
 
 **验证标准**:
@@ -293,21 +293,21 @@
 
 ### 2.4 单元测试
 
-- [ ] **2.4.1** 测试Transform变化回调
-  - [ ] 创建测试文件 `tests/test_transform_change_callback.cpp`
-  - [ ] 测试回调设置和清除
-  - [ ] 测试SetPosition触发回调
-  - [ ] 测试SetRotation触发回调
-  - [ ] 测试SetScale触发回调
-  - [ ] 测试只在值变化时触发
-  - [ ] 测试线程安全
+- [x] **2.4.1** 测试Transform变化回调
+  - [x] 创建测试文件 `tests/test_transform_change_callback.cpp`
+  - [x] 测试回调设置和清除
+  - [x] 测试SetPosition触发回调
+  - [x] 测试SetRotation触发回调
+  - [x] 测试SetScale触发回调
+  - [x] 测试只在值变化时触发
+  - [x] 测试线程安全
 
-- [ ] **2.4.2** 测试World集成
-  - [ ] 创建测试文件 `tests/test_world_transform_events.cpp`
-  - [ ] 测试添加TransformComponent时自动设置回调
-  - [ ] 测试移除组件时清理回调
-  - [ ] 测试实体销毁时清理回调
-  - [ ] 测试Transform变化触发组件事件
+- [x] **2.4.2** 测试World集成
+  - [x] 创建测试文件 `tests/test_world_transform_events.cpp`
+  - [x] 测试添加TransformComponent时自动设置回调
+  - [x] 测试移除组件时清理回调
+  - [x] 测试实体销毁时清理回调
+  - [x] 测试Transform变化触发组件事件
 
 **验证标准**:
 - ✅ 所有单元测试通过
