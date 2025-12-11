@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <chrono>
 #include <type_traits>
+#include <atomic>
 
 namespace Render {
 namespace ECS {
@@ -84,6 +85,16 @@ public:
      * @return 如果已初始化返回 true
      */
     [[nodiscard]] bool IsInitialized() const { return m_initialized; }
+    
+    /**
+     * @brief 检查是否正在关闭
+     * @return 如果正在关闭返回 true
+     * 
+     * @note 此方法用于回调中快速检查，避免在Shutdown期间访问ComponentRegistry导致死锁
+     */
+    [[nodiscard]] bool IsShuttingDown() const { 
+        return m_shuttingDown.load(std::memory_order_acquire); 
+    }
     
     // ==================== 实体管理 ====================
     
@@ -404,6 +415,7 @@ private:
     
     Statistics m_stats;                    ///< 统计信息
     bool m_initialized = false;            ///< 是否已初始化
+    std::atomic<bool> m_shuttingDown{false};  ///< 是否正在关闭（原子标志，用于回调检查）
     
     mutable std::shared_mutex m_mutex;     ///< 线程安全锁
 };
