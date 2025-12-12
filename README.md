@@ -12,6 +12,10 @@
   <img src="https://img.shields.io/badge/License-AGPL--3.0-red.svg" alt="License">
 </p>
 
+<p align="center">
+  <a href="README.md">中文</a> | <a href="README_EN.md">English</a>
+</p>
+
 ## 📸 效果展示
 
 ### 🎨 UI 系统
@@ -197,7 +201,7 @@ cmake --build build --config Release
 
 ## 示例程序
 
-项目包含 **62 个完整示例程序**，覆盖引擎的各个功能模块：
+项目包含 **63 个完整示例程序**，覆盖引擎的各个功能模块：
 
 ### 基础渲染示例
 ```batch
