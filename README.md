@@ -16,148 +16,148 @@
   <a href="README.md">中文</a> | <a href="README_EN.md">English</a>
 </p>
 
-## 📸 效果展示
+## 📸 Feature Showcase
 
-### 🎨 UI 系统
+### 🎨 UI System
 
-完整的 UI 框架，支持亮色/暗色主题、文本渲染和模块化 HUD 系统。
+Complete UI framework with light/dark theme support, text rendering, and modular HUD system.
 
 <p align="center">
-  <img src="docs/pictures/ui.png" alt="UI系统" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
-  <img src="docs/pictures/ui_dark.png" alt="UI暗色主题" style="width: 45%; aspect-ratio:16/9; object-fit: cover;">
+  <img src="docs/pictures/ui.png" alt="UI System" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
+  <img src="docs/pictures/ui_dark.png" alt="UI Dark Theme" style="width: 45%; aspect-ratio:16/9; object-fit: cover;">
 </p>
 
 <p align="center">
-  <img src="docs/pictures/ui_text.png" alt="UI文本渲染" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
-  <img src="docs/pictures/hud.png" alt="HUD系统" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
+  <img src="docs/pictures/ui_text.png" alt="UI Text Rendering" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
+  <img src="docs/pictures/hud.png" alt="HUD System" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
 </p>
 
-### 💡 3D 渲染与光照
+### 💡 3D Rendering & Lighting
 
-支持多种光照类型（定向光、点光源、聚光灯）和法线贴图，实现真实的 3D 渲染效果。
+Supports multiple light types (directional lights, point lights, spotlights) and normal mapping for realistic 3D rendering effects.
 
 <p align="center">
-  <img src="docs/pictures/light.png" alt="光照系统" style="width: 45% object-fit: cover;">
-  <img src="docs/pictures/mesh_sprite_faxiangtietu.png" alt="网格精灵法线贴图" style="width: 45% object-fit: cover;">
+  <img src="docs/pictures/light.png" alt="Lighting System" style="width: 45% object-fit: cover;">
+  <img src="docs/pictures/mesh_sprite_faxiangtietu.png" alt="Mesh Sprite Normal Mapping" style="width: 45% object-fit: cover;">
 </p>
 
-### 🎯 LOD 系统
+### 🎯 LOD System
 
-自动网格简化系统，根据距离动态调整模型细节层次，提升渲染性能。
+Automatic mesh simplification system that dynamically adjusts model detail levels based on distance to improve rendering performance.
 
 <p align="center">
-  <img src="docs/pictures/lod_mesh.png" alt="LOD网格" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
-  <img src="docs/pictures/lod_mesh_xiankuang.png" alt="LOD网格线框" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
+  <img src="docs/pictures/lod_mesh.png" alt="LOD Mesh" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
+  <img src="docs/pictures/lod_mesh_xiankuang.png" alt="LOD Mesh Wireframe" style="width: 45%; aspect-ratio: 16/9; object-fit: cover;">
 </p>
 
 ---
 
-一个基于现代 C++20 的 3D 渲染引擎，采用 ECS（Entity Component System）架构设计，支持 2D/3D 渲染、UI 系统、精灵动画、光照系统和资源异步加载等功能。
+A modern C++20-based 3D rendering engine featuring ECS (Entity Component System) architecture, supporting 2D/3D rendering, UI system, sprite animation, lighting system, and asynchronous resource loading.
 
-## 核心特性
+## Core Features
 
-### 渲染引擎核心
-- ✅ **OpenGL 4.5+** 渲染后端，支持现代图形 API
-- ✅ **SDL3** 窗口管理和输入处理
-- ✅ **模块化架构** 清晰的分层设计，职责分离明确
-- ✅ **着色器系统** 顶点/片段/几何着色器，支持热重载和缓存
-- ✅ **纹理系统** PNG/JPG/BMP/TGA 支持，异步加载
-- ✅ **网格系统** 10+ 种预设几何体，支持 Assimp 模型加载（OBJ/FBX/GLTF 等）
-- ✅ **材质系统** Phong 光照模型，支持法线贴图、骨骼动画
-- ✅ **资源管理器** 统一接口，智能引用计数，依赖管理
-- ✅ **全面线程安全** 多线程环境下的安全设计
+### Rendering Engine Core
+- ✅ **OpenGL 4.5+** rendering backend with modern graphics API support
+- ✅ **SDL3** window management and input handling
+- ✅ **Modular Architecture** Clear layered design with well-separated responsibilities
+- ✅ **Shader System** Vertex/fragment/geometry shaders with hot-reload and caching support
+- ✅ **Texture System** PNG/JPG/BMP/TGA support with asynchronous loading
+- ✅ **Mesh System** 10+ preset geometries, Assimp model loading support (OBJ/FBX/GLTF, etc.)
+- ✅ **Material System** Phong lighting model with normal mapping and skeletal animation support
+- ✅ **Resource Manager** Unified interface with smart reference counting and dependency management
+- ✅ **Fully Thread-Safe** Safe design for multi-threaded environments
 
-### ECS 架构系统
-- ✅ **Entity Component System** 灵活的实体组件系统
-- ✅ **组件系统** Transform、MeshRender、Sprite、Camera、Light、UI 等核心组件
-- ✅ **系统架构** RenderSystem、AnimationSystem、TransformSystem、UISystem 等
-- ✅ **场景管理** 场景切换、序列化、场景图支持
+### ECS Architecture System
+- ✅ **Entity Component System** Flexible entity-component system
+- ✅ **Component System** Core components: Transform, MeshRender, Sprite, Camera, Light, UI, etc.
+- ✅ **System Architecture** RenderSystem, AnimationSystem, TransformSystem, UISystem, etc.
+- ✅ **Scene Management** Scene switching, serialization, and scene graph support
 
-### 2D 渲染系统
-- ✅ **精灵系统** Sprite、SpriteSheet、SpriteAtlas 支持
-- ✅ **精灵动画** 状态机驱动的动画系统，支持动画事件
-- ✅ **精灵批处理** 高效的大量精灵渲染
-- ✅ **文本渲染** TTF 字体支持，文本渲染器
+### 2D Rendering System
+- ✅ **Sprite System** Sprite, SpriteSheet, SpriteAtlas support
+- ✅ **Sprite Animation** State machine-driven animation system with animation events
+- ✅ **Sprite Batching** Efficient rendering of large numbers of sprites
+- ✅ **Text Rendering** TTF font support with text renderer
 
-### UI 系统
-- ✅ **UI 框架** 完整的 UI 控件系统（按钮、文本框、滑块、菜单等）
-- ✅ **布局系统** Flex 和 Grid 布局，响应式设计
-- ✅ **主题系统** 可配置的 UI 主题
-- ✅ **菜单系统** UIMenu、UIPullDownMenu，参考 Blender UI 设计
+### UI System
+- ✅ **UI Framework** Complete UI control system (buttons, text boxes, sliders, menus, etc.)
+- ✅ **Layout System** Flex and Grid layouts with responsive design
+- ✅ **Theme System** Configurable UI themes
+- ✅ **Menu System** UIMenu, UIPullDownMenu, inspired by Blender UI design
 
-### 3D 渲染与光照
-- ✅ **光照系统** 定向光、点光源、聚光灯
-- ✅ **法线贴图** 完整的法线贴图支持
-- ✅ **骨骼动画** 骨骼调色板系统
-- ✅ **后处理** 帧缓冲支持，后处理效果基础
+### 3D Rendering & Lighting
+- ✅ **Lighting System** Directional lights, point lights, and spotlights
+- ✅ **Normal Mapping** Complete normal mapping support
+- ✅ **Skeletal Animation** Bone palette system
+- ✅ **Post-Processing** Frame buffer support with post-processing effects foundation
 
-### 性能优化系统
-- ✅ **LOD 系统** 自动网格简化（meshoptimizer），距离相关的细节层次
-- ✅ **实例化渲染** GPU 实例化与 LOD 系统集成
-- ✅ **批处理系统** CPU 合批、GPU 实例化多种策略
-- ✅ **材质排序** 减少 GPU 状态切换
-- ✅ **视锥剔除** 高效的剔除系统
-- ✅ **数学库优化** AVX2 SIMD、智能缓存、OpenMP 并行处理
+### Performance Optimization System
+- ✅ **LOD System** Automatic mesh simplification (meshoptimizer) with distance-based detail levels
+- ✅ **Instanced Rendering** GPU instancing integrated with LOD system
+- ✅ **Batching System** Multiple strategies: CPU batching and GPU instancing
+- ✅ **Material Sorting** Reduces GPU state switches
+- ✅ **Frustum Culling** Efficient culling system
+- ✅ **Math Library Optimization** AVX2 SIMD, smart caching, OpenMP parallel processing
 
-## 技术栈
+## Technology Stack
 
-### 核心依赖
-- **C++20** 现代 C++ 标准，使用概念、智能指针等特性
-- **OpenGL 4.5+** 跨平台图形渲染 API
-- **SDL3** 窗口管理、输入处理、跨平台支持
-- **Eigen3** 高性能数学库（向量、矩阵、四元数）
-- **GLAD** OpenGL 函数加载器
+### Core Dependencies
+- **C++20** Modern C++ standard, leveraging concepts, smart pointers, and other features
+- **OpenGL 4.5+** Cross-platform graphics rendering API
+- **SDL3** Window management, input handling, cross-platform support
+- **Eigen3** High-performance math library (vectors, matrices, quaternions)
+- **GLAD** OpenGL function loader
 
-### 功能扩展库
-- **Assimp** 3D 模型加载（OBJ、FBX、GLTF、Collada、MMD 等）
-- **SDL3_image** 图像格式支持（PNG、JPG、BMP、TGA）
-- **SDL3_ttf** 字体渲染和文本支持
-- **meshoptimizer** 网格优化和 LOD 生成
-- **nlohmann/json** JSON 序列化和配置
+### Extended Functionality Libraries
+- **Assimp** 3D model loading (OBJ, FBX, GLTF, Collada, MMD, etc.)
+- **SDL3_image** Image format support (PNG, JPG, BMP, TGA)
+- **SDL3_ttf** Font rendering and text support
+- **meshoptimizer** Mesh optimization and LOD generation
+- **nlohmann/json** JSON serialization and configuration
 
-所有第三方库已包含在 `third_party/` 目录中，无需额外安装。
+All third-party libraries are included in the `third_party/` directory and require no additional installation.
 
-## 构建指南
+## Build Guide
 
-### 前置要求
+### Prerequisites
 - **CMake 3.15+**
-- **C++20 兼容的编译器**（MSVC 2019+、GCC 10+、Clang 12+）
-- **OpenGL 4.5+** 驱动支持
+- **C++20 compatible compiler** (MSVC 2019+, GCC 10+, Clang 12+)
+- **OpenGL 4.5+** driver support
 
 ### Windows
 
-使用 Visual Studio 2022:
+Using Visual Studio 2022:
 
-#### 方式一：使用自动化脚本（推荐）
+#### Method 1: Using Automated Script (Recommended)
 
-使用自动化脚本一键设置所有依赖：
+Use the automated script to set up all dependencies in one step:
 
 ```powershell
-# 运行依赖设置脚本（自动下载和配置所有第三方库）
+# Run dependency setup script (automatically downloads and configures all third-party libraries)
 PowerShell -ExecutionPolicy Bypass -File ".\setup-dependencies.ps1"
 
-# 编译 Release 版本
+# Build Release version
 mkdir build; cd build; cmake ..; cd ..
 cmake --build build --config Release
 
-# 运行示例
+# Run example
 .\build\bin\Release\01_basic_window.exe
 ```
 
-**脚本功能**：
-- 自动克隆所有必需的第三方库
-- 自动运行 Get-GitModules.ps1 脚本
-- 自动复制 SDL3_ttf 所需的 cmake 文件
-- 自动下载并解压 Eigen3
-- 智能检测已存在的库，避免重复下载
-- 支持选择性跳过某些库（使用 `-SkipEigen`、`-SkipSDL` 等参数）
+**Script Features**:
+- Automatically clones all required third-party libraries
+- Automatically runs Get-GitModules.ps1 script
+- Automatically copies required cmake files for SDL3_ttf
+- Automatically downloads and extracts Eigen3
+- Intelligently detects existing libraries to avoid redundant downloads
+- Supports selective skipping of certain libraries (using `-SkipEigen`, `-SkipSDL`, etc.)
 
-#### 方式二：手动设置
+#### Method 2: Manual Setup
 
-如果需要手动控制每个步骤，可以按照以下步骤操作：
+If you need manual control over each step, follow these instructions:
 
 ```batch
-# 获取第三方库
+# Get third-party libraries
 cd third_party
 git clone https://github.com/libsdl-org/SDL.git
 git clone https://github.com/libsdl-org/SDL_image.git
@@ -171,7 +171,7 @@ git clone https://github.com/assimp/assimp.git
 git clone https://github.com/zeux/meshoptimizer.git
 git clone https://github.com/bulletphysics/bullet3.git
 
-# 复制 SDL3_ttf 所需的 cmake 文件
+# Copy required cmake files for SDL3_ttf
 copy "third_party\SDL\cmake\GetGitRevisionDescription.cmake" "third_party\SDL3_ttf-3.2.2\cmake\GetGitRevisionDescription.cmake"
 copy "third_party\SDL\cmake\PkgConfigHelper.cmake" "third_party\SDL3_ttf-3.2.2\cmake\PkgConfigHelper.cmake"
 copy "third_party\SDL\cmake\sdlcpu.cmake" "third_party\SDL3_ttf-3.2.2\cmake\sdlcpu.cmake"
@@ -179,162 +179,161 @@ copy "third_party\SDL\cmake\sdlplatform.cmake" "third_party\SDL3_ttf-3.2.2\cmake
 copy "third_party\SDL\cmake\sdlmanpages.cmake" "third_party\SDL3_ttf-3.2.2\cmake\sdlmanpages.cmake"
 copy "third_party\SDL_image\cmake\PrivateSdlFunctions.cmake" "third_party\SDL3_ttf-3.2.2\cmake\PrivateSdlFunctions.cmake"
 
-# 获取eigen
+# Get Eigen
 wget "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip" -OutFile "eigen-3.4.0.zip"
 Expand-Archive -Path "eigen-3.4.0.zip" -DestinationPath "."
 
-# 编译 Release 版本
-cd .. # 回到主目录
+# Build Release version
+cd .. # Return to main directory
 mkdir build; cd build; cmake ..; cd ..
 cmake --build build --config Release
 
-# 运行示例
+# Run example
 .\build\bin\Release\01_basic_window.exe
 ```
 
-**注意**: 如果 SDL3_ttf-3.2.2 目录不存在，请先手动下载并解压到 `third_party/` 目录。
+**Note**: If the SDL3_ttf-3.2.2 directory doesn't exist, please manually download and extract it to the `third_party/` directory.
 
-### 构建选项
-- `BUILD_EXAMPLES=ON` 构建示例程序（默认开启）
-- `BUILD_TESTS=ON` 构建测试程序（默认开启）
-- `ENABLE_OPENMP=ON` 启用 OpenMP 并行处理（默认开启，提升批量操作性能）
+### Build Options
+- `BUILD_EXAMPLES=ON` Build example programs (enabled by default)
+- `BUILD_TESTS=ON` Build test programs (enabled by default)
+- `ENABLE_OPENMP=ON` Enable OpenMP parallel processing (enabled by default, improves batch operation performance)
 
-## 示例程序
+## Example Programs
 
-项目包含 **63 个完整示例程序**，覆盖引擎的各个功能模块：
+The project includes **63 complete example programs** covering various engine modules:
 
-### 基础渲染示例
+### Basic Rendering Examples
 ```batch
-01_basic_window.exe              # 基础窗口创建
-02_shader_test.exe               # 着色器系统测试
-05_texture_test.exe              # 纹理加载和渲染
-06_mesh_test.exe                 # 网格渲染
-12_material_test.exe             # 材质系统测试
+01_basic_window.exe              # Basic window creation
+02_shader_test.exe               # Shader system test
+05_texture_test.exe              # Texture loading and rendering
+06_mesh_test.exe                 # Mesh rendering
+12_material_test.exe             # Material system test
 ```
 
-### ECS 系统示例
+### ECS System Examples
 ```batch
-31_ecs_basic_test.exe            # ECS 基础功能
-32_ecs_renderer_test.exe         # ECS 渲染系统
-35_ecs_comprehensive_test.exe    # ECS 综合测试
+31_ecs_basic_test.exe            # ECS basic functionality
+32_ecs_renderer_test.exe         # ECS rendering system
+35_ecs_comprehensive_test.exe    # ECS comprehensive test
 ```
 
-### 2D 渲染示例
+### 2D Rendering Examples
 ```batch
-38_sprite_render_test.exe        # 精灵渲染
-39_sprite_api_test.exe           # 精灵 API 使用
-40_sprite_animation_test.exe     # 精灵动画系统
-41_sprite_batch_test.exe         # 精灵批处理
-42_sprite_state_machine_test.exe # 动画状态机
-44_text_render_test.exe          # 文本渲染
+38_sprite_render_test.exe        # Sprite rendering
+39_sprite_api_test.exe           # Sprite API usage
+40_sprite_animation_test.exe     # Sprite animation system
+41_sprite_batch_test.exe         # Sprite batching
+42_sprite_state_machine_test.exe # Animation state machine
+44_text_render_test.exe          # Text rendering
 ```
 
-### 3D 渲染示例
+### 3D Rendering Examples
 ```batch
-20_camera_test.exe               # 相机系统
-45_lighting_test.exe             # 光照系统
-46_normal_map_test.exe           # 法线贴图
-47_skeleton_palette_test.exe     # 骨骼动画
-48_model_render_test.exe         # 模型渲染
-49_miku_model_test.exe           # MMD 模型加载示例
+20_camera_test.exe               # Camera system
+45_lighting_test.exe             # Lighting system
+46_normal_map_test.exe           # Normal mapping
+47_skeleton_palette_test.exe     # Skeletal animation
+48_model_render_test.exe         # Model rendering
+49_miku_model_test.exe           # MMD model loading example
 ```
 
-### UI 系统示例
+### UI System Examples
 ```batch
-60_ui_framework_showcase.exe     # UI 框架展示（布局系统、控件）
-61_ui_menu_example.exe           # UI 菜单系统示例
+60_ui_framework_showcase.exe     # UI framework showcase (layout system, controls)
+61_ui_menu_example.exe           # UI menu system example
 ```
 
-### 性能优化示例
+### Performance Optimization Examples
 ```batch
-37_batching_benchmark.exe        # 批处理性能测试
-58_lod_generator_test.exe        # LOD 生成器测试
-59_lod_instanced_rendering_test.exe  # LOD 实例化渲染
+37_batching_benchmark.exe        # Batching performance test
+58_lod_generator_test.exe        # LOD generator test
+59_lod_instanced_rendering_test.exe  # LOD instanced rendering
 ```
 
-### 应用框架示例
+### Application Framework Examples
 ```batch
-52_application_boot_demo.exe     # 应用框架启动示例
-53_event_system_test.exe         # 事件系统
-54_module_hud_test.exe           # 模块化 HUD 系统
-55_scene_serialization_test.exe  # 场景序列化
+52_application_boot_demo.exe     # Application framework startup example
+53_event_system_test.exe         # Event system
+54_module_hud_test.exe           # Modular HUD system
+55_scene_serialization_test.exe  # Scene serialization
 ```
 
-### 工具链示例
+### Toolchain Examples
 ```batch
-57_toolchain_integration_test.exe  # 工具链集成测试
+57_toolchain_integration_test.exe  # Toolchain integration test
 ```
 
-更多示例请查看 `examples/` 目录，每个示例都有详细注释说明使用方法。
+See the `examples/` directory for more examples, each with detailed comments explaining usage.
 
-## 项目架构
+## Project Architecture
 
-RenderEngine 采用清晰的分层架构设计：
+RenderEngine features a clear layered architecture design:
 
-### 架构层次
-1. **硬件抽象层 (HAL)** - OpenGL 上下文管理、扩展检测、线程安全
-2. **核心渲染层** - Renderer、RenderState、RenderLayer、批处理管理器
-3. **资源管理层** - ResourceManager、异步加载、缓存系统
-4. **ECS 架构层** - World、Entity、Component、System
-5. **应用框架层** - SceneManager、ModuleRegistry、EventBus
+### Architecture Layers
+1. **Hardware Abstraction Layer (HAL)** - OpenGL context management, extension detection, thread safety
+2. **Core Rendering Layer** - Renderer, RenderState, RenderLayer, batching manager
+3. **Resource Management Layer** - ResourceManager, asynchronous loading, cache system
+4. **ECS Architecture Layer** - World, Entity, Component, System
+5. **Application Framework Layer** - SceneManager, ModuleRegistry, EventBus
 
-### 设计模式
-- **ECS 架构** - 灵活的实体组件系统，便于扩展
-- **RAII 资源管理** - 智能指针和自动资源管理
-- **模块化设计** - 插件式架构，易于添加新功能
-- **观察者模式** - EventBus 实现发布-订阅机制
+### Design Patterns
+- **ECS Architecture** - Flexible entity-component system, easy to extend
+- **RAII Resource Management** - Smart pointers and automatic resource management
+- **Modular Design** - Plugin-based architecture, easy to add new features
+- **Observer Pattern** - EventBus implements publish-subscribe mechanism
 
-### 性能优化策略
-- **LOD 系统** - 自动网格简化，距离相关的细节层次，支持批量计算
-- **实例化渲染** - GPU 实例化与 LOD 系统集成
-- **批处理优化** - CPU 合批、GPU 实例化等多种策略
-- **材质排序** - 减少 GPU 状态切换
-- **SIMD 优化** - AVX2 指令集，智能缓存机制
-- **并行处理** - OpenMP 支持，批量操作性能提升 2-4x
+### Performance Optimization Strategies
+- **LOD System** - Automatic mesh simplification, distance-based detail levels, batch computation support
+- **Instanced Rendering** - GPU instancing integrated with LOD system
+- **Batching Optimization** - Multiple strategies: CPU batching and GPU instancing
+- **Material Sorting** - Reduces GPU state switches
+- **SIMD Optimization** - AVX2 instruction set with smart caching mechanisms
+- **Parallel Processing** - OpenMP support, 2-4x performance improvement for batch operations
 
-## 文档
+## Documentation
 
-### 📚 核心文档
-- [文档索引](docs/README.md) - 完整文档导航
-- [项目结构分析](docs/PROJECT_STRUCTURE_ANALYSIS.md) - 详细的项目架构说明
-- [项目结构图](docs/PROJECT_STRUCTURE_DIAGRAM.md) - 可视化架构图
-- [架构设计](docs/ARCHITECTURE.md) - 架构设计文档
-- [功能列表](docs/FEATURE_LIST.md) - 已实现和计划中的功能
+### 📚 Core Documentation
+- [Documentation Index](docs/README.md) - Complete documentation navigation
+- [Project Structure Analysis](docs/PROJECT_STRUCTURE_ANALYSIS.md) - Detailed project architecture description
+- [Project Structure Diagram](docs/PROJECT_STRUCTURE_DIAGRAM.md) - Visual architecture diagram
+- [Architecture Design](docs/ARCHITECTURE.md) - Architecture design document
+- [Feature List](docs/FEATURE_LIST.md) - Implemented and planned features
 
-### 📖 API 参考
-- [核心 API](docs/api/README.md) - API 文档索引
-- **渲染核心**: [Renderer](docs/api/Renderer.md)、[Shader](docs/api/Shader.md)、[Texture](docs/api/Texture.md)、[Mesh](docs/api/Mesh.md)、[Material](docs/api/Material.md)
-- **ECS 系统**: [World](docs/api/World.md)、[Component](docs/api/Component.md)、[System](docs/api/System.md)、[Entity](docs/api/Entity.md)
-- **资源管理**: [ResourceManager](docs/api/ResourceManager.md)、[AsyncResourceLoader](docs/api/AsyncResourceLoader.md)
-- **数学工具**: [Transform](docs/api/Transform.md)、[MathUtils](docs/api/MathUtils.md)
-- **LOD 系统**: [LOD](docs/api/LOD.md)、[LODGenerator](docs/api/LODGenerator.md)
-- **UI 系统**: [UICanvas](docs/api/UICanvas.md)、[UIWidget](docs/api/UIWidget.md)、[UIButton](docs/api/UIButton.md) 等
-- **2D 渲染**: [Sprite](docs/api/Sprite.md)、[SpriteAnimation](docs/api/SpriteAnimation.md)、[Text](docs/api/Text.md)
+### 📖 API Reference
+- [Core API](docs/api/README.md) - API documentation index
+- **Rendering Core**: [Renderer](docs/api/Renderer.md), [Shader](docs/api/Shader.md), [Texture](docs/api/Texture.md), [Mesh](docs/api/Mesh.md), [Material](docs/api/Material.md)
+- **ECS System**: [World](docs/api/World.md), [Component](docs/api/Component.md), [System](docs/api/System.md), [Entity](docs/api/Entity.md)
+- **Resource Management**: [ResourceManager](docs/api/ResourceManager.md), [AsyncResourceLoader](docs/api/AsyncResourceLoader.md)
+- **Math Utilities**: [Transform](docs/api/Transform.md), [MathUtils](docs/api/MathUtils.md)
+- **LOD System**: [LOD](docs/api/LOD.md), [LODGenerator](docs/api/LODGenerator.md)
+- **UI System**: [UICanvas](docs/api/UICanvas.md), [UIWidget](docs/api/UIWidget.md), [UIButton](docs/api/UIButton.md), etc.
+- **2D Rendering**: [Sprite](docs/api/Sprite.md), [SpriteAnimation](docs/api/SpriteAnimation.md), [Text](docs/api/Text.md)
 
-### 🎯 使用指南
-- [ECS 快速开始](docs/ECS_QUICK_START.md) - ECS 系统使用指南
-- [场景管理指南](docs/application/Scene_API.md) - 场景系统使用
-- [模块开发指南](docs/application/Module_Guide.md) - 模块化开发
-- [资源管理指南](docs/application/Resource_Management_Guide.md) - 资源管理最佳实践
-- [UI 开发指南](docs/application/UI_DEVELOPMENT_PROGRESS_REPORT.md) - UI 系统开发
+### 🎯 Usage Guides
+- [ECS Quick Start](docs/ECS_QUICK_START.md) - ECS system usage guide
+- [Scene Management Guide](docs/application/Scene_API.md) - Scene system usage
+- [Module Development Guide](docs/application/Module_Guide.md) - Modular development
+- [Resource Management Guide](docs/application/Resource_Management_Guide.md) - Resource management best practices
+- [UI Development Guide](docs/application/UI_DEVELOPMENT_PROGRESS_REPORT.md) - UI system development
 
-### 🔧 技术文档
-- [材质排序架构](docs/MATERIAL_SORTING_ARCHITECTURE.md) - 渲染优化
-- [JSON 序列化指南](docs/JSON_SERIALIZATION_GUIDE.md) - 场景序列化
+### 🔧 Technical Documentation
+- [Material Sorting Architecture](docs/MATERIAL_SORTING_ARCHITECTURE.md) - Rendering optimization
+- [JSON Serialization Guide](docs/JSON_SERIALIZATION_GUIDE.md) - Scene serialization
 
-## 项目特点
+## Project Highlights
 
-✅ **现代 C++20** - 充分利用新特性，类型安全且性能优异  
-✅ **完整功能** - 2D/3D 渲染、UI、动画、光照等完整特性  
-✅ **高性能** - 多种优化策略，适合实时渲染应用  
-✅ **易于扩展** - 模块化架构，插件式设计  
-✅ **文档完善** - 详细的 API 文档和使用指南  
+✅ **Modern C++20** - Fully leverages new features for type safety and excellent performance  
+✅ **Complete Features** - Full 2D/3D rendering, UI, animation, lighting, and more  
+✅ **High Performance** - Multiple optimization strategies suitable for real-time rendering applications  
+✅ **Easy to Extend** - Modular architecture with plugin-based design  
+✅ **Well Documented** - Detailed API documentation and usage guides  
 
-## 许可证
+## License
 
-本项目采用 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE) 许可证。
+This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
 
-## 作者
+## Author
 
-李朝宇 (2052046346@qq.com)
-
+Li Chaoyu (2052046346@qq.com)
