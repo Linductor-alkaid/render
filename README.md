@@ -33,8 +33,8 @@
 支持多种光照类型（定向光、点光源、聚光灯）和法线贴图，实现真实的 3D 渲染效果。
 
 <p align="center">
-  <img src="docs/pictures/light.png" alt="光照系统" style="width: 45%; aspect-ratio: 16/9; object-fit: fill; display: inline-block; vertical-align: top;">
-  <img src="docs/pictures/mesh_sprite_faxiangtietu.png" alt="网格精灵法线贴图" style="width: 45%; aspect-ratio: 16/9; object-fit: fill; display: inline-block; vertical-align: top;">
+  <img src="docs/pictures/light.png" alt="光照系统" style="width: 45% object-fit: cover;">
+  <img src="docs/pictures/mesh_sprite_faxiangtietu.png" alt="网格精灵法线贴图" style="width: 45% object-fit: cover;">
 </p>
 
 ### 🎯 LOD 系统
