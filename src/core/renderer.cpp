@@ -1052,7 +1052,8 @@ void Renderer::FlushRenderQueue() {
         }
 
         SortLayerItems(bucket.items, record.descriptor);
-        ApplyLayerOverrides(record.descriptor, record.state);
+        // 注意：不在这里调用ApplyLayerOverrides，因为状态会在渲染时按renderable的层ID动态应用
+        // 这样可以确保所有层的items都准备好后再开始渲染，避免低帧率下的频闪问题
 
         for (const auto& item : bucket.items) {
             if (item.renderable && item.renderable->IsVisible()) {
@@ -1126,13 +1127,13 @@ void Renderer::FlushRenderQueue() {
                     recordPtr = &fallbackLayerRecord;
                 }
 
-            if (recordPtr) {
-                ApplyLayerOverrides(recordPtr->descriptor, recordPtr->state);
+                if (recordPtr) {
+                    ApplyLayerOverrides(recordPtr->descriptor, recordPtr->state);
+                }
             }
-        }
 
-        // 特殊处理 Model 类型：为每个 ModelPart 创建独立的批处理项
-        if (renderable->GetType() == RenderableType::Model) {
+            // 特殊处理 Model 类型：为每个 ModelPart 创建独立的批处理项
+            if (renderable->GetType() == RenderableType::Model) {
             auto* modelRenderable = static_cast<ModelRenderable*>(renderable);
             ModelPtr model = modelRenderable->GetModel();
             
