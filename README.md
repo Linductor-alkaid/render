@@ -12,7 +12,41 @@
   <img src="https://img.shields.io/badge/License-AGPL--3.0-red.svg" alt="License">
 </p>
 
+## 📸 效果展示
 
+### 🎨 UI 系统
+
+完整的 UI 框架，支持亮色/暗色主题、文本渲染和模块化 HUD 系统。
+
+<p align="center">
+  <img src="docs/pictures/ui.png" alt="UI系统" width="45%" style="height: 120px; object-fit: cover;">
+  <img src="docs/pictures/ui_dark.png" alt="UI暗色主题" width="45%" style="height: 120px; object-fit: cover;">
+</p>
+
+<p align="center">
+  <img src="docs/pictures/ui_text.png" alt="UI文本渲染" width="45%" style="height: 120px; object-fit: cover;">
+  <img src="docs/pictures/hud.png" alt="HUD系统" width="45%" style="height: 120px; object-fit: cover;">
+</p>
+
+### 💡 3D 渲染与光照
+
+支持多种光照类型（定向光、点光源、聚光灯）和法线贴图，实现真实的 3D 渲染效果。
+
+<p align="center">
+  <img src="docs/pictures/light.png" alt="光照系统" width="45%" style="height: 120px; object-fit: cover;">
+  <img src="docs/pictures/mesh_sprite_faxiangtietu.png" alt="网格精灵法线贴图" width="45%" style="height: 120px; object-fit: cover;">
+</p>
+
+### 🎯 LOD 系统
+
+自动网格简化系统，根据距离动态调整模型细节层次，提升渲染性能。
+
+<p align="center">
+  <img src="docs/pictures/lod_mesh.png" alt="LOD网格" width="45%">
+  <img src="docs/pictures/lod_mesh_xiankuang.png" alt="LOD网格线框" width="45%">
+</p>
+
+---
 
 一个基于现代 C++20 的 3D 渲染引擎，采用 ECS（Entity Component System）架构设计，支持 2D/3D 渲染、UI 系统、精灵动画、光照系统和资源异步加载等功能。
 
