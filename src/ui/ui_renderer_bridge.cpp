@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,6 +39,7 @@
 #include "render/render_state.h"
 #include "render/resource_manager.h"
 #include "render/renderer.h"
+#include "render/renderable.h"
 #include "render/text/text_renderer.h"
 #include "render/ui/uicanvas.h"
 #include "render/ui/ui_widget.h"
@@ -154,9 +156,13 @@ void UIRendererBridge::PrepareFrame(const Render::Application::FrameUpdateArgs& 
         return;
     }
 
-    // 重置几何图形渲染器的对象池索引，准备新的一帧
+    // 重置对象池索引，准备新的一帧
+    ResetSpritePool();
     m_geometryRenderer.ResetSpritePool();
     m_geometryRenderer.ResetMeshPool();
+
+    // 在 PreFrame 阶段清空命令缓冲区，确保上一帧的渲染已经完成
+    m_commandBuffer.Clear();
 
     UploadPerFrameUniforms(frame, canvas, ctx);
 }
@@ -392,18 +398,19 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
                 continue;
             }
             
-            SpriteRenderable sprite;
-            sprite.SetTransform(cmd.sprite.transform);
-            sprite.SetLayerID(cmd.sprite.layerID);
+            // 使用对象池获取 SpriteRenderable，避免局部变量导致的生命周期问题
+            Render::SpriteRenderable* sprite = AcquireSpriteRenderable();
+            sprite->SetTransform(cmd.sprite.transform);
+            sprite->SetLayerID(cmd.sprite.layerID);
             // 将 depth 值转换为 RenderPriority，确保正确的渲染顺序
             // depth 值越大，RenderPriority 越小（先渲染），depth 值越小，RenderPriority 越大（后渲染）
-            sprite.SetRenderPriority(static_cast<int32_t>(-cmd.sprite.depth * 1000.0f));
-            sprite.SetTexture(renderTexture);
-            sprite.SetSourceRect(cmd.sprite.sourceRect);
-            sprite.SetSize(cmd.sprite.size);
-            sprite.SetTintColor(cmd.sprite.tint);
-            sprite.SetViewProjectionOverride(view, projection);
-            sprite.SubmitToRenderer(ctx.renderer);
+            sprite->SetRenderPriority(static_cast<int32_t>(-cmd.sprite.depth * 1000.0f));
+            sprite->SetTexture(renderTexture);
+            sprite->SetSourceRect(cmd.sprite.sourceRect);
+            sprite->SetSize(cmd.sprite.size);
+            sprite->SetTintColor(cmd.sprite.tint);
+            sprite->SetViewProjectionOverride(view, projection);
+            sprite->SubmitToRenderer(ctx.renderer);
             break;
         }
         case UIRenderCommandType::Text: {
@@ -766,9 +773,20 @@ void UIRendererBridge::EnsureSolidTexture() {
     }
 }
 
+Render::SpriteRenderable* UIRendererBridge::AcquireSpriteRenderable() {
+    if (m_spritePoolIndex >= m_spritePool.size()) {
+        m_spritePool.emplace_back(std::make_unique<Render::SpriteRenderable>());
+    }
+    return m_spritePool[m_spritePoolIndex++].get();
+}
+
+void UIRendererBridge::ResetSpritePool() {
+    m_spritePoolIndex = 0;
+}
+
 void UIRendererBridge::DrawDebugRect(const UIDebugRectCommand& cmd,
-                                     const Matrix4& projection,
-                                     Render::Application::AppContext& ctx) {
+                                      const Matrix4& projection,
+                                      Render::Application::AppContext& ctx) {
     if (!m_debugConfig || !m_debugConfig->drawDebugRects) {
         return;
     }
@@ -789,15 +807,16 @@ void UIRendererBridge::DrawDebugRect(const UIDebugRectCommand& cmd,
         auto transform = CreateRef<Transform>();
         transform->SetPosition(Vector3(x, y, static_cast<float>(-cmd.depth) * 0.001f));
 
-        SpriteRenderable sprite;
-        sprite.SetTransform(transform);
-        sprite.SetLayerID(cmd.layerID);
-        sprite.SetTexture(m_debugTexture);
-        sprite.SetSourceRect(Rect(0.0f, 0.0f, 1.0f, 1.0f));
-        sprite.SetSize(Vector2(std::max(width, 1.0f), std::max(height, 1.0f)));
-        sprite.SetTintColor(cmd.color);
-        sprite.SetViewProjectionOverride(Matrix4::Identity(), projection);
-        sprite.SubmitToRenderer(ctx.renderer);
+        // 使用对象池获取 SpriteRenderable，避免局部变量导致的生命周期问题
+        Render::SpriteRenderable* sprite = AcquireSpriteRenderable();
+        sprite->SetTransform(transform);
+        sprite->SetLayerID(cmd.layerID);
+        sprite->SetTexture(m_debugTexture);
+        sprite->SetSourceRect(Rect(0.0f, 0.0f, 1.0f, 1.0f));
+        sprite->SetSize(Vector2(std::max(width, 1.0f), std::max(height, 1.0f)));
+        sprite->SetTintColor(cmd.color);
+        sprite->SetViewProjectionOverride(Matrix4::Identity(), projection);
+        sprite->SubmitToRenderer(ctx.renderer);
     };
 
     const float x = cmd.rect.x;
@@ -815,7 +834,8 @@ void UIRendererBridge::DrawDebugRect(const UIDebugRectCommand& cmd,
 void UIRendererBridge::BuildCommands(UICanvas& canvas,
                                       UIWidgetTree& tree,
                                       Render::Application::AppContext& ctx) {
-    m_commandBuffer.Clear();
+    // 命令缓冲区已在 PrepareFrame() 中清空，这里不再清空
+    // m_commandBuffer.Clear();  // 已移动到 PrepareFrame()
     
     // 预先创建光标纹理，确保光标可以渲染
     EnsureSolidTexture();

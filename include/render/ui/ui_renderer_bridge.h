@@ -83,6 +83,16 @@ private:
                        UIWidgetTree& tree,
                        Render::Application::AppContext& ctx);
 
+    /**
+     * @brief 从对象池获取或创建 SpriteRenderable 对象
+     */
+    Render::SpriteRenderable* AcquireSpriteRenderable();
+
+    /**
+     * @brief 重置对象池索引（在每帧开始时调用）
+     */
+    void ResetSpritePool();
+
     bool m_initialized = false;
     bool m_loggedMissingAtlas = false;
     bool m_loggedMissingFont = false;
@@ -99,6 +109,11 @@ private:
 
     UIRenderCommandBuffer m_commandBuffer;
     UIGeometryRenderer m_geometryRenderer;
+
+    // UI SpriteRenderable 对象池：用于管理 UI 渲染对象的生命周期
+    // 避免使用局部变量导致的对象过早销毁问题
+    std::vector<std::unique_ptr<Render::SpriteRenderable>> m_spritePool;
+    size_t m_spritePoolIndex = 0;  // 当前使用的对象索引
 };
 
 } // namespace Render::UI
