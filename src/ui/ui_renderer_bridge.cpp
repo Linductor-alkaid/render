@@ -146,7 +146,7 @@ void UIRendererBridge::Shutdown(Render::Application::AppContext&) {
 
 void UIRendererBridge::PrepareFrame(const Render::Application::FrameUpdateArgs& frame,
                                     UICanvas& canvas,
-                                    UIWidgetTree& /*tree*/,
+                                    UIWidgetTree& tree,
                                     Render::Application::AppContext& ctx) {
     if (!m_initialized) {
         Initialize(ctx);
@@ -157,13 +157,27 @@ void UIRendererBridge::PrepareFrame(const Render::Application::FrameUpdateArgs& 
     }
 
     // 重置对象池索引，准备新的一帧
+    // 注意：对象池重置应该在命令提交完成后进行，而不是在命令构建前
+    // 但为了确保对象池在每帧开始时是干净的，我们在这里重置
+    // 对象池的对象会在整个渲染过程中保持有效，直到下一帧重置
     ResetSpritePool();
     m_geometryRenderer.ResetSpritePool();
     m_geometryRenderer.ResetMeshPool();
+    m_geometryRenderer.ResetTransformPool();
 
-    // 注意：命令缓冲区不清空在这里，而是延迟到 Flush() 开始时
-    // 这样可以确保在UI状态更新完成后再清空和重建命令，避免状态不一致导致的频闪
-    // m_commandBuffer.Clear();  // 已移动到 Flush() 开始处
+    // 双缓冲命令队列：在PreFrame阶段交换缓冲区并清空，立即构建新命令
+    // 关键优化：在PreFrame阶段就构建命令，确保与UI状态更新完全同步
+    // 这样当前帧构建的命令会在当前帧渲染，避免任何延迟导致的频闪
+    m_currentCommandBuffer = 1 - m_currentCommandBuffer;
+    m_commandBuffer[m_currentCommandBuffer].Clear();
+    
+    // 在PreFrame阶段立即构建命令，确保与UI状态更新同步
+    // 此时UI状态已经更新（动画、布局等），立即构建命令可以确保状态一致性
+    EnsureAtlas(ctx);
+    const UIWidget* root = tree.GetRoot();
+    if (root) {
+        BuildCommands(canvas, tree, ctx, m_currentCommandBuffer);
+    }
 
     UploadPerFrameUniforms(frame, canvas, ctx);
 }
@@ -182,13 +196,9 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
         return;
     }
 
-    // 在 Flush() 开始时清空命令缓冲区，确保在UI状态更新完成后才清空
-    // 这样可以避免在UI状态更新过程中清空命令缓冲区，导致状态不一致
-    // 此时上一帧的渲染应该已经完成（FlushRenderQueue 在 PostFrame 之后调用）
-    m_commandBuffer.Clear();
-
-    EnsureAtlas(ctx);
-    BuildCommands(canvas, tree, ctx);
+    // 双缓冲命令队列：命令已在PrepareFrame阶段构建完成
+    // 这里只需要提交命令，不需要重新构建
+    // 这样可以确保命令构建与UI状态更新完全同步，避免任何时间差导致的频闪
 
     size_t totalCount = 0;
     size_t visibleCount = 0;
@@ -196,11 +206,35 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
     Logger::GetInstance().InfoFormat("[UIRendererBridge] Frame widget summary: total=%zu, visible=%zu",
                                      totalCount, visibleCount);
 
-    const auto& commands = m_commandBuffer.GetCommands();
+    // 计算视图和投影矩阵
+    Vector2 canvasSize = canvas.GetState().WindowSize();
+    if (canvasSize.x() <= 0.0f || canvasSize.y() <= 0.0f) {
+        canvasSize = Vector2(1280.0f, 720.0f);
+    }
+
+    Matrix4 view = Matrix4::Identity();
+    Matrix4 projection = MathUtils::Orthographic(0.0f,
+                                                 canvasSize.x(),
+                                                 canvasSize.y(),
+                                                 0.0f,
+                                                 -1.0f,
+                                                 1.0f);
+
+    // 提交当前缓冲区的命令（当前帧刚构建的）
+    // 缓冲区已在PreFrame阶段交换，所以当前缓冲区包含的是当前帧的命令
+    const auto& commands = m_commandBuffer[m_currentCommandBuffer].GetCommands();
     if (commands.empty()) {
         return;
     }
+    
+    // 提交当前帧的命令
+    ProcessCommands(commands, view, projection, ctx);
+}
 
+void UIRendererBridge::ProcessCommands(const std::vector<UIRenderCommand>& commands,
+                                       const Matrix4& view,
+                                       const Matrix4& projection,
+                                       Render::Application::AppContext& ctx) {
     if (!ctx.renderer) {
         Logger::GetInstance().Warning("[UIRendererBridge] Renderer is null, cannot submit UI sprites.");
         return;
@@ -220,22 +254,6 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
     }
     Logger::GetInstance().DebugFormat("[UIRendererBridge] Command stats: cursor=%zu, atlas=%zu, total=%zu",
                                      cursorCmdCount, atlasCmdCount, commands.size());
-
-    Vector2 canvasSize = canvas.GetState().WindowSize();
-    if (canvasSize.x() <= 0.0f || canvasSize.y() <= 0.0f) {
-        canvasSize = Vector2(1280.0f, 720.0f);
-    }
-
-    Matrix4 view = Matrix4::Identity();
-    // 正交投影矩阵参数：left, right, bottom, top, near, far
-    // 对于UI坐标系统（Y向下为正，原点在左上角）：left=0, right=width, bottom=height, top=0
-    // 注意：虽然top < bottom看起来不符合常规，但这是为了匹配窗口坐标系统（Y向下为正）
-    Matrix4 projection = MathUtils::Orthographic(0.0f,
-                                                 canvasSize.x(),
-                                                 canvasSize.y(),
-                                                 0.0f,
-                                                 -1.0f,
-                                                 1.0f);
 
     EnsureTextResources(ctx);
 
@@ -501,9 +519,7 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
     // 2. 这样可以确保所有UI元素和其他渲染对象在同一帧内按正确顺序渲染
     // 3. 避免重复调用FlushRenderQueue()导致渲染队列被清空两次，从而引起纹理闪动
     // 
-    // 关于对象生命周期：虽然Flush中创建了局部变量（如SpriteRenderable），
-    // 但这些对象提交到渲染队列后，主循环的FlushRenderQueue()会在同一帧内处理它们，
-    // 所以不会有生命周期问题
+    // 关于对象生命周期：使用对象池管理SpriteRenderable，确保生命周期安全
 }
 
 void UIRendererBridge::UploadPerFrameUniforms(const Render::Application::FrameUpdateArgs&,
@@ -839,9 +855,12 @@ void UIRendererBridge::DrawDebugRect(const UIDebugRectCommand& cmd,
 
 void UIRendererBridge::BuildCommands(UICanvas& canvas,
                                       UIWidgetTree& tree,
-                                      Render::Application::AppContext& ctx) {
-    // 命令缓冲区已在 Flush() 开始时清空，这里不再清空
-    // m_commandBuffer.Clear();  // 已移动到 Flush() 开始处
+                                      Render::Application::AppContext& ctx,
+                                      int bufferIndex) {
+    // 使用指定的缓冲区构建命令（双缓冲机制）
+    // bufferIndex 应该是 nextBuffer（1 - m_currentCommandBuffer）
+    // 该缓冲区已在 PrepareFrame() 中清空
+    UIRenderCommandBuffer& commandBuffer = m_commandBuffer[bufferIndex];
     
     // 预先创建光标纹理，确保光标可以渲染
     EnsureSolidTexture();
@@ -1000,7 +1019,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             cmd.isCursor = false;  // 明确标识这是图集命令，不是光标命令
             cmd.size = finalSize;
 
-            m_commandBuffer.AddSprite(cmd);
+            commandBuffer.AddSprite(cmd);
         };
 
         if (id == "ui.panel") {
@@ -1019,7 +1038,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 textCmd.offset = Vector2::Zero();
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddText(textCmd);
+                commandBuffer.AddText(textCmd);
             }
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
                 UIDebugRectCommand rectCmd;
@@ -1028,7 +1047,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 rectCmd.thickness = 2.0f;
                 rectCmd.layerID = 999;
                 rectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(rectCmd);
+                commandBuffer.AddDebugRect(rectCmd);
             }
         } else if (const auto* buttonWidget = dynamic_cast<const UIButton*>(&widget)) {
             // 使用主题系统获取颜色
@@ -1061,7 +1080,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             rectCmd.segments = 8;
             rectCmd.layerID = 800;
             rectCmd.depth = static_cast<float>(depth);
-            m_commandBuffer.AddRoundedRectangle(rectCmd);
+            commandBuffer.AddRoundedRectangle(rectCmd);
 
             if (m_defaultFont) {
                 std::string label = buttonWidget->GetLabel();
@@ -1098,7 +1117,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
                 
-                m_commandBuffer.AddText(textCmd);
+                commandBuffer.AddText(textCmd);
             }
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
                 UIDebugRectCommand debugRectCmd;
@@ -1107,7 +1126,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(debugRectCmd);
+                commandBuffer.AddDebugRect(debugRectCmd);
             }
         } else if (const auto* textFieldWidget = dynamic_cast<const UITextField*>(&widget)) {
             // 使用主题系统获取颜色
@@ -1141,7 +1160,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             rectCmd.segments = 8;
             rectCmd.layerID = 800;
             rectCmd.depth = static_cast<float>(depth);
-            m_commandBuffer.AddRoundedRectangle(rectCmd);
+            commandBuffer.AddRoundedRectangle(rectCmd);
 
             const std::string& actualText = textFieldWidget->GetText();
             std::string drawText = actualText;
@@ -1253,7 +1272,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                             selectionCmd.layerID = 800;
                             selectionCmd.depth = static_cast<float>(depth) - 0.1f;
                             selectionCmd.isCursor = false;  // 选中区域不是光标
-                            m_commandBuffer.AddSprite(selectionCmd);
+                            commandBuffer.AddSprite(selectionCmd);
                         }
                     }
                 }
@@ -1274,7 +1293,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 textCmd.offset = Vector2::Zero();
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddText(textCmd);
+                commandBuffer.AddText(textCmd);
             }
 
             // 在文本之后渲染光标，确保光标在文本之上（后渲染的会覆盖先渲染的）
@@ -1386,7 +1405,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                     caretCmd.layerID = 800;
                     caretCmd.depth = caretDepth;
                     caretCmd.isCursor = true;  // 明确标识这是光标命令
-                    m_commandBuffer.AddSprite(caretCmd);
+                    commandBuffer.AddSprite(caretCmd);
                 }
             }
 
@@ -1397,7 +1416,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(debugRectCmd);
+                commandBuffer.AddDebugRect(debugRectCmd);
             }
         } else if (const auto* checkboxWidget = dynamic_cast<const UICheckBox*>(&widget)) {
             // 使用主题系统获取颜色
@@ -1459,7 +1478,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             boxCmd.segments = 16; // 增加分段数
             boxCmd.layerID = 800;
             boxCmd.depth = static_cast<float>(depth) + 0.01f; // 框在底层（更大的depth值表示更靠后）
-            m_commandBuffer.AddRoundedRectangle(boxCmd);
+            commandBuffer.AddRoundedRectangle(boxCmd);
             
             // 绘制选中标记或不确定标记（确保在框之上）
             if (indeterminate) {
@@ -1478,7 +1497,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 lineCmd.stroked = false;
                 lineCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
                 lineCmd.depth = static_cast<float>(depth) - 0.01f; // 标记在框之上（更小的depth值表示更靠前）
-                m_commandBuffer.AddRectangle(lineCmd);
+                commandBuffer.AddRectangle(lineCmd);
             } else if (checked) {
                 // 选中状态：绘制对勾（使用两条线段组成，加粗）
                 const float checkSize = checkboxBoxSize * 0.6f;
@@ -1496,7 +1515,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 line1Cmd.color = colorSet.text;
                 line1Cmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
                 line1Cmd.depth = static_cast<float>(depth) - 0.01f; // 标记在框之上（更小的depth值表示更靠前）
-                m_commandBuffer.AddLine(line1Cmd);
+                commandBuffer.AddLine(line1Cmd);
                 
                 // 对勾的第二段（中间到右上）
                 Vector2 p3(checkX + checkSize * 0.3f, checkY - checkSize * 0.2f);
@@ -1507,7 +1526,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 line2Cmd.color = colorSet.text;
                 line2Cmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
                 line2Cmd.depth = static_cast<float>(depth) - 0.01f; // 标记在框之上（更小的depth值表示更靠前）
-                m_commandBuffer.AddLine(line2Cmd);
+                commandBuffer.AddLine(line2Cmd);
             }
             
             // 绘制标签文本
@@ -1533,7 +1552,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
                 
-                m_commandBuffer.AddText(textCmd);
+                commandBuffer.AddText(textCmd);
             }
             
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
@@ -1543,7 +1562,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(debugRectCmd);
+                commandBuffer.AddDebugRect(debugRectCmd);
             }
         } else if (const auto* toggleWidget = dynamic_cast<const UIToggle*>(&widget)) {
             // 使用主题系统获取颜色
@@ -1618,7 +1637,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             trackCmd.segments = 32; // 增加分段数，减少透明线
             trackCmd.layerID = 800;
             trackCmd.depth = static_cast<float>(depth) + 0.01f; // 轨道在底层（更大的depth值表示更靠后）
-            m_commandBuffer.AddRoundedRectangle(trackCmd);
+            commandBuffer.AddRoundedRectangle(trackCmd);
             
             // 绘制开关按钮（圆形滑块，优化大小和颜色）
             const float buttonRadius = trackHeight * 0.45f; // 按钮半径为轨道高度的45%（更大一些）
@@ -1648,7 +1667,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 shadowCmd.segments = 32; // 增加分段数
                 shadowCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
                 shadowCmd.depth = static_cast<float>(depth) - 0.01f; // 阴影在按钮下方但在轨道上方
-                m_commandBuffer.AddCircle(shadowCmd);
+                commandBuffer.AddCircle(shadowCmd);
             }
             
             // 绘制按钮主体（确保在最上层）
@@ -1663,7 +1682,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             buttonCmd.segments = 32; // 增加分段数，减少透明线
             buttonCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
             buttonCmd.depth = static_cast<float>(depth) - 0.02f; // 按钮在最上层（更小的depth值表示更靠前）
-            m_commandBuffer.AddCircle(buttonCmd);
+            commandBuffer.AddCircle(buttonCmd);
             
             // 绘制标签文本
             if (m_defaultFont && !toggleWidget->GetLabel().empty()) {
@@ -1688,7 +1707,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
                 
-                m_commandBuffer.AddText(textCmd);
+                commandBuffer.AddText(textCmd);
             }
             
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
@@ -1698,7 +1717,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(debugRectCmd);
+                commandBuffer.AddDebugRect(debugRectCmd);
             }
         } else if (const auto* sliderWidget = dynamic_cast<const UISlider*>(&widget)) {
             // 使用主题系统获取颜色
@@ -1739,7 +1758,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             trackCmd.segments = 32; // 增加分段数，减少透明线
             trackCmd.layerID = 800;
             trackCmd.depth = static_cast<float>(depth) + 0.01f; // 轨道在最底层（更大的depth值表示更靠后）
-            m_commandBuffer.AddRoundedRectangle(trackCmd);
+            commandBuffer.AddRoundedRectangle(trackCmd);
             
             // 绘制滑块填充部分（已选择的部分）
             if (normalizedValue > 0.0f) {
@@ -1783,7 +1802,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 fillCmd.segments = 32; // 增加分段数，确保圆角平滑
                 fillCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
                 fillCmd.depth = static_cast<float>(depth) - 0.01f; // 填充在轨道之上（更小的depth值表示更靠前）
-                m_commandBuffer.AddRoundedRectangle(fillCmd);
+                commandBuffer.AddRoundedRectangle(fillCmd);
             }
             
             // 绘制滑块手柄（圆形）
@@ -1823,7 +1842,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             handleCmd.segments = 32; // 增加分段数，减少透明线
             handleCmd.layerID = 800; // 使用相同的layerID，通过RenderPriority控制顺序
             handleCmd.depth = static_cast<float>(depth) - 0.02f; // 手柄在最上层（更小的depth值表示更靠前）
-            m_commandBuffer.AddRoundedRectangle(handleCmd);
+                commandBuffer.AddRoundedRectangle(handleCmd);
             
             // 绘制标签和数值文本
             if (m_defaultFont) {
@@ -1861,7 +1880,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                     textCmd.layerID = 800;
                     textCmd.depth = static_cast<float>(depth);
                     
-                    m_commandBuffer.AddText(textCmd);
+                    commandBuffer.AddText(textCmd);
                 }
             }
             
@@ -1872,7 +1891,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(debugRectCmd);
+                commandBuffer.AddDebugRect(debugRectCmd);
             }
         } else if (const auto* radioWidget = dynamic_cast<const UIRadioButton*>(&widget)) {
             // 使用主题系统获取颜色
@@ -1918,7 +1937,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
             outerCmd.segments = 32;
             outerCmd.layerID = 800;
             outerCmd.depth = static_cast<float>(depth) + 0.01f; // 外圈在底层
-            m_commandBuffer.AddCircle(outerCmd);
+            commandBuffer.AddCircle(outerCmd);
             
             // 如果选中，绘制内圈（实心圆，确保是圆形）
             if (selected) {
@@ -1972,7 +1991,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                         debugLogCount++;
                     }
                     
-                    m_commandBuffer.AddCircle(innerCmd);
+                    commandBuffer.AddCircle(innerCmd);
                 }
             }
             
@@ -2000,7 +2019,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 textCmd.layerID = 800;
                 textCmd.depth = static_cast<float>(depth);
                 
-                m_commandBuffer.AddText(textCmd);
+                commandBuffer.AddText(textCmd);
             }
             
             if (m_debugConfig && m_debugConfig->drawDebugRects) {
@@ -2010,7 +2029,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(debugRectCmd);
+                commandBuffer.AddDebugRect(debugRectCmd);
             }
         } else if (const auto* colorPickerWidget = dynamic_cast<const UIColorPicker*>(&widget)) {
             // 使用主题系统获取颜色
@@ -2064,7 +2083,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 previewCmd.segments = 8;
                 previewCmd.layerID = 800;
                 previewCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddRoundedRectangle(previewCmd);
+                commandBuffer.AddRoundedRectangle(previewCmd);
             }
             
             // 绘制颜色通道滑块
@@ -2084,7 +2103,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 trackCmd.segments = 16;
                 trackCmd.layerID = 800;
                 trackCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddRoundedRectangle(trackCmd);
+                commandBuffer.AddRoundedRectangle(trackCmd);
                 
                 // 绘制填充部分（渐变色，从0到当前值）
                 const float fillWidth = sliderWidth * channelValue;
@@ -2100,7 +2119,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                     fillCmd.segments = 16;
                     fillCmd.layerID = 800;
                     fillCmd.depth = static_cast<float>(depth) - 0.01f;
-                    m_commandBuffer.AddRoundedRectangle(fillCmd);
+                    commandBuffer.AddRoundedRectangle(fillCmd);
                 }
                 
                 // 绘制滑块手柄
@@ -2119,7 +2138,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 handleCmd.segments = 16;
                 handleCmd.layerID = 800;
                 handleCmd.depth = static_cast<float>(depth) - 0.02f;
-                m_commandBuffer.AddCircle(handleCmd);
+                commandBuffer.AddCircle(handleCmd);
                 
                 // 绘制通道标签和数值
                 if (m_defaultFont) {
@@ -2142,7 +2161,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                     textCmd.offset = Vector2(0.0f, 0.0f);
                     textCmd.layerID = 800;
                     textCmd.depth = static_cast<float>(depth);
-                    m_commandBuffer.AddText(textCmd);
+                    commandBuffer.AddText(textCmd);
                 }
             };
             
@@ -2166,7 +2185,7 @@ void UIRendererBridge::BuildCommands(UICanvas& canvas,
                 debugRectCmd.thickness = 2.0f;
                 debugRectCmd.layerID = 999;
                 debugRectCmd.depth = static_cast<float>(depth);
-                m_commandBuffer.AddDebugRect(debugRectCmd);
+                commandBuffer.AddDebugRect(debugRectCmd);
             }
         }
         

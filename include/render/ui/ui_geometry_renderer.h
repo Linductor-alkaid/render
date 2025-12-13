@@ -95,6 +95,11 @@ public:
      * @brief 重置网格对象池索引（在每帧开始时调用）
      */
     void ResetMeshPool();
+    
+    /**
+     * @brief 重置 Transform 对象池索引（在每帧开始时调用）
+     */
+    void ResetTransformPool();
 
 private:
     /**
@@ -154,6 +159,15 @@ private:
     // 对象池：存储 MeshRenderable 对象，用于填充多边形
     std::vector<std::unique_ptr<Render::MeshRenderable>> m_meshPool;
     size_t m_meshPoolIndex = 0;  // 当前使用的对象索引
+    
+    // Transform 对象池：避免频繁创建销毁 Transform 对象，解决生命周期问题导致的频闪
+    std::vector<Ref<Render::Transform>> m_transformPool;
+    size_t m_transformPoolIndex = 0;  // 当前使用的对象索引
+    
+    /**
+     * @brief 从对象池获取或创建 Transform 对象
+     */
+    Ref<Render::Transform> AcquireTransform();
 };
 
 } // namespace Render::UI

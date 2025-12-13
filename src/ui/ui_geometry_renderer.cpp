@@ -45,6 +45,8 @@ UIGeometryRenderer::~UIGeometryRenderer() {
     m_meshPoolIndex = 0;
     m_spritePool.clear();
     m_spritePoolIndex = 0;
+    m_transformPool.clear();
+    m_transformPoolIndex = 0;
 }
 
 bool UIGeometryRenderer::Initialize() {
@@ -111,6 +113,8 @@ void UIGeometryRenderer::Shutdown() {
     m_meshPoolIndex = 0;
     m_spritePool.clear();
     m_spritePoolIndex = 0;
+    m_transformPool.clear();
+    m_transformPoolIndex = 0;
     m_initialized = false;
 }
 
@@ -120,6 +124,22 @@ void UIGeometryRenderer::ResetMeshPool() {
 
 void UIGeometryRenderer::ResetSpritePool() {
     m_spritePoolIndex = 0;
+}
+
+void UIGeometryRenderer::ResetTransformPool() {
+    m_transformPoolIndex = 0;
+}
+
+Ref<Render::Transform> UIGeometryRenderer::AcquireTransform() {
+    if (m_transformPoolIndex >= m_transformPool.size()) {
+        m_transformPool.emplace_back(CreateRef<Render::Transform>());
+    }
+    auto transform = m_transformPool[m_transformPoolIndex++];
+    // 重置 Transform 状态，确保干净的状态
+    transform->SetPosition(Vector3::Zero());
+    transform->SetRotation(Quaternion::Identity());
+    transform->SetScale(Vector3::Ones());
+    return transform;
 }
 
 std::vector<Vector2> UIGeometryRenderer::GenerateBezierCurve(const Vector2& p0, const Vector2& p1, const Vector2& p2, const Vector2& p3, int segments) {
@@ -334,7 +354,8 @@ void UIGeometryRenderer::RenderLineWithSprite(const Vector2& start, const Vector
     Vector2 center = (extendedStart + extendedEnd) * 0.5f;
     float angle = std::atan2(dir.y(), dir.x());
 
-    auto transform = CreateRef<Transform>();
+    // 使用对象池获取 Transform，避免频繁创建销毁导致的生命周期问题
+    auto transform = AcquireTransform();
     transform->SetPosition(Vector3(center.x(), center.y(), -depth * 0.001f));
     transform->SetRotationEuler(Vector3(0.0f, 0.0f, angle));
 
@@ -403,7 +424,8 @@ void UIGeometryRenderer::RenderFilledPolygon(const std::vector<Vector2>& vertice
     meshRenderable->SetMesh(mesh);
     meshRenderable->SetMaterial(m_solidMaterial);
     
-    auto transform = CreateRef<Transform>();
+    // 使用对象池获取 Transform，避免频繁创建销毁导致的生命周期问题
+    auto transform = AcquireTransform();
     transform->SetPosition(Vector3::Zero());
     meshRenderable->SetTransform(transform);
     

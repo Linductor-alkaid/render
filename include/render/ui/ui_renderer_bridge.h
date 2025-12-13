@@ -81,7 +81,13 @@ private:
                        Render::Application::AppContext& ctx);
     void BuildCommands(UICanvas& canvas,
                        UIWidgetTree& tree,
-                       Render::Application::AppContext& ctx);
+                       Render::Application::AppContext& ctx,
+                       int bufferIndex);
+    
+    void ProcessCommands(const std::vector<UIRenderCommand>& commands,
+                         const Matrix4& view,
+                         const Matrix4& projection,
+                         Render::Application::AppContext& ctx);
 
     /**
      * @brief 从对象池获取或创建 SpriteRenderable 对象
@@ -107,7 +113,11 @@ private:
     const UIDebugConfig* m_debugConfig = nullptr;
     UIThemeManager* m_themeManager = nullptr;
 
-    UIRenderCommandBuffer m_commandBuffer;
+    // 双缓冲命令队列：用于彻底解决UI状态更新时的频闪问题
+    // 使用两个缓冲区交替使用，确保命令构建和提交的原子性
+    UIRenderCommandBuffer m_commandBuffer[2];  // 双缓冲命令队列
+    int m_currentCommandBuffer = 0;            // 当前使用的缓冲区索引（用于读取/提交）
+    
     UIGeometryRenderer m_geometryRenderer;
 
     // UI SpriteRenderable 对象池：用于管理 UI 渲染对象的生命周期
