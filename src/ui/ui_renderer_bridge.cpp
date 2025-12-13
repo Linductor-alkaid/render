@@ -161,8 +161,9 @@ void UIRendererBridge::PrepareFrame(const Render::Application::FrameUpdateArgs& 
     m_geometryRenderer.ResetSpritePool();
     m_geometryRenderer.ResetMeshPool();
 
-    // 在 PreFrame 阶段清空命令缓冲区，确保上一帧的渲染已经完成
-    m_commandBuffer.Clear();
+    // 注意：命令缓冲区不清空在这里，而是延迟到 Flush() 开始时
+    // 这样可以确保在UI状态更新完成后再清空和重建命令，避免状态不一致导致的频闪
+    // m_commandBuffer.Clear();  // 已移动到 Flush() 开始处
 
     UploadPerFrameUniforms(frame, canvas, ctx);
 }
@@ -180,6 +181,11 @@ void UIRendererBridge::Flush(const Render::Application::FrameUpdateArgs&,
         Logger::GetInstance().Debug("[UIRendererBridge] Widget tree is empty.");
         return;
     }
+
+    // 在 Flush() 开始时清空命令缓冲区，确保在UI状态更新完成后才清空
+    // 这样可以避免在UI状态更新过程中清空命令缓冲区，导致状态不一致
+    // 此时上一帧的渲染应该已经完成（FlushRenderQueue 在 PostFrame 之后调用）
+    m_commandBuffer.Clear();
 
     EnsureAtlas(ctx);
     BuildCommands(canvas, tree, ctx);
@@ -834,8 +840,8 @@ void UIRendererBridge::DrawDebugRect(const UIDebugRectCommand& cmd,
 void UIRendererBridge::BuildCommands(UICanvas& canvas,
                                       UIWidgetTree& tree,
                                       Render::Application::AppContext& ctx) {
-    // 命令缓冲区已在 PrepareFrame() 中清空，这里不再清空
-    // m_commandBuffer.Clear();  // 已移动到 PrepareFrame()
+    // 命令缓冲区已在 Flush() 开始时清空，这里不再清空
+    // m_commandBuffer.Clear();  // 已移动到 Flush() 开始处
     
     // 预先创建光标纹理，确保光标可以渲染
     EnsureSolidTexture();

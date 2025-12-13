@@ -438,6 +438,10 @@ private:
     std::atomic<bool> m_lodInstancingEnabled;  ///< 是否启用 LOD 实例化渲染
     LODInstancingStats m_lodInstancingStats;    ///< LOD 实例化渲染统计信息
     
+    // 延迟清除缓冲区标志：用于解决UI状态更新时的频闪问题
+    // 当UI状态更新时，延迟清除可以确保在UI命令提交后才清除缓冲区
+    bool m_needsClear = false;
+    
     // 线程安全
     mutable std::mutex m_mutex;  // 保护所有可变状态
 };

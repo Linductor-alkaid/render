@@ -682,9 +682,8 @@ void Renderer::BeginFrame() {
     m_deltaTime = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
     
-    // 清除颜色和深度缓冲区，并设置视口
+    // 设置视口（立即设置，因为不影响渲染内容）
     if (m_initialized && m_renderState) {
-        // 确保视口正确设置
         if (m_context) {
             int width = m_context->GetWidth();
             int height = m_context->GetHeight();
@@ -692,9 +691,12 @@ void Renderer::BeginFrame() {
                 m_renderState->SetViewport(0, 0, width, height);
             }
         }
-        // 清除缓冲区
-        m_renderState->Clear(true, true, false);
     }
+    
+    // 延迟清除缓冲区：标记需要清除，但不立即清除
+    // 这样可以确保在UI命令提交后才清除，避免清除正在渲染的UI内容
+    // 实际的清除操作在 FlushRenderQueue() 开始时执行
+    m_needsClear = true;
     
     // 重置帧统计
     m_stats.Reset();
@@ -854,6 +856,13 @@ void Renderer::SubmitRenderable(Renderable* renderable) {
 }
 
 void Renderer::FlushRenderQueue() {
+    // 注意：不清除在这里，而是延迟到所有命令处理完成、准备实际渲染之前
+    // 这样可以确保：
+    // 1. 所有命令已经提交到渲染队列
+    // 2. 所有命令已经处理完成（排序、批处理等）
+    // 3. 清除后立即开始渲染，没有空窗期
+    // 清除操作将在实际调用 BatchManager::Flush() 之前执行
+    
     std::vector<LayerBucket> bucketsSnapshot;
     std::vector<RenderLayerRecord> layerRecords;
     uint32_t activeLayerMask = 0;
@@ -1229,6 +1238,14 @@ void Renderer::FlushRenderQueue() {
             m_batchManager.AddItem(CreateBatchableItem(renderable));
         }
     }
+
+        // 在实际渲染前清除缓冲区：此时所有命令已经处理完成，准备开始渲染
+        // 这样可以确保清除后立即渲染，避免空窗期导致的频闪
+        // 注意：此时已经在 m_mutex 锁的保护范围内（从第1090行开始），不需要额外加锁
+        if (m_needsClear && m_initialized && m_renderState) {
+            m_renderState->Clear(true, true, false);
+            m_needsClear = false;
+        }
 
         auto flushResult = m_batchManager.Flush(m_renderState.get());
         logInfo.result = flushResult;
