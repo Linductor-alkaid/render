@@ -311,6 +311,7 @@ set(RENDER_SOURCES
     src/rendering/uniform_manager.cpp
     src/rendering/shader_cache.cpp
     src/rendering/texture.cpp
+    src/rendering/texture_cubemap.cpp
     src/rendering/texture_loader.cpp
     src/rendering/mesh.cpp
     src/rendering/mesh_loader.cpp
