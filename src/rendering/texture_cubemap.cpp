@@ -188,20 +188,60 @@ bool TextureCubemap::LoadFaceFromFile(CubemapFace face, const std::string& filep
         return false;
     }
 
-    // 确定纹理格式
+    // 确定纹理格式并转换为标准格式（确保像素顺序正确）
+    // 无论原始格式如何，都转换为标准格式以确保像素顺序正确
+    // 这对于避免BGR/BGRA等格式导致的渲染问题很重要
     TextureFormat format = TextureFormat::RGBA;
     int bytesPerPixel = SDL_BYTESPERPIXEL(surface->format);
+    SDL_Surface* convertedSurface = nullptr;
     
     if (bytesPerPixel == 4) {
-        format = TextureFormat::RGBA;
+        // 转换为RGBA32格式（确保像素顺序为RGBA，SDL3会根据平台自动处理字节序）
+        convertedSurface = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+        if (convertedSurface) {
+            SDL_DestroySurface(surface);
+            surface = convertedSurface;
+            format = TextureFormat::RGBA;
+        } else {
+            HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceInvalidFormat,
+                                     "TextureCubemap::LoadFaceFromFile: 转换RGBA格式失败: " +
+                                     std::string(SDL_GetError())));
+            SDL_DestroySurface(surface);
+            return false;
+        }
     } else if (bytesPerPixel == 3) {
-        format = TextureFormat::RGB;
+        // 对于RGB格式，也转换为RGBA32（添加alpha通道，更安全）
+        // 这样可以确保像素顺序正确，避免BGR格式的问题
+        convertedSurface = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+        if (convertedSurface) {
+            SDL_DestroySurface(surface);
+            surface = convertedSurface;
+            format = TextureFormat::RGBA;
+        } else {
+            HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceInvalidFormat,
+                                     "TextureCubemap::LoadFaceFromFile: 转换RGB到RGBA格式失败: " +
+                                     std::string(SDL_GetError())));
+            SDL_DestroySurface(surface);
+            return false;
+        }
     } else if (bytesPerPixel == 1) {
-        format = TextureFormat::RED;
+        // 单通道格式，转换为RGBA32（添加RGB通道，alpha设为255）
+        convertedSurface = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+        if (convertedSurface) {
+            SDL_DestroySurface(surface);
+            surface = convertedSurface;
+            format = TextureFormat::RGBA;
+        } else {
+            HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceInvalidFormat,
+                                     "TextureCubemap::LoadFaceFromFile: 转换单通道到RGBA格式失败: " +
+                                     std::string(SDL_GetError())));
+            SDL_DestroySurface(surface);
+            return false;
+        }
     } else {
+        // 不支持的格式，转换为RGBA
         Logger::GetInstance().Warning("不支持的纹理格式，转换为 RGBA");
-        SDL_PixelFormat pixelFormat = SDL_PIXELFORMAT_RGBA32;
-        SDL_Surface* convertedSurface = SDL_ConvertSurface(surface, pixelFormat);
+        convertedSurface = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
         SDL_DestroySurface(surface);
         
         if (!convertedSurface) {
