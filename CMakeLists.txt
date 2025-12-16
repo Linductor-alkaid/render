@@ -41,7 +41,8 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # 第三方库路径
-set(THIRD_PARTY_DIR ${CMAKE_SOURCE_DIR}/third_party)
+# 使用 CMAKE_CURRENT_SOURCE_DIR 以便作为子项目时也能正确找到第三方库
+set(THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
 # ============================================================================
 # SDL3 配置 - 作为子项目编译

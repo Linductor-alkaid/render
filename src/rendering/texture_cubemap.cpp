@@ -307,6 +307,9 @@ bool TextureCubemap::LoadFaceFromFile(CubemapFace face, const std::string& filep
     }
 
     // 上传纹理数据
+    // 注意：SDL_ConvertSurface已经确保了像素格式正确
+    // SDL_PIXELFORMAT_RGBA32在小端系统上是ABGR8888，但SDL_ConvertSurface会处理字节序
+    // 直接使用surface->pixels，SDL已经确保格式正确
     GLenum glFormat = ToGLFormat(format);
     GLenum glInternalFormat = ToGLInternalFormat(format);
     GLenum glFace = static_cast<GLenum>(face);
@@ -317,10 +320,26 @@ bool TextureCubemap::LoadFaceFromFile(CubemapFace face, const std::string& filep
     // 验证是否成功
     GLenum err = glGetError();
     if (err != GL_NO_ERROR) {
-        Logger::GetInstance().Error("glTexImage2D 失败，OpenGL 错误: " + std::to_string(err));
+        Logger::GetInstance().Error("glTexImage2D 失败，OpenGL 错误: " + std::to_string(err) + 
+                                   " (面: " + std::to_string(static_cast<int>(face)) + 
+                                   ", 格式: " + std::to_string(glFormat) + 
+                                   ", 内部格式: " + std::to_string(glInternalFormat) + ")");
         SDL_DestroySurface(surface);
         glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
         return false;
+    }
+    
+    // 调试信息：检查SDL surface格式和像素值（仅第一个面）
+    if (face == CubemapFace::PositiveX && surface->pixels) {
+        Logger::GetInstance().Debug("立方体贴图面 +X 格式信息:");
+        Logger::GetInstance().Debug("  SDL格式: " + std::to_string(static_cast<int>(surface->format)));
+        Logger::GetInstance().Debug("  OpenGL格式: " + std::to_string(glFormat));
+        Logger::GetInstance().Debug("  OpenGL内部格式: " + std::to_string(glInternalFormat));
+        
+        const unsigned char* pixels = static_cast<const unsigned char*>(surface->pixels);
+        Logger::GetInstance().Debug("  前4个像素值 (RGBA顺序): " +
+                                   std::to_string(pixels[0]) + ", " + std::to_string(pixels[1]) + ", " +
+                                   std::to_string(pixels[2]) + ", " + std::to_string(pixels[3]));
     }
 
     // 标记该面已加载

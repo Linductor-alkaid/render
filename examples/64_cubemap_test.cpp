@@ -68,10 +68,17 @@ uniform mat4 uProjection;
 uniform mat4 uView;
 
 void main() {
-    TexCoord = aPos;  // 使用位置作为立方体贴图坐标
-    mat4 viewNoTranslation = mat4(mat3(uView));  // 移除平移，只保留旋转
+    // 使用位置作为立方体贴图坐标
+    // OpenGL立方体贴图坐标系统：从立方体内部看，坐标指向外部
+    // CreateCube创建的立方体顶点是从外部定义的，所以需要反转坐标
+    // 从内部看外部顶点，坐标方向相反
+    TexCoord = -aPos;
+    
+    // 移除视图矩阵的平移部分，只保留旋转（天空盒应该跟随相机旋转，但不跟随平移）
+    mat4 viewNoTranslation = mat4(mat3(uView));
     vec4 pos = uProjection * viewNoTranslation * vec4(aPos, 1.0);
-    gl_Position = pos.xyww;  // 确保深度为1.0（最远）
+    // 使用xyww确保深度值始终为1.0（最远），这样天空盒总是在最后渲染
+    gl_Position = pos.xyww;
 }
 )";
 
@@ -87,15 +94,52 @@ uniform bool uShowMipmap = false;
 void main() {
     if (uShowMipmap) {
         // 显示Mipmap级别（用于调试）
-        // textureQueryLod返回的.y分量是Mipmap级别
-        // 对于256x256纹理，Mipmap级别范围大约是0-8
-        vec2 lod = textureQueryLod(uSkybox, TexCoord);
-        float mipLevel = lod.y;
-        // 归一化到0-1范围（假设最大Mipmap级别为10）
-        float normalizedLevel = clamp(mipLevel / 10.0, 0.0, 1.0);
-        FragColor = vec4(vec3(normalizedLevel), 1.0);
+        // 使用基于屏幕空间梯度的简单方法来估算Mipmap级别
+        // 这对于立方体贴图更可靠，因为textureQueryLod在某些情况下可能不可用
+        
+        vec3 coord = normalize(TexCoord);
+        
+        // 计算屏幕空间梯度（纹理坐标的变化率）
+        vec3 dx = dFdx(coord);
+        vec3 dy = dFdy(coord);
+        
+        // 计算梯度的长度（表示纹理在屏幕上的缩放）
+        float gradientLength = max(length(dx), length(dy));
+        
+        // 估算Mipmap级别：梯度越大，需要的Mipmap级别越高
+        // 对于256x256纹理，最大Mipmap级别约为8
+        // 使用log2来将梯度映射到Mipmap级别
+        float estimatedLevel = log2(max(gradientLength * 256.0 + 1.0, 1.0));
+        
+        // 限制在合理范围内（0-8）
+        float mipLevel = clamp(estimatedLevel, 0.0, 8.0);
+        
+        // 归一化到0-1范围用于可视化
+        float normalizedLevel = mipLevel / 8.0;
+        
+        // 使用颜色渐变显示Mipmap级别
+        // 0级=蓝色, 中间=绿色, 高级=红色
+        vec3 color;
+        if (normalizedLevel < 0.33) {
+            color = mix(vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 1.0), normalizedLevel * 3.0);
+        } else if (normalizedLevel < 0.66) {
+            color = mix(vec3(0.0, 1.0, 1.0), vec3(0.0, 1.0, 0.0), (normalizedLevel - 0.33) * 3.0);
+        } else {
+            color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), (normalizedLevel - 0.66) * 3.0);
+        }
+        
+        FragColor = vec4(color, 1.0);
     } else {
-        FragColor = texture(uSkybox, TexCoord);
+        // 采样立方体贴图
+        vec4 color = texture(uSkybox, TexCoord);
+        
+        // 调试：如果采样结果是黑色或接近黑色，输出坐标信息
+        if (length(color.rgb) < 0.01) {
+            // 输出坐标的绝对值作为颜色（帮助调试）
+            FragColor = vec4(abs(TexCoord) * 0.1, 1.0);  // 缩放坐标以便观察
+        } else {
+            FragColor = color;
+        }
     }
 }
 )";
@@ -156,6 +200,8 @@ std::shared_ptr<TextureCubemap> CreateProceduralCubemap(int resolution = 256) {
     // 设置支持Mipmap的过滤模式（重要：否则Mipmap不会被使用）
     // TextureFilter::Mipmap 会被转换为 GL_LINEAR_MIPMAP_LINEAR（当有Mipmap时）
     cubemap->SetFilter(TextureFilter::Mipmap, TextureFilter::Linear);
+    
+    Logger::GetInstance().Info("程序化立方体贴图Mipmap已生成，过滤模式已设置");
     
     Logger::GetInstance().Info("创建程序化立方体贴图成功: " + std::to_string(resolution) + "x" + std::to_string(resolution));
     
@@ -241,15 +287,29 @@ int main(int argc, char* argv[]) {
 
     // 加载或创建立方体贴图
     Logger::GetInstance().Info("\n--- 加载立方体贴图 ---");
+    
+    // 先测试程序化立方体贴图，确认渲染管道是否正常
+    Logger::GetInstance().Info("步骤1: 测试程序化立方体贴图（验证渲染管道）");
+    auto proceduralCubemap = CreateProceduralCubemap(256);
+    if (!proceduralCubemap) {
+        Logger::GetInstance().Error("创建程序化立方体贴图失败");
+        context->Shutdown();
+        SDL_Quit();
+        return -1;
+    }
+    Logger::GetInstance().Info("程序化立方体贴图创建成功，ID: " + std::to_string(proceduralCubemap->GetID()));
+    
+    // 尝试从文件加载
+    Logger::GetInstance().Info("步骤2: 尝试从文件加载立方体贴图");
     auto cubemap = LoadCubemapFromFiles();
     if (!cubemap) {
-        cubemap = CreateProceduralCubemap(256);
-        if (!cubemap) {
-            Logger::GetInstance().Error("创建立方体贴图失败");
-            context->Shutdown();
-            SDL_Quit();
-            return -1;
-        }
+        Logger::GetInstance().Info("文件加载失败，使用程序化立方体贴图");
+        cubemap = proceduralCubemap;
+    } else {
+        Logger::GetInstance().Info("成功从文件加载立方体贴图，ID: " + std::to_string(cubemap->GetID()));
+        // 确保文件加载的立方体贴图也设置了正确的过滤模式
+        cubemap->SetFilter(TextureFilter::Mipmap, TextureFilter::Linear);
+        Logger::GetInstance().Info("文件加载的立方体贴图过滤模式已设置");
     }
 
     // 验证立方体贴图
@@ -259,10 +319,17 @@ int main(int argc, char* argv[]) {
     Logger::GetInstance().Info("  是否完整: " + std::string(cubemap->IsComplete() ? "是" : "否"));
     Logger::GetInstance().Info("  是否有效: " + std::string(cubemap->IsValid() ? "是" : "否"));
     Logger::GetInstance().Info("  内存使用: " + std::to_string(cubemap->GetMemoryUsage() / 1024) + " KB");
+    
+    // 检查OpenGL错误
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        Logger::GetInstance().Warning("OpenGL错误（立方体贴图创建后）: " + std::to_string(err));
+    }
 
     // 创建立方体网格（用于天空盒渲染）
     // 注意：天空盒立方体应该足够大，但不需要太大
-    auto skyboxMesh = MeshLoader::CreateCube(2.0f, 2.0f, 2.0f, Color::White());
+    // 天空盒需要从内部看，所以立方体应该足够大以包围相机
+    auto skyboxMesh = MeshLoader::CreateCube(100.0f, 100.0f, 100.0f, Color::White());
     if (!skyboxMesh) {
         Logger::GetInstance().Error("创建天空盒网格失败");
         context->Shutdown();
@@ -291,6 +358,8 @@ int main(int argc, char* argv[]) {
     Matrix4 projection = MathUtils::PerspectiveDegrees(45.0f, aspect, nearPlane, farPlane);
 
     // 视图矩阵（相机在原点，看向-Z方向）
+    // 对于天空盒，视图矩阵只包含旋转，不包含平移
+    // 初始视图矩阵是单位矩阵（无旋转）
     Matrix4 view = Matrix4::Identity();
     
     // 设置uniform
@@ -346,9 +415,14 @@ int main(int argc, char* argv[]) {
         time += 0.016f;  // 假设60fps
 
         // 更新视图矩阵（旋转相机）
+        // 对于天空盒，视图矩阵只包含旋转，不包含平移
         float rotationY = time * 0.2f;  // 缓慢旋转
         Quaternion rotation = MathUtils::AngleAxis(rotationY, Vector3::UnitY());
-        view = MathUtils::Rotate(rotation);
+        // 视图矩阵的旋转部分是相机旋转的逆（共轭）
+        Quaternion viewRotation = rotation.conjugate();
+        
+        // 构建只包含旋转的视图矩阵（无平移）
+        view = MathUtils::Rotate(viewRotation);
 
         // 渲染
         glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
@@ -356,12 +430,36 @@ int main(int argc, char* argv[]) {
 
         // 渲染天空盒（最后渲染，深度测试设置为LEQUAL）
         glDepthFunc(GL_LEQUAL);
-        cubemap->Bind(0);
+        glDisable(GL_CULL_FACE);  // 确保面剔除被禁用（天空盒从内部看）
+        glDepthMask(GL_FALSE);    // 禁用深度写入（天空盒不写入深度）
+        
         skyboxShader->Use();
+        // 确保uniform在每次渲染时都设置（包括纹理采样器）
+        skyboxShader->GetUniformManager()->SetInt("uSkybox", 0);
         skyboxShader->GetUniformManager()->SetMatrix4("uView", view);
+        skyboxShader->GetUniformManager()->SetMatrix4("uProjection", projection);
+        skyboxShader->GetUniformManager()->SetBool("uShowMipmap", showMipmap);
+        
+        // 在shader使用后绑定纹理
+        cubemap->Bind(0);
+        
+        // 检查OpenGL错误
+        GLenum err = glGetError();
+        if (err != GL_NO_ERROR && frameCount == 0) {  // 只在第一帧报告错误
+            Logger::GetInstance().Warning("OpenGL错误（渲染前）: " + std::to_string(err));
+        }
+        
         skyboxMesh->Draw();
-        skyboxShader->Unuse();
+        
+        // 检查OpenGL错误
+        err = glGetError();
+        if (err != GL_NO_ERROR && frameCount == 0) {  // 只在第一帧报告错误
+            Logger::GetInstance().Warning("OpenGL错误（渲染后）: " + std::to_string(err));
+        }
+        
+        glDepthMask(GL_TRUE);  // 恢复深度写入
         cubemap->Unbind();
+        skyboxShader->Unuse();
 
         // 渲染中心物体（简单渲染，用于展示）
         glDepthFunc(GL_LESS);
