@@ -257,7 +257,7 @@ find_package(OpenGL REQUIRED)
 # 包含目录
 # ============================================================================
 include_directories(
-    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${SDL3_INCLUDE_DIRS}
     ${SDL3_IMAGE_INCLUDE_DIRS}
     ${SDL3_TTF_INCLUDE_DIRS}
@@ -560,6 +560,8 @@ add_library(RenderEngine STATIC ${RENDER_SOURCES} ${RENDER_HEADERS})
 # 头文件搜索路径
 target_include_directories(RenderEngine
     PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/single_include
 )
 
@@ -593,30 +595,60 @@ if(ENABLE_OPENMP AND OpenMP_CXX_FOUND)
 endif()
 
 # ============================================================================
-# 安装规则
+# 安装规则（仅在作为主项目或明确要求安装时）
 # ============================================================================
-install(TARGETS RenderEngine
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-)
+if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
+    install(TARGETS RenderEngine
+        EXPORT RenderEngineTargets
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
+        INCLUDES DESTINATION include
+    )
 
-install(DIRECTORY include/render
-    DESTINATION include
-)
+    install(DIRECTORY include/render
+        DESTINATION include
+    )
+
+    # 安装导出配置
+    install(EXPORT RenderEngineTargets
+        FILE RenderEngineTargets.cmake
+        NAMESPACE RenderEngine::
+        DESTINATION lib/cmake/RenderEngine
+    )
+endif()
 
 # ============================================================================
-# 示例程序
+# 检测是否作为子项目被包含
 # ============================================================================
-option(BUILD_EXAMPLES "Build example programs" ON)
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    # 作为主项目构建
+    set(RENDER_ENGINE_IS_TOP_LEVEL ON)
+else()
+    # 作为子项目被包含
+    set(RENDER_ENGINE_IS_TOP_LEVEL OFF)
+endif()
+
+# ============================================================================
+# 示例程序（默认仅在作为主项目时构建）
+# ============================================================================
+if(RENDER_ENGINE_IS_TOP_LEVEL)
+    option(BUILD_EXAMPLES "Build example programs" ON)
+else()
+    option(BUILD_EXAMPLES "Build example programs" OFF)
+endif()
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
 # ============================================================================
-# 测试
+# 测试（默认仅在作为主项目时构建）
 # ============================================================================
-option(BUILD_TESTS "Build tests" ON)
+if(RENDER_ENGINE_IS_TOP_LEVEL)
+    option(BUILD_TESTS "Build tests" ON)
+else()
+    option(BUILD_TESTS "Build tests" OFF)
+endif()
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
@@ -628,6 +660,11 @@ endif()
 message(STATUS "========================================")
 message(STATUS "RenderEngine Configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
+if(RENDER_ENGINE_IS_TOP_LEVEL)
+    message(STATUS "  Mode: Standalone Project")
+else()
+    message(STATUS "  Mode: Subproject")
+endif()
 message(STATUS "  C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  SDL3 Include: ${SDL3_INCLUDE_DIRS}")
