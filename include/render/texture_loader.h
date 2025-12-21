@@ -21,6 +21,7 @@
 #pragma once
 
 #include "render/texture.h"
+#include "render/texture_cubemap.h"
 #include <string>
 #include <unordered_map>
 #include <memory>
@@ -194,6 +195,22 @@ public:
     TexturePtr UploadStagedTexture(const std::string& name,
                                    TextureStagingData&& stagingData);
 
+    /**
+     * @brief 从HDRI/等距柱状投影图像加载并转换为立方体贴图
+     * @param name 立方体贴图名称（用于缓存键）
+     * @param hdriPath HDRI或等距柱状投影图像文件路径
+     * @param resolution 立方体贴图每面的分辨率（默认512）
+     * @param generateMipmap 是否生成 Mipmap
+     * @return 立方体贴图指针，失败返回 nullptr
+     * 
+     * @note 使用SDL_image加载图像，支持PNG/JPG等格式
+     * @note 如果SDL_image不支持HDR格式，请使用PNG/JPG格式的等距柱状投影图像
+     */
+    TextureCubemapPtr LoadCubemapFromHDRI(const std::string& name,
+                                          const std::string& hdriPath,
+                                          int resolution = 512,
+                                          bool generateMipmap = true);
+
 private:
     TextureLoader() = default;
     ~TextureLoader() = default;
@@ -207,8 +224,9 @@ private:
      */
     TexturePtr LoadTextureInternal(const std::string& filepath, bool generateMipmap);
     
-    std::unordered_map<std::string, TexturePtr> m_textures;  ///< 纹理缓存
-    mutable std::mutex m_mutex;                              ///< 线程安全互斥锁
+    std::unordered_map<std::string, TexturePtr> m_textures;           ///< 纹理缓存
+    std::unordered_map<std::string, TextureCubemapPtr> m_cubemaps;    ///< 立方体贴图缓存
+    mutable std::mutex m_mutex;                                        ///< 线程安全互斥锁
 };
 
 } // namespace Render

@@ -39,7 +39,7 @@
 - [x] **创建TextureCubemap类**
   - [x] 在 `include/render/texture_cubemap.h` 中定义类接口
   - [x] 支持从6个面加载立方体贴图
-  - [ ] 支持从HDRI文件加载并转换为立方体贴图（待实现，需要stb_image库）
+  - [x] 支持从HDRI文件加载并转换为立方体贴图（使用SDL_image和着色器转换）
   - [x] 实现立方体贴图的绑定和参数设置
   - [x] 支持立方体贴图的Mipmap生成
   - [x] 线程安全设计（与现有Texture类保持一致）
@@ -47,13 +47,13 @@
 - [x] **实现立方体贴图加载器**
   - [x] 在 `src/rendering/texture_cubemap.cpp` 中实现
   - [x] 支持从6个独立图像文件加载（+X, -X, +Y, -Y, +Z, -Z）
-  - [ ] 支持从HDRI文件加载（需要stb_image或类似库，待实现）
-  - [ ] 集成到TextureLoader中（可选，后续添加）
+  - [x] 支持从HDRI文件加载（使用SDL_image和着色器转换）
+  - [x] 集成到TextureLoader中（已添加LoadCubemapFromHDRI方法）
 
-- [ ] **HDRI加载支持**
-  - [ ] 集成stb_image库（或使用现有SDL_image扩展）
-  - [ ] 实现HDRI到立方体贴图的转换
-  - [ ] 支持HDR格式（.hdr文件）
+- [x] **HDRI加载支持**
+  - [x] 使用现有SDL_image扩展（支持PNG/JPG等格式的等距柱状投影图像）
+  - [x] 实现HDRI到立方体贴图的转换（使用着色器和FBO）
+  - [x] 支持等距柱状投影图像格式（PNG/JPG等，SDL_image可能不支持HDR格式）
 
 - [ ] **测试立方体贴图**
   - [ ] 创建测试用例验证6面加载

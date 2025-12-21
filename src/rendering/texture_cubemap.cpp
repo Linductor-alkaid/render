@@ -22,6 +22,11 @@
 #include "render/logger.h"
 #include "render/error.h"
 #include "render/gl_thread_checker.h"
+#include "render/texture_loader.h"
+#include "render/shader.h"
+#include "render/framebuffer.h"
+#include "render/types.h"
+#include "render/math_utils.h"
 #include <SDL3_image/SDL_image.h>
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -358,12 +363,231 @@ bool TextureCubemap::LoadFaceFromFile(CubemapFace face, const std::string& filep
 }
 
 bool TextureCubemap::LoadFromHDRI(const std::string& hdriPath, int resolution, bool generateMipmap) {
-    // TODO: 实现HDRI加载
-    // 需要集成stb_image库来加载HDR文件
-    // 然后使用等距柱状投影到立方体贴图的转换着色器
-    HANDLE_ERROR(RENDER_ERROR(ErrorCode::NotImplemented,
-                             "TextureCubemap::LoadFromHDRI: HDRI加载功能尚未实现，需要stb_image库支持"));
-    return false;
+    if (hdriPath.empty()) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument,
+                                 "TextureCubemap::LoadFromHDRI: HDRI文件路径为空"));
+        return false;
+    }
+
+    if (resolution <= 0) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::InvalidArgument,
+                                 "TextureCubemap::LoadFromHDRI: 无效的分辨率"));
+        return false;
+    }
+
+    GL_THREAD_CHECK();
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    // 释放旧立方体贴图
+    if (m_textureID != 0) {
+        glDeleteTextures(1, &m_textureID);
+        m_textureID = 0;
+    }
+
+    // 重置状态
+    m_resolution = 0;
+    m_format = TextureFormat::RGBA;
+    m_hasMipmap = false;
+    std::fill(m_faceLoaded.begin(), m_faceLoaded.end(), false);
+
+    // 使用 TextureLoader 加载等距柱状投影图像
+    // 注意：SDL_image 可能不支持 HDR 格式，但我们可以先尝试加载
+    // 如果失败，会返回 nullptr，我们可以给出错误提示
+    Logger::GetInstance().Info("加载等距柱状投影图像: " + hdriPath);
+    
+    auto equirectangularTexture = TextureLoader::GetInstance().LoadTexture(
+        "equirectangular_temp_" + hdriPath, hdriPath, false);
+    
+    if (!equirectangularTexture) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::FileOpenFailed,
+                                 "TextureCubemap::LoadFromHDRI: 无法加载等距柱状投影图像: " + hdriPath +
+                                 " (SDL_image 可能不支持 HDR 格式，请使用 PNG/JPG 等格式的等距柱状投影图像)"));
+        return false;
+    }
+
+    // 创建转换着色器
+    auto conversionShader = std::make_unique<Shader>();
+    if (!conversionShader->LoadFromFile(
+            "shaders/equirectangular_to_cubemap.vert",
+            "shaders/equirectangular_to_cubemap.frag")) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceLoadFailed,
+                                 "TextureCubemap::LoadFromHDRI: 无法加载转换着色器"));
+        return false;
+    }
+
+    // 创建立方体贴图
+    glGenTextures(1, &m_textureID);
+    if (m_textureID == 0) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceLoadFailed,
+                                 "TextureCubemap::LoadFromHDRI: 无法生成立方体贴图ID"));
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_CUBE_MAP, m_textureID);
+    
+    // 为每个面创建空的纹理
+    for (int i = 0; i < 6; ++i) {
+        GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X + i;
+        glTexImage2D(face, 0, GL_RGBA8, resolution, resolution, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    }
+
+    // 设置纹理参数
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER,
+                   generateMipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+    // 创建帧缓冲对象用于渲染到立方体贴图的每个面
+    FramebufferConfig fboConfig;
+    fboConfig.SetSize(resolution, resolution)
+             .AddColorAttachment(TextureFormat::RGBA)
+             .SetName("EquirectangularToCubemap");
+
+    Framebuffer fbo;
+    if (!fbo.Create(fboConfig)) {
+        HANDLE_ERROR(RENDER_ERROR(ErrorCode::ResourceLoadFailed,
+                                 "TextureCubemap::LoadFromHDRI: 无法创建帧缓冲对象"));
+        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        glDeleteTextures(1, &m_textureID);
+        m_textureID = 0;
+        return false;
+    }
+
+    // 创建立方体顶点数据（用于渲染）
+    // 立方体的8个顶点
+    float cubeVertices[] = {
+        // 位置 (x, y, z)
+        -1.0f, -1.0f, -1.0f,  // 0: 左下后
+         1.0f, -1.0f, -1.0f,  // 1: 右下后
+         1.0f,  1.0f, -1.0f,  // 2: 右上后
+        -1.0f,  1.0f, -1.0f,  // 3: 左上后
+        -1.0f, -1.0f,  1.0f,  // 4: 左下前
+         1.0f, -1.0f,  1.0f,  // 5: 右下前
+         1.0f,  1.0f,  1.0f,  // 6: 右上前
+        -1.0f,  1.0f,  1.0f   // 7: 左上前
+    };
+
+    // 立方体的索引（每个面2个三角形）
+    unsigned int cubeIndices[] = {
+        // 后面 (-Z)
+        0, 1, 2,  2, 3, 0,
+        // 前面 (+Z)
+        4, 5, 6,  6, 7, 4,
+        // 左面 (-X)
+        0, 3, 7,  7, 4, 0,
+        // 右面 (+X)
+        1, 5, 6,  6, 2, 1,
+        // 下面 (-Y)
+        0, 4, 5,  5, 1, 0,
+        // 上面 (+Y)
+        3, 7, 6,  6, 2, 3
+    };
+
+    // 创建 VAO, VBO, EBO
+    GLuint VAO, VBO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    // 设置顶点属性
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // 设置视口
+    glViewport(0, 0, resolution, resolution);
+
+    // 为每个立方体贴图面设置视图矩阵
+    using namespace MathUtils;
+    Matrix4 captureProjection = PerspectiveDegrees(90.0f, 1.0f, 0.1f, 10.0f);
+    Matrix4 captureViews[] = {
+        LookAt(Vector3(0.0f, 0.0f, 0.0f), Vector3( 1.0f,  0.0f,  0.0f), Vector3(0.0f, -1.0f,  0.0f)), // +X
+        LookAt(Vector3(0.0f, 0.0f, 0.0f), Vector3(-1.0f,  0.0f,  0.0f), Vector3(0.0f, -1.0f,  0.0f)), // -X
+        LookAt(Vector3(0.0f, 0.0f, 0.0f), Vector3( 0.0f,  1.0f,  0.0f), Vector3(0.0f,  0.0f,  1.0f)), // +Y
+        LookAt(Vector3(0.0f, 0.0f, 0.0f), Vector3( 0.0f, -1.0f,  0.0f), Vector3(0.0f,  0.0f, -1.0f)), // -Y
+        LookAt(Vector3(0.0f, 0.0f, 0.0f), Vector3( 0.0f,  0.0f,  1.0f), Vector3(0.0f, -1.0f,  0.0f)), // +Z
+        LookAt(Vector3(0.0f, 0.0f, 0.0f), Vector3( 0.0f,  0.0f, -1.0f), Vector3(0.0f, -1.0f,  0.0f))  // -Z
+    };
+
+    // 使用着色器
+    conversionShader->Use();
+    auto* uniformMgr = conversionShader->GetUniformManager();
+    
+    // 绑定等距柱状投影纹理
+    equirectangularTexture->Bind(0);
+    uniformMgr->SetInt("uEquirectangularMap", 0);
+
+    // 设置投影矩阵（90度视野，用于立方体贴图）
+    uniformMgr->SetMatrix4("uProjection", captureProjection);
+
+    // 渲染到每个立方体贴图面
+    for (int i = 0; i < 6; ++i) {
+        // 绑定帧缓冲，将颜色附件绑定到立方体贴图面
+        fbo.Bind();
+        
+        // 将帧缓冲的颜色附件绑定到立方体贴图面
+        GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X + i;
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, face, m_textureID, 0);
+        
+        // 检查帧缓冲完整性
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            Logger::GetInstance().Error("帧缓冲不完整，面: " + std::to_string(i));
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glBindVertexArray(0);
+            glDeleteVertexArrays(1, &VAO);
+            glDeleteBuffers(1, &VBO);
+            glDeleteBuffers(1, &EBO);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+            glDeleteTextures(1, &m_textureID);
+            m_textureID = 0;
+            return false;
+        }
+
+        // 清空帧缓冲
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // 设置视图矩阵（每个面使用不同的视图）
+        uniformMgr->SetMatrix4("uView", captureViews[i]);
+
+        // 渲染立方体
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        
+        // 标记该面已加载
+        m_faceLoaded[i] = true;
+    }
+
+    // 清理
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(0);
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+
+    // 生成 Mipmap
+    if (generateMipmap) {
+        glBindTexture(GL_TEXTURE_CUBE_MAP, m_textureID);
+        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+        m_hasMipmap = true;
+    }
+
+    glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+
+    m_resolution = resolution;
+    m_format = TextureFormat::RGBA;
+
+    Logger::GetInstance().Info("成功从等距柱状投影图像转换为立方体贴图: " + hdriPath +
+                 " (" + std::to_string(resolution) + "x" + std::to_string(resolution) + ")");
+
+    return true;
 }
 
 bool TextureCubemap::CreateFaceFromData(CubemapFace face, const void* data, int width, int height,
