@@ -454,48 +454,5 @@ TexturePtr TextureLoader::LoadTextureInternal(const std::string& filepath, bool 
     return UploadStagedTexture("", std::move(staging));
 }
 
-TextureCubemapPtr TextureLoader::LoadCubemapFromHDRI(const std::string& name,
-                                                      const std::string& hdriPath,
-                                                      int resolution,
-                                                      bool generateMipmap) {
-    // 第一次检查缓存
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto it = m_cubemaps.find(name);
-        if (it != m_cubemaps.end()) {
-            Logger::GetInstance().Info("立方体贴图 '" + name + "' 从缓存中获取 (引用计数: " + 
-                     std::to_string(it->second.use_count()) + ")");
-            return it->second;
-        }
-    }
-    
-    // 在锁外加载立方体贴图（避免长时间持锁）
-    Logger::GetInstance().Info("加载新立方体贴图: " + name + " (路径: " + hdriPath + ")");
-
-    auto cubemap = std::make_shared<TextureCubemap>();
-    if (!cubemap->LoadFromHDRI(hdriPath, resolution, generateMipmap)) {
-        HANDLE_ERROR(RENDER_ERROR(ErrorCode::TextureUploadFailed, 
-                                 "TextureLoader: 加载立方体贴图失败: " + name));
-        return nullptr;
-    }
-
-    // 第二次检查并添加到缓存
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        
-        // 再次检查是否已被其他线程添加
-        auto it = m_cubemaps.find(name);
-        if (it != m_cubemaps.end()) {
-            Logger::GetInstance().Info("立方体贴图 '" + name + "' 已被其他线程添加");
-            return it->second;
-        }
-        
-        m_cubemaps[name] = cubemap;
-        Logger::GetInstance().Info("立方体贴图 '" + name + "' 缓存成功");
-    }
-    
-    return cubemap;
-}
-
 } // namespace Render
 

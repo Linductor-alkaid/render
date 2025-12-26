@@ -65,7 +65,6 @@ set(EXAMPLES
     61_ui_menu_example
     62_multithreading_benchmark
     63_physics_demo
-    64_cubemap_test
 )
 
 # 批量创建示例程序
