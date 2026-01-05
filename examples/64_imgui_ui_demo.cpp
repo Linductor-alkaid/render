@@ -37,6 +37,7 @@
 #include "render/application/modules/ui_runtime_module.h"
 #include "render/application/module_registry.h"
 #include "render/ui/ui_renderer_backend.h"
+#include "render/ui/ui_theme.h"
 #include "render/logger.h"
 #include "render/renderer.h"
 #include "render/resource_manager.h"
@@ -88,7 +89,147 @@ struct ImGuiDemoState {
     int radioButton = 0;
     float sliderFloat = 0.5f;
     int sliderInt = 50;
+    int selectedTheme = 0;  // 当前选择的主题索引
 } g_demoState;
+
+// 主题名称列表
+const char* g_themeNames[] = {
+    "默认主题",
+    "暗色主题",
+    "亮色主题",
+    "蓝色主题",
+    "绿色主题"
+};
+
+// 主题ID列表（对应UIThemeManager中的主题名称）
+const char* g_themeIds[] = {
+    "default",
+    "dark",
+    "light",
+    "blue",
+    "green"
+};
+
+// 创建自定义主题
+UI::UITheme CreateLightTheme() {
+    UI::UITheme theme;
+    
+    // 按钮颜色（亮色主题 - 更亮的白色）
+    theme.button.normal.inner = Color(0.98f, 0.98f, 0.98f, 1.0f);
+    theme.button.normal.text = Color(0.1f, 0.1f, 0.1f, 1.0f);
+    theme.button.hover.inner = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.button.hover.text = Color(0.05f, 0.05f, 0.05f, 1.0f);
+    theme.button.pressed.inner = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.button.pressed.text = Color(0.15f, 0.15f, 0.15f, 1.0f);
+    theme.button.disabled.inner = Color(0.85f, 0.85f, 0.85f, 1.0f);
+    theme.button.disabled.text = Color(0.6f, 0.6f, 0.6f, 1.0f);
+    
+    // 文本输入框颜色
+    theme.textField.normal.inner = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.textField.normal.text = Color(0.1f, 0.1f, 0.1f, 1.0f);
+    theme.textField.hover.inner = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.textField.hover.text = Color(0.1f, 0.1f, 0.1f, 1.0f);
+    theme.textField.active.inner = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.textField.active.text = Color(0.05f, 0.05f, 0.05f, 1.0f);
+    theme.textField.disabled.inner = Color(0.95f, 0.95f, 0.95f, 1.0f);
+    theme.textField.disabled.text = Color(0.7f, 0.7f, 0.7f, 1.0f);
+    
+    // 面板颜色
+    theme.panel.normal.inner = Color(0.98f, 0.98f, 0.98f, 1.0f);
+    theme.panel.normal.text = Color(0.1f, 0.1f, 0.1f, 1.0f);
+    
+    // 菜单颜色
+    theme.menu.normal.inner = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.menu.normal.text = Color(0.1f, 0.1f, 0.1f, 1.0f);
+    theme.menu.hover.inner = Color(0.95f, 0.95f, 1.0f, 1.0f);
+    theme.menu.hover.text = Color(0.05f, 0.05f, 0.05f, 1.0f);
+    
+    // 背景和边框
+    theme.backgroundColor = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.borderColor = Color(0.8f, 0.8f, 0.8f, 1.0f);
+    
+    return theme;
+}
+
+UI::UITheme CreateBlueTheme() {
+    UI::UITheme theme;
+    
+    // 按钮颜色（蓝色主题）
+    theme.button.normal.inner = Color(0.2f, 0.4f, 0.8f, 1.0f);
+    theme.button.normal.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.button.hover.inner = Color(0.3f, 0.5f, 0.9f, 1.0f);
+    theme.button.hover.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.button.pressed.inner = Color(0.15f, 0.35f, 0.7f, 1.0f);
+    theme.button.pressed.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.button.disabled.inner = Color(0.3f, 0.3f, 0.3f, 1.0f);
+    theme.button.disabled.text = Color(0.6f, 0.6f, 0.6f, 1.0f);
+    
+    // 文本输入框颜色
+    theme.textField.normal.inner = Color(0.15f, 0.2f, 0.3f, 1.0f);
+    theme.textField.normal.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.textField.hover.inner = Color(0.2f, 0.25f, 0.35f, 1.0f);
+    theme.textField.hover.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.textField.active.inner = Color(0.1f, 0.3f, 0.5f, 1.0f);
+    theme.textField.active.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.textField.disabled.inner = Color(0.1f, 0.1f, 0.1f, 1.0f);
+    theme.textField.disabled.text = Color(0.5f, 0.5f, 0.5f, 1.0f);
+    
+    // 面板颜色
+    theme.panel.normal.inner = Color(0.1f, 0.15f, 0.25f, 1.0f);
+    theme.panel.normal.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    
+    // 菜单颜色
+    theme.menu.normal.inner = Color(0.15f, 0.2f, 0.3f, 1.0f);
+    theme.menu.normal.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.menu.hover.inner = Color(0.25f, 0.4f, 0.6f, 1.0f);
+    theme.menu.hover.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    
+    // 背景和边框
+    theme.backgroundColor = Color(0.08f, 0.12f, 0.2f, 1.0f);
+    theme.borderColor = Color(0.3f, 0.5f, 0.8f, 1.0f);
+    
+    return theme;
+}
+
+UI::UITheme CreateGreenTheme() {
+    UI::UITheme theme;
+    
+    // 按钮颜色（绿色主题）
+    theme.button.normal.inner = Color(0.2f, 0.7f, 0.3f, 1.0f);
+    theme.button.normal.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.button.hover.inner = Color(0.3f, 0.8f, 0.4f, 1.0f);
+    theme.button.hover.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.button.pressed.inner = Color(0.15f, 0.6f, 0.25f, 1.0f);
+    theme.button.pressed.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.button.disabled.inner = Color(0.3f, 0.3f, 0.3f, 1.0f);
+    theme.button.disabled.text = Color(0.6f, 0.6f, 0.6f, 1.0f);
+    
+    // 文本输入框颜色
+    theme.textField.normal.inner = Color(0.15f, 0.25f, 0.2f, 1.0f);
+    theme.textField.normal.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.textField.hover.inner = Color(0.2f, 0.3f, 0.25f, 1.0f);
+    theme.textField.hover.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.textField.active.inner = Color(0.1f, 0.4f, 0.3f, 1.0f);
+    theme.textField.active.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.textField.disabled.inner = Color(0.1f, 0.1f, 0.1f, 1.0f);
+    theme.textField.disabled.text = Color(0.5f, 0.5f, 0.5f, 1.0f);
+    
+    // 面板颜色
+    theme.panel.normal.inner = Color(0.1f, 0.2f, 0.15f, 1.0f);
+    theme.panel.normal.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    
+    // 菜单颜色
+    theme.menu.normal.inner = Color(0.15f, 0.25f, 0.2f, 1.0f);
+    theme.menu.normal.text = Color(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.menu.hover.inner = Color(0.25f, 0.5f, 0.35f, 1.0f);
+    theme.menu.hover.text = Color(1.0f, 1.0f, 1.0f, 1.0f);
+    
+    // 背景和边框
+    theme.backgroundColor = Color(0.08f, 0.15f, 0.12f, 1.0f);
+    theme.borderColor = Color(0.3f, 0.7f, 0.4f, 1.0f);
+    
+    return theme;
+}
 
 // 在ImGui后端中渲染自定义UI
 void RenderImGuiUI() {
@@ -131,6 +272,22 @@ void RenderImGuiUI() {
         ImGui::RadioButton("选项 3", &g_demoState.radioButton, 2);
 
         ImGui::Text("当前选择的选项: %d", g_demoState.radioButton);
+
+        ImGui::Separator();
+        ImGui::Text("主题选择:");
+        
+        // 主题选择单选按钮组
+        for (int i = 0; i < IM_ARRAYSIZE(g_themeNames); i++) {
+            bool wasSelected = (g_demoState.selectedTheme == i);
+            if (ImGui::RadioButton(g_themeNames[i], &g_demoState.selectedTheme, i)) {
+                // 主题切换
+                if (!wasSelected) {
+                    auto& themeManager = UI::UIThemeManager::GetInstance();
+                    themeManager.SetCurrentTheme(g_themeIds[i]);
+                    Logger::GetInstance().InfoFormat("[ImGuiDemo] Switched to theme: %s", g_themeIds[i]);
+                }
+            }
+        }
 
         ImGui::End();
     }
@@ -188,6 +345,21 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    // 在注册模块之前初始化主题管理器并注册所有主题
+    // 这样UIRuntimeModule在初始化时就能使用所有主题
+    auto& themeManager = UI::UIThemeManager::GetInstance();
+    themeManager.InitializeDefaults();
+    
+    // 注册自定义主题
+    themeManager.RegisterBuiltinTheme("light", CreateLightTheme());
+    themeManager.RegisterBuiltinTheme("blue", CreateBlueTheme());
+    themeManager.RegisterBuiltinTheme("green", CreateGreenTheme());
+    
+    // 设置默认主题
+    themeManager.SetCurrentTheme("default");
+    
+    Logger::GetInstance().Info("[ImGuiDemo] Registered themes: default, dark, light, blue, green");
+    
     // 注册核心模块
     host.GetModuleRegistry().RegisterModule(std::make_unique<CoreRenderModule>());
     host.GetModuleRegistry().RegisterModule(std::make_unique<InputModule>());

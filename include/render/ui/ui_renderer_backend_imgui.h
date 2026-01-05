@@ -20,7 +20,13 @@
  */
 #pragma once
 
+#include <string>
+
+// ImGui forward declarations and types
+#include "imgui.h"
+
 #include "render/ui/ui_renderer_backend.h"
+#include "render/types.h"
 
 namespace Render::UI {
 
@@ -58,9 +64,20 @@ public:
     bool ProcessEvent(const void* event);
 
 private:
+    /**
+     * @brief 将UITheme同步到ImGui样式
+     */
+    void SyncThemeToImGui();
+
+    /**
+     * @brief 将Color转换为ImVec4
+     */
+    static ImVec4 ColorToImVec4(const Render::Color& color);
+
     bool m_initialized = false;
     const UIDebugConfig* m_debugConfig = nullptr;
     UIThemeManager* m_themeManager = nullptr;
+    std::string m_lastSyncedThemeName;  // 记录上次同步的主题名称，用于检测主题变化
 };
 
 } // namespace Render::UI

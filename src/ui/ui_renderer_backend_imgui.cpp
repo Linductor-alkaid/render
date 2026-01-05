@@ -26,6 +26,7 @@
 #include "render/opengl_context.h"
 #include "render/ui/uicanvas.h"
 #include "render/ui/ui_widget_tree.h"
+#include "render/ui/ui_theme.h"
 #include <SDL3/SDL.h>
 
 // ImGui includes
@@ -88,8 +89,11 @@ void ImGuiUIRendererBackend::Initialize(Application::AppContext& ctx) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;       // Enable Gamepad Controls
 
     // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-    // ImGui::StyleColorsLight();
+    // 如果已经有主题管理器，会在后面同步主题
+    // 否则使用默认的暗色主题
+    if (!m_themeManager) {
+        ImGui::StyleColorsDark();
+    }
 
     // Setup Platform/Renderer backends
     const char* glsl_version = "#version 330";
@@ -136,6 +140,12 @@ void ImGuiUIRendererBackend::Initialize(Application::AppContext& ctx) {
     }
 
     m_initialized = true;
+    
+    // 如果已经有主题管理器，立即同步主题
+    if (m_themeManager) {
+        SyncThemeToImGui();
+    }
+    
     Logger::GetInstance().Info("[ImGuiUIRendererBackend] Initialized successfully");
 }
 
@@ -158,6 +168,23 @@ void ImGuiUIRendererBackend::PrepareFrame(const Application::FrameUpdateArgs& fr
                                          Application::AppContext& ctx) {
     if (!m_initialized) {
         return;
+    }
+
+    // 检测主题变化并同步（在NewFrame之前）
+    if (m_themeManager) {
+        const UITheme& currentTheme = m_themeManager->GetCurrentTheme();
+        Color currentBgColor = currentTheme.backgroundColor;
+        
+        // 计算当前主题的特征值
+        float currentThemeHash = currentBgColor.r + currentBgColor.g * 0.1f + 
+                                currentTheme.button.normal.inner.r * 0.01f + 
+                                currentTheme.button.normal.text.r * 0.001f;
+        std::string currentThemeHashStr = std::to_string(currentThemeHash);
+        
+        // 如果主题特征值变化，重新同步
+        if (m_lastSyncedThemeName != currentThemeHashStr) {
+            SyncThemeToImGui();
+        }
     }
 
     // Start the Dear ImGui frame
@@ -200,7 +227,11 @@ void ImGuiUIRendererBackend::SetDebugConfig(const UIDebugConfig* config) {
 
 void ImGuiUIRendererBackend::SetThemeManager(UIThemeManager* themeManager) {
     m_themeManager = themeManager;
-    // ImGui theme can be synced with UIThemeManager here if needed
+    
+    // 如果已经初始化，立即同步主题
+    if (m_initialized && m_themeManager) {
+        SyncThemeToImGui();
+    }
 }
 
 bool ImGuiUIRendererBackend::ProcessEvent(const void* event) {
@@ -214,6 +245,149 @@ bool ImGuiUIRendererBackend::ProcessEvent(const void* event) {
     }
 
     return ImGui_ImplSDL3_ProcessEvent(sdlEvent);
+}
+
+ImVec4 ImGuiUIRendererBackend::ColorToImVec4(const Color& color) {
+    return ImVec4(color.r, color.g, color.b, color.a);
+}
+
+void ImGuiUIRendererBackend::SyncThemeToImGui() {
+    if (!m_initialized || !m_themeManager) {
+        return;
+    }
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    const UITheme& theme = m_themeManager->GetCurrentTheme();
+
+    // 文本颜色
+    style.Colors[ImGuiCol_Text] = ColorToImVec4(theme.button.normal.text);
+    style.Colors[ImGuiCol_TextDisabled] = ColorToImVec4(theme.button.disabled.text);
+
+    // 按钮颜色
+    style.Colors[ImGuiCol_Button] = ColorToImVec4(theme.button.normal.inner);
+    style.Colors[ImGuiCol_ButtonHovered] = ColorToImVec4(theme.button.hover.inner);
+    style.Colors[ImGuiCol_ButtonActive] = ColorToImVec4(theme.button.pressed.inner);
+
+    // 输入框/框架颜色
+    style.Colors[ImGuiCol_FrameBg] = ColorToImVec4(theme.textField.normal.inner);
+    style.Colors[ImGuiCol_FrameBgHovered] = ColorToImVec4(theme.textField.hover.inner);
+    style.Colors[ImGuiCol_FrameBgActive] = ColorToImVec4(theme.textField.active.inner);
+
+    // 窗口和面板颜色
+    style.Colors[ImGuiCol_WindowBg] = ColorToImVec4(theme.backgroundColor);
+    style.Colors[ImGuiCol_ChildBg] = ColorToImVec4(theme.panel.normal.inner);
+    style.Colors[ImGuiCol_Border] = ColorToImVec4(theme.borderColor);
+    style.Colors[ImGuiCol_BorderShadow] = ColorToImVec4(theme.button.normal.outline);
+
+    // 菜单和弹出窗口颜色
+    style.Colors[ImGuiCol_PopupBg] = ColorToImVec4(theme.menu.normal.inner);
+    style.Colors[ImGuiCol_Header] = ColorToImVec4(theme.menu.normal.inner);
+    style.Colors[ImGuiCol_HeaderHovered] = ColorToImVec4(theme.menu.hover.inner);
+    style.Colors[ImGuiCol_HeaderActive] = ColorToImVec4(theme.menu.pressed.inner);
+    style.Colors[ImGuiCol_Separator] = ColorToImVec4(theme.menu.normal.outline);
+    style.Colors[ImGuiCol_SeparatorHovered] = ColorToImVec4(theme.menu.hover.outline);
+    style.Colors[ImGuiCol_SeparatorActive] = ColorToImVec4(theme.menu.pressed.outline);
+
+    // 标题栏颜色（使用面板颜色）
+    style.Colors[ImGuiCol_TitleBg] = ColorToImVec4(theme.panel.normal.inner);
+    style.Colors[ImGuiCol_TitleBgActive] = ColorToImVec4(theme.panel.normal.innerSelected);
+    style.Colors[ImGuiCol_TitleBgCollapsed] = ColorToImVec4(theme.panel.normal.inner);
+
+    // 菜单栏颜色
+    style.Colors[ImGuiCol_MenuBarBg] = ColorToImVec4(theme.panel.normal.inner);
+
+    // 滚动条颜色（使用按钮颜色）
+    style.Colors[ImGuiCol_ScrollbarBg] = ColorToImVec4(theme.panel.normal.inner);
+    style.Colors[ImGuiCol_ScrollbarGrab] = ColorToImVec4(theme.button.normal.inner);
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = ColorToImVec4(theme.button.hover.inner);
+    style.Colors[ImGuiCol_ScrollbarGrabActive] = ColorToImVec4(theme.button.pressed.inner);
+
+    // 复选框和单选按钮标记颜色
+    style.Colors[ImGuiCol_CheckMark] = ColorToImVec4(theme.button.normal.text);
+
+    // 滑块颜色
+    style.Colors[ImGuiCol_SliderGrab] = ColorToImVec4(theme.button.normal.inner);
+    style.Colors[ImGuiCol_SliderGrabActive] = ColorToImVec4(theme.button.pressed.inner);
+
+    // 调整大小手柄颜色
+    style.Colors[ImGuiCol_ResizeGrip] = ColorToImVec4(theme.button.normal.outline);
+    style.Colors[ImGuiCol_ResizeGripHovered] = ColorToImVec4(theme.button.hover.outline);
+    style.Colors[ImGuiCol_ResizeGripActive] = ColorToImVec4(theme.button.pressed.outline);
+
+    // 输入文本光标颜色
+    style.Colors[ImGuiCol_InputTextCursor] = ColorToImVec4(theme.textField.active.text);
+
+    // 选中文本背景
+    style.Colors[ImGuiCol_TextSelectedBg] = ColorToImVec4(theme.textField.active.inner);
+
+    // 标签页颜色（使用按钮颜色）
+    style.Colors[ImGuiCol_Tab] = ColorToImVec4(theme.button.normal.inner);
+    style.Colors[ImGuiCol_TabHovered] = ColorToImVec4(theme.button.hover.inner);
+    style.Colors[ImGuiCol_TabActive] = ColorToImVec4(theme.button.active.inner);
+    style.Colors[ImGuiCol_TabSelected] = ColorToImVec4(theme.button.active.inner);
+    style.Colors[ImGuiCol_TabUnfocused] = ColorToImVec4(theme.button.normal.inner);
+    style.Colors[ImGuiCol_TabUnfocusedActive] = ColorToImVec4(theme.button.hover.inner);
+
+    // 表格颜色（使用面板颜色）
+    style.Colors[ImGuiCol_TableHeaderBg] = ColorToImVec4(theme.panel.normal.inner);
+    style.Colors[ImGuiCol_TableBorderStrong] = ColorToImVec4(theme.borderColor);
+    style.Colors[ImGuiCol_TableBorderLight] = ColorToImVec4(theme.panel.normal.outline);
+    style.Colors[ImGuiCol_TableRowBg] = ColorToImVec4(theme.backgroundColor);
+    style.Colors[ImGuiCol_TableRowBgAlt] = ColorToImVec4(theme.panel.normal.inner);
+
+    // 绘图线条颜色（使用文本颜色）
+    style.Colors[ImGuiCol_PlotLines] = ColorToImVec4(theme.button.normal.text);
+    style.Colors[ImGuiCol_PlotLinesHovered] = ColorToImVec4(theme.button.hover.text);
+    style.Colors[ImGuiCol_PlotHistogram] = ColorToImVec4(theme.button.normal.text);
+    style.Colors[ImGuiCol_PlotHistogramHovered] = ColorToImVec4(theme.button.hover.text);
+
+    // 拖放目标颜色
+    style.Colors[ImGuiCol_DragDropTarget] = ColorToImVec4(theme.button.active.outline);
+    style.Colors[ImGuiCol_DragDropTargetBg] = ColorToImVec4(theme.button.active.inner);
+
+    // 导航光标颜色
+    style.Colors[ImGuiCol_NavCursor] = ColorToImVec4(theme.button.active.outline);
+    style.Colors[ImGuiCol_NavWindowingHighlight] = ColorToImVec4(theme.button.hover.outline);
+    style.Colors[ImGuiCol_NavWindowingDimBg] = ColorToImVec4(Color(0.0f, 0.0f, 0.0f, 0.5f));
+    style.Colors[ImGuiCol_ModalWindowDimBg] = ColorToImVec4(Color(0.0f, 0.0f, 0.0f, 0.5f));
+
+    // 尺寸设置
+    style.FramePadding = ImVec2(theme.sizes.padding, theme.sizes.padding);
+    style.WindowPadding = ImVec2(theme.sizes.panelSpace, theme.sizes.panelSpace);
+    style.ItemSpacing = ImVec2(theme.sizes.spacing, theme.sizes.spacing);
+    style.ItemInnerSpacing = ImVec2(theme.sizes.spacing * 0.5f, theme.sizes.spacing * 0.5f);
+    
+    // 根据按钮高度计算FramePadding
+    float framePaddingY = (theme.sizes.buttonHeight - theme.widget.size) * 0.5f;
+    if (framePaddingY > 0.0f) {
+        style.FramePadding.y = framePaddingY;
+    }
+
+    // 圆角设置
+    style.FrameRounding = 4.0f;
+    style.WindowRounding = 4.0f;
+    style.ChildRounding = 4.0f;
+    style.PopupRounding = 4.0f;
+    style.ScrollbarRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.TabRounding = 4.0f;
+
+    // 边框大小
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.TabBorderSize = 1.0f;
+
+    // 记录当前主题的特征值（用于检测主题变化）
+    // 使用背景颜色的哈希值作为主题标识
+    Color currentBgColor = theme.backgroundColor;
+    float themeHash = currentBgColor.r + currentBgColor.g * 0.1f + 
+                     theme.button.normal.inner.r * 0.01f + 
+                     theme.button.normal.text.r * 0.001f;
+    m_lastSyncedThemeName = std::to_string(themeHash);
+    
+    Logger::GetInstance().Info("[ImGuiUIRendererBackend] Theme synchronized to ImGui");
 }
 
 } // namespace Render::UI
