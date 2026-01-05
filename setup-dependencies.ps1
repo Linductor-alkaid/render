@@ -8,7 +8,8 @@ param(
     [switch]$SkipSDLTTF = $false,
     [switch]$SkipJSON = $false,
     [switch]$SkipAssimp = $false,
-    [switch]$SkipMeshOptimizer = $false
+    [switch]$SkipMeshOptimizer = $false,
+    [switch]$SkipImGui = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -443,7 +444,39 @@ if (-not $SkipBullet3) {
 }
 
 
-# 8. Download and extract Eigen3
+# 8. Clone ImGui
+if (-not $SkipImGui) {
+    $ImGuiDir = "imgui"
+    $needsClone = $false
+    
+    if (Test-Path $ImGuiDir) {
+        # Check if directory is empty
+        $imguiItems = Get-ChildItem -Path $ImGuiDir -ErrorAction SilentlyContinue
+        if ($null -eq $imguiItems -or $imguiItems.Count -eq 0) {
+            Write-Host "ImGui directory exists but is empty, removing and re-cloning..." -ForegroundColor Yellow
+            Remove-Item -Path $ImGuiDir -Recurse -Force
+            $needsClone = $true
+        } else {
+            Write-Host "ImGui already exists and is complete, skipping clone" -ForegroundColor Green
+        }
+    } else {
+        $needsClone = $true
+    }
+    
+    if ($needsClone) {
+        Write-Host "Cloning ImGui..." -ForegroundColor Yellow
+        git clone https://github.com/ocornut/imgui.git
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: ImGui clone failed" -ForegroundColor Red
+            Pop-Location
+            exit 1
+        }
+    }
+} else {
+    Write-Host "Skipping ImGui (using --SkipImGui)" -ForegroundColor Gray
+}
+
+# 9. Download and extract Eigen3
 if (-not $SkipEigen) {
     $EigenDir = "eigen-3.4.0"
     $EigenCoreFile = Join-Path $EigenDir "Eigen\Core"

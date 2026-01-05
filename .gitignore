@@ -60,6 +60,7 @@ logs/
 
 # 用户配置
 config_user.json
+*.ini
 
 # 不忽略第三方库
 !third_party/

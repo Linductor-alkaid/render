@@ -25,11 +25,11 @@
 
 #include "render/application/app_module.h"
 #include "render/ui/ui_debug_config.h"
+#include "render/ui/ui_renderer_backend.h"
 
 namespace Render::UI {
 class UICanvas;
 struct UILayoutContext;
-class UIRendererBridge;
 class UIWidgetTree;
 class UIInputRouter;
 class UIWidget;
@@ -55,6 +55,25 @@ public:
 
     void SetDebugOptions(const UI::UIDebugConfig& config);
 
+    /**
+     * @brief 设置UI渲染后端类型
+     * @param backendType 后端类型（Custom或ImGui）
+     * @note 必须在模块注册之前调用，否则使用默认的Custom后端
+     */
+    void SetBackendType(UI::UIRendererBackendType backendType);
+
+    /**
+     * @brief 获取当前使用的后端类型
+     */
+    UI::UIRendererBackendType GetBackendType() const { return m_backendType; }
+
+    /**
+     * @brief 处理SDL事件（用于ImGui后端）
+     * @param event SDL事件指针
+     * @return 如果事件被UI系统处理（如ImGui），返回true，否则返回false
+     */
+    bool ProcessEvent(const void* event);
+
 private:
     void EnsureInitialized(AppContext& ctx);
     void EnsureSampleWidgets();
@@ -63,10 +82,11 @@ private:
 
     std::unique_ptr<UI::UICanvas> m_canvas;
     std::unique_ptr<UI::UILayoutContext> m_layoutContext;
-    std::unique_ptr<UI::UIRendererBridge> m_rendererBridge;
+    std::unique_ptr<UI::IUIRendererBackend> m_rendererBackend;
     std::unique_ptr<UI::UIWidgetTree> m_widgetTree;
     std::unique_ptr<UI::UIInputRouter> m_inputRouter;
     UI::UIDebugConfig m_debugConfig{};
+    UI::UIRendererBackendType m_backendType = UI::UIRendererBackendType::Custom;
     bool m_registered = false;
     
     // 示例控件组（用于演示）

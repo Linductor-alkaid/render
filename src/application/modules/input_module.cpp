@@ -25,6 +25,8 @@
 #include "render/application/app_context.h"
 #include "render/application/event_bus.h"
 #include "render/application/events/input_events.h"
+#include "render/application/modules/ui_runtime_module.h"
+#include "render/application/module_registry.h"
 #include "render/logger.h"
 #include "render/ui/ui_input_router.h"
 #include "render/types.h"
@@ -78,16 +80,20 @@ void InputModule::OnPreFrame(const FrameUpdateArgs&, AppContext& ctx) {
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        // 先检查退出事件，确保能够正常关闭窗口
+        // 注意：UIRuntimeModule的优先级更高，它可能已经处理了非退出事件
+        // 但退出事件需要在这里处理，以设置m_quitRequested标志
+        if (event.type == SDL_EVENT_QUIT || 
+            event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+            m_quitRequested = true;
+            // 继续处理，让其他系统也能收到退出事件
+        }
+        
         ProcessSDLEvent(event);
         
         // 处理Blender风格操作
         ProcessBlenderOperations(event, ctx);
         ProcessMouseGesture(event, ctx);
-
-        // 处理退出事件
-        if (event.type == SDL_EVENT_QUIT) {
-            m_quitRequested = true;
-        }
         
         // 注意：不再直接调用 router->QueueXXX()，因为 UIInputRouter 现在通过 EventBus 订阅事件
         // 这样可以避免重复处理，并实现更好的解耦

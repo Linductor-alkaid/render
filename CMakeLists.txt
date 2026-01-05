@@ -265,6 +265,8 @@ include_directories(
     ${ASSIMP_INCLUDE_DIRS}
     ${GLAD_INCLUDE_DIR}
     ${OPENGL_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends
 )
 
 # Bullet 包含目录（如果启用）
@@ -381,6 +383,8 @@ set(RENDER_SOURCES
     src/ui/ui_geometry_renderer.cpp
     src/ui/ui_input_router.cpp
     src/ui/ui_renderer_bridge.cpp
+    src/ui/ui_renderer_backend_custom.cpp
+    src/ui/ui_renderer_backend_imgui.cpp
     src/ui/ui_theme.cpp
     src/ui/ui_widget.cpp
     src/ui/ui_widget_tree.cpp
@@ -395,6 +399,15 @@ set(RENDER_SOURCES
     src/ui/widgets/ui_menu.cpp
     src/ui/widgets/ui_pulldown_menu.cpp
     src/ui/ui_menu_renderer.cpp
+
+    # ImGui
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_demo.cpp
+    third_party/imgui/backends/imgui_impl_sdl3.cpp
+    third_party/imgui/backends/imgui_impl_opengl3.cpp
 
     # Shaders
     shaders/sprite.vert
@@ -516,6 +529,9 @@ set(RENDER_HEADERS
     include/render/ui/ui_debug_config.h
     include/render/ui/ui_input_router.h
     include/render/ui/ui_renderer_bridge.h
+    include/render/ui/ui_renderer_backend.h
+    include/render/ui/ui_renderer_backend_custom.h
+    include/render/ui/ui_renderer_backend_imgui.h
     include/render/ui/ui_theme.h
     include/render/ui/ui_theme_serialization.h
     include/render/ui/ui_types.h

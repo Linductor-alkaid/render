@@ -114,6 +114,7 @@ A modern C++20-based 3D rendering engine featuring ECS (Entity Component System)
 - **SDL3_ttf** Font rendering and text support
 - **meshoptimizer** Mesh optimization and LOD generation
 - **nlohmann/json** JSON serialization and configuration
+- **ImGui** Immediate mode GUI library for UI rendering backend
 
 All third-party libraries are included in the `third_party/` directory and require no additional installation.
 
@@ -150,7 +151,7 @@ cmake --build build --config Release
 - Automatically copies required cmake files for SDL3_ttf
 - Automatically downloads and extracts Eigen3
 - Intelligently detects existing libraries to avoid redundant downloads
-- Supports selective skipping of certain libraries (using `-SkipEigen`, `-SkipSDL`, etc.)
+- Supports selective skipping of certain libraries (using `-SkipEigen`, `-SkipSDL`, `-SkipImGui`, etc.)
 
 #### Method 2: Manual Setup
 
@@ -170,6 +171,7 @@ git clone https://github.com/nlohmann/json.git
 git clone https://github.com/assimp/assimp.git
 git clone https://github.com/zeux/meshoptimizer.git
 git clone https://github.com/bulletphysics/bullet3.git
+git clone https://github.com/ocornut/imgui.git
 
 # Copy required cmake files for SDL3_ttf
 copy "third_party\SDL\cmake\GetGitRevisionDescription.cmake" "third_party\SDL3_ttf-3.2.2\cmake\GetGitRevisionDescription.cmake"

@@ -114,6 +114,7 @@
 - **SDL3_ttf** 字体渲染和文本支持
 - **meshoptimizer** 网格优化和 LOD 生成
 - **nlohmann/json** JSON 序列化和配置
+- **ImGui** 即时模式 GUI 库，用于 UI 渲染后端
 
 所有第三方库已包含在 `third_party/` 目录中，无需额外安装。
 
@@ -150,7 +151,7 @@ cmake --build build --config Release
 - 自动复制 SDL3_ttf 所需的 cmake 文件
 - 自动下载并解压 Eigen3
 - 智能检测已存在的库，避免重复下载
-- 支持选择性跳过某些库（使用 `-SkipEigen`、`-SkipSDL` 等参数）
+- 支持选择性跳过某些库（使用 `-SkipEigen`、`-SkipSDL`、`-SkipImGui` 等参数）
 
 #### 方式二：手动设置
 
@@ -170,6 +171,7 @@ git clone https://github.com/nlohmann/json.git
 git clone https://github.com/assimp/assimp.git
 git clone https://github.com/zeux/meshoptimizer.git
 git clone https://github.com/bulletphysics/bullet3.git
+git clone https://github.com/ocornut/imgui.git
 
 # 复制 SDL3_ttf 所需的 cmake 文件
 copy "third_party\SDL\cmake\GetGitRevisionDescription.cmake" "third_party\SDL3_ttf-3.2.2\cmake\GetGitRevisionDescription.cmake"

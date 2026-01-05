@@ -21,6 +21,8 @@
 #include "render/application/modules/ui_runtime_module.h"
 
 #include <memory>
+#include <vector>
+#include <SDL3/SDL.h>
 
 #include "render/logger.h"
 #include "render/renderer.h"
@@ -28,6 +30,8 @@
 #include "render/ui/ui_layout.h"
 #include "render/ui/ui_input_router.h"
 #include "render/ui/ui_renderer_bridge.h"
+#include "render/ui/ui_renderer_backend_custom.h"
+#include "render/ui/ui_renderer_backend_imgui.h"
 #include "render/ui/ui_widget.h"
 #include "render/ui/ui_widget_tree.h"
 #include "render/ui/ui_debug_config.h"
@@ -60,7 +64,7 @@ ModuleDependencies UIRuntimeModule::Dependencies() const {
 int UIRuntimeModule::Priority(ModulePhase phase) const {
     switch (phase) {
     case ModulePhase::PreFrame:
-        return 50;
+        return 250; // 高于InputModule(200)，确保先处理ImGui事件
     case ModulePhase::PostFrame:
         return 50;
     default:
@@ -96,8 +100,39 @@ void UIRuntimeModule::OnPreFrame(const FrameUpdateArgs& frame, AppContext& ctx) 
     }
 
     EnsureInitialized(ctx);
-    if (!m_canvas || !m_rendererBridge) {
+    if (!m_canvas || !m_rendererBackend) {
         return;
+    }
+
+    // 如果使用ImGui后端，需要在NewFrame之前处理事件
+    // 注意：事件应该在PrepareFrame（调用NewFrame）之前处理
+    // 由于UIRuntimeModule的优先级(250)高于InputModule(200)，我们先处理事件
+    // 但退出事件需要被InputModule处理，所以我们需要在UIRuntimeModule中先检查退出事件
+    // 然后让ImGui处理非退出事件，退出事件需要被重新推回队列让InputModule处理
+    // 但SDL3不支持重新推送事件，所以我们需要使用一个临时队列来存储退出事件
+    if (m_backendType == UI::UIRendererBackendType::ImGui) {
+        SDL_Event event;
+        std::vector<SDL_Event> quitEvents; // 存储退出事件，稍后重新推送
+        
+        while (SDL_PollEvent(&event)) {
+            // 检查是否是退出事件
+            bool isQuitEvent = (event.type == SDL_EVENT_QUIT || 
+                               event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED);
+            
+            if (isQuitEvent) {
+                // 存储退出事件，稍后重新推回队列
+                quitEvents.push_back(event);
+            } else {
+                // 对于非退出事件，让ImGui处理
+                ProcessEvent(&event);
+            }
+        }
+        
+        // 将退出事件重新推回队列，让InputModule处理
+        // 注意：SDL3不支持重新推送事件，所以我们需要使用SDL_PushEvent
+        for (const auto& quitEvent : quitEvents) {
+            SDL_PushEvent(const_cast<SDL_Event*>(&quitEvent));
+        }
     }
 
     m_canvas->BeginFrame(frame, ctx);
@@ -128,7 +163,7 @@ void UIRuntimeModule::OnPreFrame(const FrameUpdateArgs& frame, AppContext& ctx) 
         UI::UILayoutEngine::SyncTree(*m_widgetTree, canvasSize, *m_layoutContext);
     }
 
-    m_rendererBridge->PrepareFrame(frame, *m_canvas, *m_widgetTree, ctx);
+    m_rendererBackend->PrepareFrame(frame, *m_canvas, *m_widgetTree, ctx);
 }
 
 void UIRuntimeModule::OnPostFrame(const FrameUpdateArgs& frame, AppContext& ctx) {
@@ -136,11 +171,11 @@ void UIRuntimeModule::OnPostFrame(const FrameUpdateArgs& frame, AppContext& ctx)
         return;
     }
 
-    if (!m_canvas || !m_rendererBridge || !m_widgetTree) {
+    if (!m_canvas || !m_rendererBackend || !m_widgetTree) {
         return;
     }
 
-    m_rendererBridge->Flush(frame, *m_canvas, *m_widgetTree, ctx);
+    m_rendererBackend->Flush(frame, *m_canvas, *m_widgetTree, ctx);
     m_canvas->EndFrame(frame, ctx);
 
     if (m_inputRouter) {
@@ -150,12 +185,36 @@ void UIRuntimeModule::OnPostFrame(const FrameUpdateArgs& frame, AppContext& ctx)
 
 void UIRuntimeModule::SetDebugOptions(const UI::UIDebugConfig& config) {
     m_debugConfig = config;
-    if (m_rendererBridge) {
-        m_rendererBridge->SetDebugConfig(&m_debugConfig);
+    if (m_rendererBackend) {
+        m_rendererBackend->SetDebugConfig(&m_debugConfig);
     }
     if (m_inputRouter) {
         m_inputRouter->SetDebugConfig(&m_debugConfig);
     }
+}
+
+void UIRuntimeModule::SetBackendType(UI::UIRendererBackendType backendType) {
+    if (m_registered) {
+        Logger::GetInstance().Warning("[UIRuntimeModule] Cannot change backend type after module is registered");
+        return;
+    }
+    m_backendType = backendType;
+}
+
+bool UIRuntimeModule::ProcessEvent(const void* event) {
+    if (!m_rendererBackend) {
+        return false;
+    }
+
+    // 如果使用ImGui后端，处理事件
+    if (m_backendType == UI::UIRendererBackendType::ImGui) {
+        auto* imguiBackend = dynamic_cast<UI::ImGuiUIRendererBackend*>(m_rendererBackend.get());
+        if (imguiBackend) {
+            return imguiBackend->ProcessEvent(event);
+        }
+    }
+
+    return false;
 }
 
 void UIRuntimeModule::EnsureInitialized(AppContext& ctx) {
@@ -172,15 +231,30 @@ void UIRuntimeModule::EnsureInitialized(AppContext& ctx) {
         m_layoutContext = std::make_unique<UI::UILayoutContext>();
     }
 
-    if (!m_rendererBridge) {
-        m_rendererBridge = std::make_unique<UI::UIRendererBridge>();
-        m_rendererBridge->Initialize(ctx);
-        m_rendererBridge->SetDebugConfig(&m_debugConfig);
+    if (!m_rendererBackend) {
+        // 根据后端类型创建对应的后端实例
+        switch (m_backendType) {
+        case UI::UIRendererBackendType::Custom:
+            m_rendererBackend = std::make_unique<UI::CustomUIRendererBackend>();
+            Logger::GetInstance().Info("[UIRuntimeModule] Using Custom UI backend");
+            break;
+        case UI::UIRendererBackendType::ImGui:
+            m_rendererBackend = std::make_unique<UI::ImGuiUIRendererBackend>();
+            Logger::GetInstance().Info("[UIRuntimeModule] Using ImGui UI backend");
+            break;
+        default:
+            Logger::GetInstance().WarningFormat("[UIRuntimeModule] Unknown backend type, using Custom");
+            m_rendererBackend = std::make_unique<UI::CustomUIRendererBackend>();
+            break;
+        }
+
+        m_rendererBackend->Initialize(ctx);
+        m_rendererBackend->SetDebugConfig(&m_debugConfig);
         
-        // 初始化主题管理器并设置到渲染桥接器
+        // 初始化主题管理器并设置到渲染后端
         auto& themeManager = UI::UIThemeManager::GetInstance();
         themeManager.InitializeDefaults();
-        m_rendererBridge->SetThemeManager(&themeManager);
+        m_rendererBackend->SetThemeManager(&themeManager);
     }
 
     if (!m_widgetTree) {
@@ -458,9 +532,9 @@ void UIRuntimeModule::UpdateToggleAnimations(UI::UIWidget& widget, float deltaTi
 }
 
 void UIRuntimeModule::Shutdown(AppContext& ctx) {
-    if (m_rendererBridge) {
-        m_rendererBridge->Shutdown(ctx);
-        m_rendererBridge.reset();
+    if (m_rendererBackend) {
+        m_rendererBackend->Shutdown(ctx);
+        m_rendererBackend.reset();
     }
 
     if (m_canvas) {
