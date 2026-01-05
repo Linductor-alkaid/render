@@ -289,6 +289,83 @@ void RenderImGuiUI() {
             }
         }
 
+        ImGui::Separator();
+        ImGui::Text("主题序列化:");
+        
+        // 保存当前主题到JSON
+        if (ImGui::Button("保存当前主题到JSON")) {
+            auto& themeManager = UI::UIThemeManager::GetInstance();
+            const UI::UITheme& currentTheme = themeManager.GetCurrentTheme();
+            std::string themeName = g_themeIds[g_demoState.selectedTheme];
+            std::string filePath = "themes/" + themeName + ".json";
+            
+            if (UI::UITheme::SaveToJSON(currentTheme, filePath)) {
+                Logger::GetInstance().InfoFormat("[ImGuiDemo] Theme saved to: %s", filePath.c_str());
+                ImGui::OpenPopup("保存成功");
+            } else {
+                Logger::GetInstance().ErrorFormat("[ImGuiDemo] Failed to save theme to: %s", filePath.c_str());
+                ImGui::OpenPopup("保存失败");
+            }
+        }
+        
+        ImGui::SameLine();
+        
+        // 从JSON加载主题
+        if (ImGui::Button("从JSON加载主题")) {
+            auto& themeManager = UI::UIThemeManager::GetInstance();
+            std::string themeName = g_themeIds[g_demoState.selectedTheme];
+            std::string filePath = "themes/" + themeName + ".json";
+            
+            UI::UITheme loadedTheme;
+            if (UI::UITheme::LoadFromJSON(filePath, loadedTheme)) {
+                themeManager.RegisterBuiltinTheme(themeName + "_loaded", loadedTheme);
+                themeManager.SetCurrentTheme(themeName + "_loaded");
+                Logger::GetInstance().InfoFormat("[ImGuiDemo] Theme loaded from: %s", filePath.c_str());
+                ImGui::OpenPopup("加载成功");
+            } else {
+                Logger::GetInstance().WarningFormat("[ImGuiDemo] Failed to load theme from: %s (file may not exist)", filePath.c_str());
+                ImGui::OpenPopup("加载失败");
+            }
+        }
+        
+        // 显示序列化状态信息
+        ImGui::Text("当前主题: %s", g_themeIds[g_demoState.selectedTheme]);
+        ImGui::Text("主题文件路径: themes/%s.json", g_themeIds[g_demoState.selectedTheme]);
+        
+        // 弹出提示窗口
+        if (ImGui::BeginPopupModal("保存成功", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("主题已成功保存到 themes/%s.json", g_themeIds[g_demoState.selectedTheme]);
+            if (ImGui::Button("确定")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopupModal("保存失败", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("保存失败！请检查 themes/ 目录是否存在。");
+            if (ImGui::Button("确定")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopupModal("加载成功", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("主题已成功从 themes/%s.json 加载", g_themeIds[g_demoState.selectedTheme]);
+            if (ImGui::Button("确定")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopupModal("加载失败", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("加载失败！文件不存在或格式错误。");
+            ImGui::Text("请先使用'保存当前主题到JSON'按钮创建主题文件。");
+            if (ImGui::Button("确定")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
         ImGui::End();
     }
 
