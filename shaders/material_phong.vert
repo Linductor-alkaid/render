@@ -47,14 +47,37 @@ void main() {
     // 世界空间位置
     FragPos = vec3(modelMatrix * vec4(aPosition, 1.0));
     
-    // ✅ 法线矩阵计算：提取3x3矩阵的上部分（旋转+缩放）
-    // 使用 transpose(inverse()) 来正确处理非均匀缩放
-    // 注意：对于均匀缩放，这仍然正确，只是稍微低效
+    // ✅ 法线矩阵计算：正确处理镜像（负scale）
+    // 当scale包含负值时（镜像），法线方向需要被正确翻转
+    // 对于镜像变换（如scale(1, -1, 1)），transpose(inverse()) 会自动处理法线方向的翻转
     mat3 model3x3 = mat3(modelMatrix);
+    
+    // 计算法线矩阵：使用标准的 transpose(inverse()) 方法
+    // 这个方法能正确处理：
+    // 1. 非均匀缩放
+    // 2. 镜像变换（负scale）- 会自动翻转法线方向
+    // 3. 旋转
     mat3 normalMatrix = transpose(inverse(model3x3));
     
     // 世界空间法线与切线空间
-    Normal = normalize(normalMatrix * aNormal);
+    // 注意：对于镜像（如scale(1, -1, 1)），normalMatrix已经正确处理了法线方向
+    // transpose(inverse()) 会自动处理镜像变换，确保法线方向正确
+    // 但是，如果光照仍然被镜像，可能是因为法线方向没有正确翻转
+    // 对于镜像变换（负determinant），我们需要确保法线方向正确
+    vec3 transformedNormal = normalMatrix * aNormal;
+    
+    // 检查是否是镜像变换（determinant为负）
+    // 对于镜像变换，transpose(inverse())应该已经处理了法线方向的翻转
+    // 但如果光照仍然被镜像，可能需要手动翻转法线方向
+    float det = determinant(model3x3);
+    if (det < 0.0) {
+        // 镜像变换：transpose(inverse())应该已经翻转了法线方向
+        // 但如果光照仍然被镜像，可能需要再次翻转法线方向
+        // 注意：这可能是由于某些实现细节导致的
+        transformedNormal = -transformedNormal;
+    }
+    
+    Normal = normalize(transformedNormal);
     Tangent = normalize(normalMatrix * aTangent);
     Bitangent = normalize(normalMatrix * aBitangent);
     

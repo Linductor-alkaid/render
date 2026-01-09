@@ -336,6 +336,13 @@ set(RENDER_SOURCES
     src/rendering/lod_instanced_renderer.cpp
     src/ecs/sprite_animation_script_registry.cpp
 
+    # Robot
+    src/robot/urdf_loader.cpp
+    src/robot/joint_tf_system.cpp
+    src/robot/tf_visualizer.cpp
+    src/robot/imu_interface.cpp
+    src/robot/robot_systems.cpp
+
     # Application
     src/application/app_context.cpp
     src/application/app_module.cpp
@@ -504,6 +511,15 @@ set(RENDER_HEADERS
     include/render/lod_instanced_renderer.h
     include/render/debug/sprite_animation_debugger.h
     include/render/debug/sprite_animation_debug_panel.h
+
+    # Robot
+    include/render/robot/urdf_loader.h
+    include/render/robot/robot_model.h
+    include/render/robot/robot_components.h
+    include/render/robot/joint_tf_system.h
+    include/render/robot/tf_visualizer.h
+    include/render/robot/imu_interface.h
+    include/render/robot/robot_systems.h
 
     # Sprite
     include/render/sprite/sprite.h

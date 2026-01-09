@@ -66,6 +66,7 @@ set(EXAMPLES
     62_multithreading_benchmark
     63_physics_demo
     64_imgui_ui_demo
+    65_urdf_robot_demo
 )
 
 # 批量创建示例程序
