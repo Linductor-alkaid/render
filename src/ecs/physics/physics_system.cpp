@@ -90,7 +90,11 @@ inline void FromBullet(const btTransform& transform, Vector3& pos, Quaternion& r
 // PhysicsSystem 实现
 // ============================================================
 
-PhysicsSystem::PhysicsSystem() = default;
+PhysicsSystem::PhysicsSystem() 
+    : m_materialManager(std::make_unique<PhysicsMaterialManager>())
+    , m_debugRenderer(std::make_unique<PhysicsDebugRenderer>())
+{
+}
 
 PhysicsSystem::~PhysicsSystem() {
     ShutdownPhysicsWorld();
@@ -170,6 +174,18 @@ void PhysicsSystem::Update(float deltaTime) {
         
         m_stats.simulationTime = std::chrono::duration<float, std::milli>(endTime - startTime).count();
         m_stats.stepCount = numSteps;
+        
+        // 物理模拟后，标记所有激活的 PhysicsToTransform 模式的刚体需要同步
+        for (const auto& entity : rigidBodyEntities) {
+            auto& rb = m_world->GetComponent<RigidBodyComponent>(entity);
+            if (rb.syncMode == RigidBodyComponent::SyncMode::PhysicsToTransform && rb.bulletRigidBody) {
+                btRigidBody* bulletBody = static_cast<btRigidBody*>(rb.bulletRigidBody);
+                // 只有激活的刚体才标记为需要同步（休眠的刚体位置不变）
+                if (bulletBody->getActivationState() != ISLAND_SLEEPING) {
+                    rb.needsSync = true;
+                }
+            }
+        }
     }
     
     // 5. 批量同步 Physics → Transform（PhysicsToTransform 模式）
@@ -181,7 +197,15 @@ void PhysicsSystem::Update(float deltaTime) {
     // 7. 检测碰撞和触发器
     DetectCollisionsAndTriggers();
     
-    // 8. 更新统计信息
+    // 8. 调试绘制（如果启用）
+    if (m_debugDrawEnabled && m_debugRenderer && bulletWorld) {
+        m_debugRenderer->Clear();
+        m_debugRenderer->SetEnabled(true);
+        bulletWorld->debugDrawWorld();
+        m_debugRenderer->SetEnabled(false);
+    }
+    
+    // 9. 更新统计信息
     m_stats.rigidBodyCount = rigidBodyEntities.size();
     m_stats.colliderCount = colliderEntities.size();
     
@@ -259,6 +283,26 @@ Vector3 PhysicsSystem::GetGravity() const {
     
     const auto& physicsWorld = m_world->GetComponent<PhysicsWorldComponent>(m_physicsWorldEntity);
     return physicsWorld.gravity;
+}
+
+bool PhysicsSystem::LoadMaterialsFromFile(const std::string& filePath) {
+    if (!m_materialManager) {
+        Logger::GetInstance().Error("[PhysicsSystem] Material manager not initialized");
+        return false;
+    }
+    
+    return m_materialManager->LoadMaterialsFromFile(filePath);
+}
+
+void PhysicsSystem::SetDebugDrawEnabled(bool enabled) {
+    m_debugDrawEnabled = enabled;
+    if (m_debugRenderer) {
+        m_debugRenderer->SetEnabled(enabled);
+    }
+}
+
+bool PhysicsSystem::IsDebugDrawEnabled() const {
+    return m_debugDrawEnabled && m_debugRenderer != nullptr;
 }
 
 std::vector<PhysicsSystem::RaycastHit> PhysicsSystem::Raycast(const Vector3& start, const Vector3& end) const {
@@ -406,6 +450,11 @@ void PhysicsSystem::InitializePhysicsWorld(EntityID entity) {
     );
     
     bulletWorld->setGravity(ToBullet(physicsWorld.gravity));
+    
+    // 设置调试绘制器
+    if (m_debugRenderer) {
+        bulletWorld->setDebugDrawer(m_debugRenderer.get());
+    }
     
     physicsWorld.bulletWorld = bulletWorld;
     m_bulletWorld = bulletWorld;
@@ -564,10 +613,51 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
     btTransform startTransform = ToBullet(pos, rot);
     btDefaultMotionState* motionState = new btDefaultMotionState(startTransform);
     
-    // 创建刚体构造信息（使用最终形状）
+    // 应用材质属性（如果指定了材质）
+    float friction = rb.friction;
+    float restitution = rb.restitution;
+    
+    if (!rb.materialName.empty() && m_materialManager) {
+        const PhysicsMaterial* material = m_materialManager->GetMaterial(rb.materialName);
+        if (material) {
+            friction = material->friction;
+            restitution = material->restitution;
+            
+            // 如果质量未设置或为0，使用材质密度计算质量
+            if (mass <= 0.0f && material->density > 0.0f) {
+                // 计算碰撞体的体积（简化：使用AABB体积）
+                btVector3 aabbMin, aabbMax;
+                finalShape->getAabb(btTransform::getIdentity(), aabbMin, aabbMax);
+                btVector3 size = aabbMax - aabbMin;
+                float volume = size.x() * size.y() * size.z();
+                mass = volume * material->density;
+                
+                // 如果质量大于0，重新计算惯性
+                if (mass > 0.0f) {
+                    finalShape->calculateLocalInertia(mass, localInertia);
+                }
+            }
+        } else {
+            Logger::GetInstance().WarningFormat(
+                "[PhysicsSystem] Material '%s' not found for entity %u, using default values",
+                rb.materialName.c_str(), entity.index
+            );
+        }
+    }
+    
+    // 如果碰撞体也指定了材质，使用碰撞体的材质（优先级更高）
+    if (!collider.materialName.empty() && m_materialManager) {
+        const PhysicsMaterial* material = m_materialManager->GetMaterial(collider.materialName);
+        if (material) {
+            friction = material->friction;
+            restitution = material->restitution;
+        }
+    }
+    
+    // 创建刚体构造信息（使用最终形状和材质属性）
     btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, motionState, finalShape, localInertia);
-    rbInfo.m_friction = rb.friction;
-    rbInfo.m_restitution = rb.restitution;
+    rbInfo.m_friction = friction;
+    rbInfo.m_restitution = restitution;
     rbInfo.m_linearDamping = rb.linearDamping;
     rbInfo.m_angularDamping = rb.angularDamping;
     
@@ -578,9 +668,15 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
     if (rb.type == RigidBodyType::Static) {
         bulletBody->setCollisionFlags(bulletBody->getCollisionFlags() | btCollisionObject::CF_STATIC_OBJECT);
         bulletBody->setMassProps(0, btVector3(0, 0, 0));
+        // 静态刚体不需要休眠管理
+        bulletBody->setActivationState(DISABLE_DEACTIVATION);
     } else if (rb.type == RigidBodyType::Kinematic) {
         bulletBody->setCollisionFlags(bulletBody->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
+        // 运动学刚体也不休眠
         bulletBody->setActivationState(DISABLE_DEACTIVATION);
+    } else {
+        // 动态刚体：允许 Bullet 自动管理激活/休眠状态
+        // 默认情况下 Bullet 会自动休眠静止的刚体
     }
     
     // 设置重力
@@ -624,6 +720,10 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
     // 对于TransformToPhysics模式，需要从Transform同步到物理体
     if (rb.syncMode == RigidBodyComponent::SyncMode::TransformToPhysics) {
         SyncTransformToPhysics(entity);
+        rb.needsSync = false;  // 已同步，清除标志
+    } else if (rb.syncMode == RigidBodyComponent::SyncMode::PhysicsToTransform) {
+        // 对于 PhysicsToTransform 模式，标记为需要同步（物理模拟后会同步）
+        rb.needsSync = true;
     }
     
     Logger::GetInstance().InfoFormat("[PhysicsSystem] Created rigid body for entity %u", entity.index);
@@ -1198,8 +1298,36 @@ void PhysicsSystem::BatchSyncTransformsToPhysics() {
     for (const auto& entity : entities) {
         auto& rb = m_world->GetComponent<RigidBodyComponent>(entity);
         
+        // 只同步 TransformToPhysics 模式的刚体
         if (rb.syncMode == RigidBodyComponent::SyncMode::TransformToPhysics) {
-            SyncTransformToPhysics(entity);
+            // 如果刚体还未创建，跳过（会在后续帧创建）
+            if (!rb.bulletRigidBody) {
+                continue;
+            }
+            
+            // 如果 needsSync 为 true，直接同步
+            if (rb.needsSync) {
+                SyncTransformToPhysics(entity);
+                // SyncTransformToPhysics 会清除 needsSync 标志
+            } else {
+                // 即使 needsSync 为 false，对于 TransformToPhysics 模式，我们也需要检查是否有变化
+                // 这里检测 Transform 和物理体的位置差异
+                if (m_world->HasComponent<TransformComponent>(entity)) {
+                    auto& transform = m_world->GetComponent<TransformComponent>(entity);
+                    btRigidBody* bulletBody = static_cast<btRigidBody*>(rb.bulletRigidBody);
+                    btTransform btTrans;
+                    bulletBody->getMotionState()->getWorldTransform(btTrans);
+                    
+                    Vector3 physicsPos = FromBullet(btTrans.getOrigin());
+                    Matrix4 worldMatrix = transform.GetWorldMatrix();
+                    Vector3 transformPos = worldMatrix.block<3, 1>(0, 3);
+                    
+                    // 如果位置有明显变化（超过阈值），则需要同步
+                    if ((physicsPos - transformPos).norm() > 0.001f) {
+                        SyncTransformToPhysics(entity);
+                    }
+                }
+            }
         }
     }
 }
@@ -1213,7 +1341,24 @@ void PhysicsSystem::BatchSyncPhysicsToTransforms() {
         auto& rb = m_world->GetComponent<RigidBodyComponent>(entity);
         
         if (rb.syncMode == RigidBodyComponent::SyncMode::PhysicsToTransform) {
-            SyncPhysicsToTransform(entity);
+            // 只同步需要同步的刚体（needsSync == true）或者刚创建的刚体
+            if (!rb.bulletRigidBody) {
+                continue;  // 刚体还未创建，跳过
+            }
+            
+            btRigidBody* bulletBody = static_cast<btRigidBody*>(rb.bulletRigidBody);
+            
+            // 只同步激活的刚体（休眠的刚体位置不变，不需要同步）
+            if (bulletBody->getActivationState() == ISLAND_SLEEPING) {
+                rb.needsSync = false;  // 休眠的刚体不需要同步
+                continue;
+            }
+            
+            // 如果需要同步或者是新创建的刚体，则同步
+            if (rb.needsSync) {
+                SyncPhysicsToTransform(entity);
+                rb.needsSync = false;
+            }
         }
     }
 }
@@ -1260,6 +1405,9 @@ void PhysicsSystem::SyncTransformToPhysics(EntityID entity) {
     
     bulletBody->setWorldTransform(btTrans);
     bulletBody->activate();
+    
+    // 同步完成后，清除 needsSync 标志
+    rb.needsSync = false;
 }
 
 void PhysicsSystem::SyncPhysicsToTransform(EntityID entity) {
@@ -1328,6 +1476,9 @@ void PhysicsSystem::SyncPhysicsToTransform(EntityID entity) {
     
     transform.SetPosition(localPos);
     transform.SetRotation(localRot);
+    
+    // 同步完成后，清除 needsSync 标志
+    rb.needsSync = false;
 }
 
 void PhysicsSystem::DetectCollisionsAndTriggers() {

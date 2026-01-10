@@ -28,6 +28,29 @@ namespace Render {
 namespace ECS {
 
 // ============================================================
+// 碰撞组常量（预定义）
+// ============================================================
+
+/**
+ * @brief 预定义的碰撞组
+ * 
+ * 使用位掩码，可以组合多个组
+ */
+namespace CollisionGroups {
+    constexpr uint16_t DEFAULT = 0x0001;      ///< 默认组
+    constexpr uint16_t STATIC = 0x0002;       ///< 静态物体组
+    constexpr uint16_t KINEMATIC = 0x0004;    ///< 运动学物体组
+    constexpr uint16_t DYNAMIC = 0x0008;      ///< 动态物体组
+    constexpr uint16_t PLAYER = 0x0010;       ///< 玩家组
+    constexpr uint16_t ENEMY = 0x0020;        ///< 敌人组
+    constexpr uint16_t PROJECTILE = 0x0040;   ///< 投射物组
+    constexpr uint16_t TRIGGER = 0x0080;      ///< 触发器组
+    constexpr uint16_t SENSOR = 0x0100;       ///< 传感器组
+    constexpr uint16_t ALL = 0xFFFF;          ///< 所有组
+    constexpr uint16_t NONE = 0x0000;         ///< 无组
+}
+
+// ============================================================
 // 刚体类型
 // ============================================================
 
@@ -59,10 +82,13 @@ struct RigidBodyComponent {
     Vector3 angularVelocity{0, 0, 0};             ///< 角速度
     
     // ==================== 物理属性 ====================
-    float friction = 0.5f;                        ///< 摩擦系数
-    float restitution = 0.0f;                    ///< 弹性系数（反弹）
+    float friction = 0.5f;                        ///< 摩擦系数（会被材质覆盖）
+    float restitution = 0.0f;                    ///< 弹性系数（反弹，会被材质覆盖）
     float linearDamping = 0.0f;                   ///< 线性阻尼
     float angularDamping = 0.0f;                  ///< 角阻尼
+    
+    // ==================== 材质 ====================
+    std::string materialName;                     ///< 材质名称（可选，如果指定则使用材质的属性）
     
     // ==================== 控制标志 ====================
     bool enabled = true;                          ///< 是否启用物理模拟
@@ -186,6 +212,9 @@ struct ColliderComponent {
     
     // ==================== 触发器 ====================
     bool isTrigger = false;                       ///< 是否为触发器（不产生物理响应）
+    
+    // ==================== 材质 ====================
+    std::string materialName;                     ///< 材质名称（可选，如果指定则使用材质的属性）
     
     // ==================== 碰撞过滤 ====================
     uint16_t collisionGroup = 0x0001;             ///< 碰撞组（位掩码）

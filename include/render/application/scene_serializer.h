@@ -30,6 +30,7 @@
 #include "render/application/scene_types.h"
 #include "render/ecs/world.h"
 #include "render/ecs/components.h"
+#include "render/ecs/physics/physics_components.h"
 
 namespace Render {
 namespace Application {
@@ -132,6 +133,48 @@ private:
      * @brief 反序列化NameComponent
      */
     void DeserializeNameComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj);
+    
+    // ==================== 物理组件序列化 ====================
+    
+    /**
+     * @brief 序列化RigidBodyComponent
+     */
+    void SerializeRigidBodyComponent(const ECS::RigidBodyComponent& comp, nlohmann::json& jsonObj);
+    
+    /**
+     * @brief 反序列化RigidBodyComponent
+     */
+    void DeserializeRigidBodyComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj);
+    
+    /**
+     * @brief 序列化ColliderComponent
+     */
+    void SerializeColliderComponent(const ECS::ColliderComponent& comp, nlohmann::json& jsonObj);
+    
+    /**
+     * @brief 反序列化ColliderComponent
+     */
+    void DeserializeColliderComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj);
+    
+    /**
+     * @brief 序列化ConstraintComponent
+     */
+    void SerializeConstraintComponent(const ECS::ConstraintComponent& comp, nlohmann::json& jsonObj);
+    
+    /**
+     * @brief 反序列化ConstraintComponent
+     */
+    void DeserializeConstraintComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj);
+    
+    /**
+     * @brief 序列化PhysicsWorldComponent
+     */
+    void SerializePhysicsWorldComponent(const ECS::PhysicsWorldComponent& comp, nlohmann::json& jsonObj);
+    
+    /**
+     * @brief 反序列化PhysicsWorldComponent
+     */
+    void DeserializePhysicsWorldComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj);
 };
 
 } // namespace Application

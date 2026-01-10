@@ -23,10 +23,13 @@
 #include "render/ecs/system.h"
 #include "render/ecs/entity.h"
 #include "render/types.h"
+#include "render/ecs/physics/physics_material.h"
+#include "render/ecs/physics/physics_debug_renderer.h"
 #include <vector>
 #include <unordered_map>
 #include <set>
 #include <utility>
+#include <memory>
 
 namespace Render {
 namespace ECS {
@@ -94,6 +97,40 @@ public:
      * @brief 获取重力
      */
     [[nodiscard]] Vector3 GetGravity() const;
+    
+    // ==================== 材质管理 ====================
+    
+    /**
+     * @brief 获取材质管理器
+     * @return 材质管理器指针
+     */
+    [[nodiscard]] PhysicsMaterialManager* GetMaterialManager() const { return m_materialManager.get(); }
+    
+    /**
+     * @brief 加载材质定义文件
+     * @param filePath JSON 文件路径
+     * @return 成功返回 true
+     */
+    bool LoadMaterialsFromFile(const std::string& filePath);
+    
+    // ==================== 调试渲染 ====================
+    
+    /**
+     * @brief 设置是否启用调试绘制
+     * @param enabled 是否启用
+     */
+    void SetDebugDrawEnabled(bool enabled);
+    
+    /**
+     * @brief 获取是否启用调试绘制
+     */
+    [[nodiscard]] bool IsDebugDrawEnabled() const;
+    
+    /**
+     * @brief 获取调试渲染器
+     * @return 调试渲染器指针
+     */
+    [[nodiscard]] PhysicsDebugRenderer* GetDebugRenderer() const { return m_debugRenderer.get(); }
     
     // ==================== 查询接口 ====================
     
@@ -170,6 +207,13 @@ private:
     EntityID m_physicsWorldEntity = EntityID::Invalid();  ///< 物理世界实体ID
     bool m_enabled = true;                                 ///< 是否启用
     PhysicsStats m_stats;                                  ///< 统计信息
+    
+    // 材质管理
+    std::unique_ptr<PhysicsMaterialManager> m_materialManager;  ///< 材质管理器
+    
+    // 调试渲染
+    std::unique_ptr<PhysicsDebugRenderer> m_debugRenderer;      ///< 调试渲染器
+    bool m_debugDrawEnabled = false;                            ///< 是否启用调试绘制
     
     // 实体ID映射（用于从Bullet对象查找EntityID）
     std::unordered_map<void*, EntityID> m_rigidBodyToEntity;  ///< Bullet刚体指针到EntityID的映射

@@ -25,6 +25,7 @@
 
 #include "render/logger.h"
 #include "render/ecs/components.h"
+#include "render/ecs/physics/physics_components.h"
 #include "render/ecs/entity.h"
 #include "render/resource_manager.h"
 #include "render/camera.h"
@@ -189,6 +190,27 @@ void SceneSerializer::SerializeEntity(ECS::World& world, ECS::EntityID entity, n
         const auto& comp = world.GetComponent<ECS::LightComponent>(entity);
         SerializeLightComponent(comp, components);
     }
+
+    // 序列化物理组件
+    if (world.HasComponent<ECS::RigidBodyComponent>(entity)) {
+        const auto& comp = world.GetComponent<ECS::RigidBodyComponent>(entity);
+        SerializeRigidBodyComponent(comp, components);
+    }
+
+    if (world.HasComponent<ECS::ColliderComponent>(entity)) {
+        const auto& comp = world.GetComponent<ECS::ColliderComponent>(entity);
+        SerializeColliderComponent(comp, components);
+    }
+
+    if (world.HasComponent<ECS::ConstraintComponent>(entity)) {
+        const auto& comp = world.GetComponent<ECS::ConstraintComponent>(entity);
+        SerializeConstraintComponent(comp, components);
+    }
+
+    if (world.HasComponent<ECS::PhysicsWorldComponent>(entity)) {
+        const auto& comp = world.GetComponent<ECS::PhysicsWorldComponent>(entity);
+        SerializePhysicsWorldComponent(comp, components);
+    }
 }
 
 ECS::EntityID SceneSerializer::DeserializeEntity(ECS::World& world, const nlohmann::json& jsonObj, AppContext& ctx) {
@@ -227,6 +249,23 @@ ECS::EntityID SceneSerializer::DeserializeEntity(ECS::World& world, const nlohma
         // 反序列化LightComponent
         if (components.contains("light")) {
             DeserializeLightComponent(world, entity, components["light"]);
+        }
+
+        // 反序列化物理组件
+        if (components.contains("rigidBody")) {
+            DeserializeRigidBodyComponent(world, entity, components["rigidBody"]);
+        }
+
+        if (components.contains("collider")) {
+            DeserializeColliderComponent(world, entity, components["collider"]);
+        }
+
+        if (components.contains("constraint")) {
+            DeserializeConstraintComponent(world, entity, components["constraint"]);
+        }
+
+        if (components.contains("physicsWorld")) {
+            DeserializePhysicsWorldComponent(world, entity, components["physicsWorld"]);
         }
     }
 
@@ -534,6 +573,240 @@ void SceneSerializer::DeserializeNameComponent(ECS::World& world, ECS::EntityID 
     }
 
     world.AddComponent(entity, nameComp);
+}
+
+// ==================== 物理组件序列化实现 ====================
+
+void SceneSerializer::SerializeRigidBodyComponent(const ECS::RigidBodyComponent& comp, nlohmann::json& jsonObj) {
+    nlohmann::json rbJson;
+    
+    rbJson["type"] = static_cast<int>(comp.type);
+    rbJson["mass"] = comp.mass;
+    rbJson["linearVelocity"] = {comp.linearVelocity.x(), comp.linearVelocity.y(), comp.linearVelocity.z()};
+    rbJson["angularVelocity"] = {comp.angularVelocity.x(), comp.angularVelocity.y(), comp.angularVelocity.z()};
+    rbJson["friction"] = comp.friction;
+    rbJson["restitution"] = comp.restitution;
+    rbJson["linearDamping"] = comp.linearDamping;
+    rbJson["angularDamping"] = comp.angularDamping;
+    rbJson["enabled"] = comp.enabled;
+    rbJson["useGravity"] = comp.useGravity;
+    rbJson["isKinematic"] = comp.isKinematic;
+    rbJson["syncMode"] = static_cast<int>(comp.syncMode);
+    
+    if (!comp.materialName.empty()) {
+        rbJson["materialName"] = comp.materialName;
+    }
+    
+    jsonObj["rigidBody"] = rbJson;
+}
+
+void SceneSerializer::DeserializeRigidBodyComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj) {
+    ECS::RigidBodyComponent rbComp;
+    
+    if (jsonObj.contains("type")) {
+        rbComp.type = static_cast<ECS::RigidBodyType>(jsonObj["type"].get<int>());
+    }
+    
+    rbComp.mass = jsonObj.value("mass", 1.0f);
+    
+    if (jsonObj.contains("linearVelocity") && jsonObj["linearVelocity"].is_array() && jsonObj["linearVelocity"].size() >= 3) {
+        const auto& v = jsonObj["linearVelocity"];
+        rbComp.linearVelocity = Vector3(v[0].get<float>(), v[1].get<float>(), v[2].get<float>());
+    }
+    
+    if (jsonObj.contains("angularVelocity") && jsonObj["angularVelocity"].is_array() && jsonObj["angularVelocity"].size() >= 3) {
+        const auto& v = jsonObj["angularVelocity"];
+        rbComp.angularVelocity = Vector3(v[0].get<float>(), v[1].get<float>(), v[2].get<float>());
+    }
+    
+    rbComp.friction = jsonObj.value("friction", 0.5f);
+    rbComp.restitution = jsonObj.value("restitution", 0.0f);
+    rbComp.linearDamping = jsonObj.value("linearDamping", 0.0f);
+    rbComp.angularDamping = jsonObj.value("angularDamping", 0.0f);
+    rbComp.enabled = jsonObj.value("enabled", true);
+    rbComp.useGravity = jsonObj.value("useGravity", true);
+    rbComp.isKinematic = jsonObj.value("isKinematic", false);
+    
+    if (jsonObj.contains("syncMode")) {
+        rbComp.syncMode = static_cast<ECS::RigidBodyComponent::SyncMode>(jsonObj["syncMode"].get<int>());
+    }
+    
+    if (jsonObj.contains("materialName")) {
+        rbComp.materialName = jsonObj["materialName"].get<std::string>();
+    }
+    
+    world.AddComponent(entity, rbComp);
+}
+
+void SceneSerializer::SerializeColliderComponent(const ECS::ColliderComponent& comp, nlohmann::json& jsonObj) {
+    nlohmann::json colliderJson;
+    
+    colliderJson["shape"] = static_cast<int>(comp.shape);
+    colliderJson["boxSize"] = {comp.boxSize.x(), comp.boxSize.y(), comp.boxSize.z()};
+    colliderJson["sphereRadius"] = comp.sphereRadius;
+    colliderJson["capsuleRadius"] = comp.capsuleRadius;
+    colliderJson["capsuleHeight"] = comp.capsuleHeight;
+    colliderJson["cylinderSize"] = {comp.cylinderSize.x(), comp.cylinderSize.y(), comp.cylinderSize.z()};
+    colliderJson["planeNormal"] = {comp.planeNormal.x(), comp.planeNormal.y(), comp.planeNormal.z()};
+    colliderJson["planeConstant"] = comp.planeConstant;
+    colliderJson["offset"] = {comp.offset.x(), comp.offset.y(), comp.offset.z()};
+    colliderJson["rotation"] = {comp.rotation.w(), comp.rotation.x(), comp.rotation.y(), comp.rotation.z()};
+    colliderJson["isTrigger"] = comp.isTrigger;
+    colliderJson["collisionGroup"] = comp.collisionGroup;
+    colliderJson["collisionMask"] = comp.collisionMask;
+    
+    if (!comp.meshName.empty()) {
+        colliderJson["meshName"] = comp.meshName;
+        colliderJson["useConvexHull"] = comp.useConvexHull;
+    }
+    
+    if (!comp.materialName.empty()) {
+        colliderJson["materialName"] = comp.materialName;
+    }
+    
+    jsonObj["collider"] = colliderJson;
+}
+
+void SceneSerializer::DeserializeColliderComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj) {
+    ECS::ColliderComponent colliderComp;
+    
+    if (jsonObj.contains("shape")) {
+        colliderComp.shape = static_cast<ECS::ColliderShape>(jsonObj["shape"].get<int>());
+    }
+    
+    if (jsonObj.contains("boxSize") && jsonObj["boxSize"].is_array() && jsonObj["boxSize"].size() >= 3) {
+        const auto& s = jsonObj["boxSize"];
+        colliderComp.boxSize = Vector3(s[0].get<float>(), s[1].get<float>(), s[2].get<float>());
+    }
+    
+    colliderComp.sphereRadius = jsonObj.value("sphereRadius", 0.5f);
+    colliderComp.capsuleRadius = jsonObj.value("capsuleRadius", 0.5f);
+    colliderComp.capsuleHeight = jsonObj.value("capsuleHeight", 1.0f);
+    
+    if (jsonObj.contains("cylinderSize") && jsonObj["cylinderSize"].is_array() && jsonObj["cylinderSize"].size() >= 3) {
+        const auto& s = jsonObj["cylinderSize"];
+        colliderComp.cylinderSize = Vector3(s[0].get<float>(), s[1].get<float>(), s[2].get<float>());
+    }
+    
+    if (jsonObj.contains("planeNormal") && jsonObj["planeNormal"].is_array() && jsonObj["planeNormal"].size() >= 3) {
+        const auto& n = jsonObj["planeNormal"];
+        colliderComp.planeNormal = Vector3(n[0].get<float>(), n[1].get<float>(), n[2].get<float>());
+    }
+    
+    colliderComp.planeConstant = jsonObj.value("planeConstant", 0.0f);
+    
+    if (jsonObj.contains("offset") && jsonObj["offset"].is_array() && jsonObj["offset"].size() >= 3) {
+        const auto& o = jsonObj["offset"];
+        colliderComp.offset = Vector3(o[0].get<float>(), o[1].get<float>(), o[2].get<float>());
+    }
+    
+    if (jsonObj.contains("rotation") && jsonObj["rotation"].is_array() && jsonObj["rotation"].size() >= 4) {
+        const auto& r = jsonObj["rotation"];
+        colliderComp.rotation = Quaternion(r[0].get<float>(), r[1].get<float>(), r[2].get<float>(), r[3].get<float>());
+    }
+    
+    colliderComp.isTrigger = jsonObj.value("isTrigger", false);
+    colliderComp.collisionGroup = jsonObj.value("collisionGroup", static_cast<uint16_t>(0x0001));
+    colliderComp.collisionMask = jsonObj.value("collisionMask", static_cast<uint16_t>(0xFFFF));
+    
+    if (jsonObj.contains("meshName")) {
+        colliderComp.meshName = jsonObj["meshName"].get<std::string>();
+        colliderComp.useConvexHull = jsonObj.value("useConvexHull", true);
+    }
+    
+    if (jsonObj.contains("materialName")) {
+        colliderComp.materialName = jsonObj["materialName"].get<std::string>();
+    }
+    
+    world.AddComponent(entity, colliderComp);
+}
+
+void SceneSerializer::SerializeConstraintComponent(const ECS::ConstraintComponent& comp, nlohmann::json& jsonObj) {
+    nlohmann::json constraintJson;
+    
+    constraintJson["type"] = static_cast<int>(comp.type);
+    constraintJson["connectedEntity"] = comp.connectedEntity.index;
+    constraintJson["pivotA"] = {comp.pivotA.x(), comp.pivotA.y(), comp.pivotA.z()};
+    constraintJson["pivotB"] = {comp.pivotB.x(), comp.pivotB.y(), comp.pivotB.z()};
+    constraintJson["axisA"] = {comp.axisA.x(), comp.axisA.y(), comp.axisA.z()};
+    constraintJson["axisB"] = {comp.axisB.x(), comp.axisB.y(), comp.axisB.z()};
+    constraintJson["lowerLimit"] = comp.lowerLimit;
+    constraintJson["upperLimit"] = comp.upperLimit;
+    constraintJson["enableSpring"] = comp.enableSpring;
+    constraintJson["springStiffness"] = comp.springStiffness;
+    constraintJson["springDamping"] = comp.springDamping;
+    constraintJson["enabled"] = comp.enabled;
+    
+    jsonObj["constraint"] = constraintJson;
+}
+
+void SceneSerializer::DeserializeConstraintComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj) {
+    ECS::ConstraintComponent constraintComp;
+    
+    if (jsonObj.contains("type")) {
+        constraintComp.type = static_cast<ECS::ConstraintType>(jsonObj["type"].get<int>());
+    }
+    
+    if (jsonObj.contains("connectedEntity")) {
+        uint32_t connectedIndex = jsonObj["connectedEntity"].get<uint32_t>();
+        // 注意：这里需要使用保存时的实体ID来查找，简化处理使用索引
+        constraintComp.connectedEntity = ECS::EntityID{connectedIndex, 0};
+    }
+    
+    if (jsonObj.contains("pivotA") && jsonObj["pivotA"].is_array() && jsonObj["pivotA"].size() >= 3) {
+        const auto& p = jsonObj["pivotA"];
+        constraintComp.pivotA = Vector3(p[0].get<float>(), p[1].get<float>(), p[2].get<float>());
+    }
+    
+    if (jsonObj.contains("pivotB") && jsonObj["pivotB"].is_array() && jsonObj["pivotB"].size() >= 3) {
+        const auto& p = jsonObj["pivotB"];
+        constraintComp.pivotB = Vector3(p[0].get<float>(), p[1].get<float>(), p[2].get<float>());
+    }
+    
+    if (jsonObj.contains("axisA") && jsonObj["axisA"].is_array() && jsonObj["axisA"].size() >= 3) {
+        const auto& a = jsonObj["axisA"];
+        constraintComp.axisA = Vector3(a[0].get<float>(), a[1].get<float>(), a[2].get<float>());
+    }
+    
+    if (jsonObj.contains("axisB") && jsonObj["axisB"].is_array() && jsonObj["axisB"].size() >= 3) {
+        const auto& a = jsonObj["axisB"];
+        constraintComp.axisB = Vector3(a[0].get<float>(), a[1].get<float>(), a[2].get<float>());
+    }
+    
+    constraintComp.lowerLimit = jsonObj.value("lowerLimit", 0.0f);
+    constraintComp.upperLimit = jsonObj.value("upperLimit", 0.0f);
+    constraintComp.enableSpring = jsonObj.value("enableSpring", false);
+    constraintComp.springStiffness = jsonObj.value("springStiffness", 0.0f);
+    constraintComp.springDamping = jsonObj.value("springDamping", 0.0f);
+    constraintComp.enabled = jsonObj.value("enabled", true);
+    
+    world.AddComponent(entity, constraintComp);
+}
+
+void SceneSerializer::SerializePhysicsWorldComponent(const ECS::PhysicsWorldComponent& comp, nlohmann::json& jsonObj) {
+    nlohmann::json physicsWorldJson;
+    
+    physicsWorldJson["gravity"] = {comp.gravity.x(), comp.gravity.y(), comp.gravity.z()};
+    physicsWorldJson["timeStep"] = comp.timeStep;
+    physicsWorldJson["maxSubSteps"] = comp.maxSubSteps;
+    physicsWorldJson["enabled"] = comp.enabled;
+    
+    jsonObj["physicsWorld"] = physicsWorldJson;
+}
+
+void SceneSerializer::DeserializePhysicsWorldComponent(ECS::World& world, ECS::EntityID entity, const nlohmann::json& jsonObj) {
+    ECS::PhysicsWorldComponent physicsWorldComp;
+    
+    if (jsonObj.contains("gravity") && jsonObj["gravity"].is_array() && jsonObj["gravity"].size() >= 3) {
+        const auto& g = jsonObj["gravity"];
+        physicsWorldComp.gravity = Vector3(g[0].get<float>(), g[1].get<float>(), g[2].get<float>());
+    }
+    
+    physicsWorldComp.timeStep = jsonObj.value("timeStep", 1.0f / 60.0f);
+    physicsWorldComp.maxSubSteps = jsonObj.value("maxSubSteps", 10);
+    physicsWorldComp.enabled = jsonObj.value("enabled", true);
+    
+    world.AddComponent(entity, physicsWorldComp);
 }
 
 } // namespace Render::Application

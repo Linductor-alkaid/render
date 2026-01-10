@@ -291,6 +291,8 @@ set(RENDER_SOURCES
     # ECS Physics
     src/ecs/physics/physics_system.cpp
     src/ecs/physics/physics_components.cpp
+    src/ecs/physics/physics_material.cpp
+    src/ecs/physics/physics_debug_renderer.cpp
     
     # Rendering
     src/rendering/shader.cpp
