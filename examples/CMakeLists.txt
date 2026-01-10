@@ -64,6 +64,7 @@ set(EXAMPLES
     60_ui_framework_showcase
     61_ui_menu_example
     62_multithreading_benchmark
+    63_physics_basic_test
     64_imgui_ui_demo
     65_urdf_robot_demo
 )

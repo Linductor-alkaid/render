@@ -27,6 +27,8 @@
 #include "render/ecs/world.h"
 #include "render/ecs/systems.h"
 #include "render/ecs/components.h"
+#include "render/ecs/physics/physics_components.h"
+#include "render/ecs/physics/physics_system.h"
 #include "render/logger.h"
 
 namespace Render::Application {
@@ -80,6 +82,11 @@ void CoreRenderModule::RegisterCoreComponents(ECS::World& world, AppContext&) {
     world.RegisterComponent<Render::ECS::LightComponent>();
     world.RegisterComponent<Render::ECS::GeometryComponent>();
     
+    // 注册物理组件
+    world.RegisterComponent<Render::ECS::RigidBodyComponent>();
+    world.RegisterComponent<Render::ECS::ColliderComponent>();
+    world.RegisterComponent<Render::ECS::PhysicsWorldComponent>();
+    
     Logger::GetInstance().Info("[CoreRenderModule] Core components registered");
 }
 
@@ -101,6 +108,9 @@ void CoreRenderModule::RegisterCoreSystems(ECS::World& world, AppContext& ctx) {
     
     // 4. GeometrySystem - 几何生成（优先级15）
     world.RegisterSystem<Render::ECS::GeometrySystem>();
+    
+    // 4.5. PhysicsSystem - 物理模拟（优先级15）
+    world.RegisterSystem<Render::ECS::PhysicsSystem>();
     
     // 5. ResourceLoadingSystem - 资源加载（优先级20）
     if (ctx.asyncLoader) {

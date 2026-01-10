@@ -473,6 +473,55 @@ void LODInstancedRenderer::RenderGroup(
     }
     
     size_t instanceCount = group->instances.size();
+    
+    // ✅ 优化：当只有1个实例时，回退到传统渲染方式
+    // 这样可以避免实例化渲染在单实例时的潜在问题，同时性能影响可忽略
+    if (instanceCount == 1) {
+        // 使用传统渲染方式：直接设置模型矩阵并绘制
+        const auto& instance = group->instances[0];
+        
+        // 设置模型矩阵（不使用实例化）
+        if (auto shader = group->material->GetShader()) {
+            if (auto uniformMgr = shader->GetUniformManager()) {
+                uniformMgr->SetBool("uHasInstanceData", false);
+                uniformMgr->SetMatrix4("uModel", instance.worldMatrix);
+            }
+        }
+        
+        // 使用基础VAO（不是实例化VAO）
+        GLuint baseVAO = group->mesh->GetVertexArrayID();
+        if (baseVAO == 0) {
+            LOG_WARNING("LODInstancedRenderer: Base mesh VAO is invalid for single instance fallback");
+            return;
+        }
+        
+        // 绑定基础VAO
+        if (renderState) {
+            renderState->BindVertexArray(baseVAO);
+        } else {
+            glBindVertexArray(baseVAO);
+        }
+        
+        // 使用传统绘制方式
+        size_t indexCount = group->mesh->GetIndexCount();
+        if (indexCount > 0) {
+            group->mesh->Draw();
+        } else {
+            size_t vertexCount = group->mesh->GetVertexCount();
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+        }
+        
+        // 解绑VAO
+        if (renderState) {
+            renderState->BindVertexArray(0);
+        } else {
+            glBindVertexArray(0);
+        }
+        
+        return;  // 提前返回，不使用实例化渲染
+    }
+    
+    // 多个实例：使用实例化渲染
     auto& instanceVBOs = GetOrCreateInstanceVBOs(group->mesh, instanceCount);
     
     // 获取或创建实例化VAO（传入material以查询着色器中的实例化属性location）

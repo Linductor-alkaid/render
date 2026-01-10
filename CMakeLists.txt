@@ -288,6 +288,10 @@ set(RENDER_SOURCES
     src/ecs/systems.cpp
     src/ecs/components.cpp
     
+    # ECS Physics
+    src/ecs/physics/physics_system.cpp
+    src/ecs/physics/physics_components.cpp
+    
     # Rendering
     src/rendering/shader.cpp
     src/rendering/uniform_manager.cpp

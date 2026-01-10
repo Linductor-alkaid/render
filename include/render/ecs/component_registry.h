@@ -721,10 +721,10 @@ template<typename T>
 void ComponentRegistry::OnComponentChanged(EntityID entity, const T& component) {
     std::type_index typeIndex = std::type_index(typeid(T));
     
-    Logger::GetInstance().DebugFormat(
-        "[ComponentRegistry] OnComponentChanged called for entity %u, type=%s, total callbacks=%zu",
-        entity.index, typeIndex.name(), m_componentChangeCallbacks.size()
-    );
+    // Logger::GetInstance().DebugFormat(
+    //     "[ComponentRegistry] OnComponentChanged called for entity %u, type=%s, total callbacks=%zu",
+    //     entity.index, typeIndex.name(), m_componentChangeCallbacks.size()
+    // );
     
     // 获取回调列表的副本（避免在回调执行期间持有锁）
     std::vector<ComponentChangeCallbackRecord> callbacksToInvoke;
@@ -739,10 +739,10 @@ void ComponentRegistry::OnComponentChanged(EntityID entity, const T& component) 
         }
     }
     
-    Logger::GetInstance().DebugFormat(
-        "[ComponentRegistry] Found %zu matching callbacks for entity %u", 
-        callbacksToInvoke.size(), entity.index
-    );
+    // Logger::GetInstance().DebugFormat(
+    //     "[ComponentRegistry] Found %zu matching callbacks for entity %u", 
+    //     callbacksToInvoke.size(), entity.index
+    // );
     
     // 调用每个回调（不在持有锁的情况下调用，避免死锁）
     // 处理回调异常，避免一个回调失败影响其他回调
