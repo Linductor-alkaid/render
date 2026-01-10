@@ -200,6 +200,31 @@ cmake --build build --config Release
 - `BUILD_EXAMPLES=ON` 构建示例程序（默认开启）
 - `BUILD_TESTS=ON` 构建测试程序（默认开启）
 - `ENABLE_OPENMP=ON` 启用 OpenMP 并行处理（默认开启，提升批量操作性能）
+- `RENDER_ENGINE_INSTALL=ON` 启用安装支持，用于生成预编译库
+
+### 构建预编译库
+
+为了在其他项目中直接使用预编译库以缩短编译时间：
+
+```powershell
+# 方式1: 一键构建和打包（推荐）
+PowerShell -ExecutionPolicy Bypass -File ".\scripts\build_and_package.ps1"
+
+# 方式2: 手动步骤
+# 1. 构建项目
+mkdir build; cd build
+cmake .. -DRENDER_ENGINE_INSTALL=ON
+cmake --build . --config Release
+
+# 2. 安装到指定目录
+cmake --install . --config Release --prefix ../install
+
+# 3. 打包（可选）
+cd ..
+PowerShell -ExecutionPolicy Bypass -File ".\scripts\package_prebuilt.ps1"
+```
+
+详细的使用说明请参考 [预编译库使用指南](docs/PREBUILT_LIBRARY_USAGE.md)。
 
 ## 示例程序
 

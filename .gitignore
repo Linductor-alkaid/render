@@ -4,6 +4,7 @@
 build/
 cmake-build-*/
 output/
+prebuilt/
 
 # 编译输出
 *.o

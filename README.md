@@ -200,6 +200,31 @@ cmake --build build --config Release
 - `BUILD_EXAMPLES=ON` Build example programs (enabled by default)
 - `BUILD_TESTS=ON` Build test programs (enabled by default)
 - `ENABLE_OPENMP=ON` Enable OpenMP parallel processing (enabled by default, improves batch operation performance)
+- `RENDER_ENGINE_INSTALL=ON` Enable installation support for prebuilt library distribution
+
+### Building Prebuilt Library
+
+To create a prebuilt library package for use in other projects:
+
+```powershell
+# Method 1: One-click build and package (Recommended)
+PowerShell -ExecutionPolicy Bypass -File ".\scripts\build_and_package.ps1"
+
+# Method 2: Manual steps
+# 1. Build the project
+mkdir build; cd build
+cmake .. -DRENDER_ENGINE_INSTALL=ON
+cmake --build . --config Release
+
+# 2. Install to a directory
+cmake --install . --config Release --prefix ../install
+
+# 3. Package (optional)
+cd ..
+PowerShell -ExecutionPolicy Bypass -File ".\scripts\package_prebuilt.ps1"
+```
+
+See [Prebuilt Library Usage Guide](docs/PREBUILT_LIBRARY_USAGE.md) for detailed instructions on using the prebuilt library in your projects.
 
 ## Example Programs
 

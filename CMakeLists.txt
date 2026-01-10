@@ -563,25 +563,35 @@ target_include_directories(RenderEngine
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/single_include
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/single_include>
+        $<INSTALL_INTERFACE:include/json>
 )
 
 # 设置编译选项（仅对 RenderEngine）
 target_compile_options(RenderEngine PRIVATE ${PROJECT_COMPILE_OPTIONS})
 
 # 链接库
+# 第三方静态库使用$<BUILD_INTERFACE:...>，只在构建时链接，安装时不导出
+# 这些库已经静态链接到RenderEngine中，使用预编译库的项目不需要再链接它们
 target_link_libraries(RenderEngine
-    PUBLIC
-        ${SDL3_LIBRARY}
-        ${SDL3_IMAGE_LIBRARY}
-        ${SDL3_TTF_LIBRARY}
-        ${ASSIMP_LIBRARY}
-        ${MESHOPTIMIZER_LIBRARY}
-        ${OPENGL_LIBRARIES}
+    PRIVATE
+        $<BUILD_INTERFACE:${SDL3_LIBRARY}>
+        $<BUILD_INTERFACE:${SDL3_IMAGE_LIBRARY}>
+        $<BUILD_INTERFACE:${SDL3_TTF_LIBRARY}>
+        $<BUILD_INTERFACE:${ASSIMP_LIBRARY}>
+        $<BUILD_INTERFACE:${MESHOPTIMIZER_LIBRARY}>
 )
 
-# 链接 Bullet（用于URDF）
-target_link_libraries(RenderEngine PRIVATE ${BULLET_LIBRARIES})
+# Bullet库是列表，需要单独处理
+foreach(BULLET_LIB ${BULLET_LIBRARIES})
+    target_link_libraries(RenderEngine PRIVATE $<BUILD_INTERFACE:${BULLET_LIB}>)
+endforeach()
+
+# OpenGL是系统库，使用PUBLIC链接（使用预编译库的项目需要自己链接OpenGL）
+target_link_libraries(RenderEngine
+    PUBLIC
+        ${OPENGL_LIBRARIES}
+)
 
 # 链接 OpenMP（如果启用）
 if(ENABLE_OPENMP AND OpenMP_CXX_FOUND)
@@ -591,7 +601,10 @@ endif()
 # ============================================================================
 # 安装规则（仅在作为主项目或明确要求安装时）
 # ============================================================================
+option(RENDER_ENGINE_INSTALL "Install RenderEngine library" ON)
+
 if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
+    # 安装库文件
     install(TARGETS RenderEngine
         EXPORT RenderEngineTargets
         LIBRARY DESTINATION lib
@@ -600,14 +613,54 @@ if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
         INCLUDES DESTINATION include
     )
 
+    # 安装头文件
     install(DIRECTORY include/render
         DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
+    
+    # 安装json头文件（nlohmann/json是仅头文件库）
+    install(DIRECTORY third_party/json/single_include/nlohmann
+        DESTINATION include/json
+        FILES_MATCHING PATTERN "*.hpp"
+    )
+
+    # 安装shader文件
+    install(DIRECTORY shaders
+        DESTINATION share/RenderEngine
+        FILES_MATCHING PATTERN "*.vert" PATTERN "*.frag" PATTERN "*.geom" PATTERN "*.comp"
     )
 
     # 安装导出配置
+    # 注意：第三方库不会被导出，因为它们使用PRIVATE链接且已静态链接到RenderEngine中
     install(EXPORT RenderEngineTargets
         FILE RenderEngineTargets.cmake
         NAMESPACE RenderEngine::
+        DESTINATION lib/cmake/RenderEngine
+    )
+
+    # 创建并安装RenderEngineConfig.cmake
+    include(CMakePackageConfigHelpers)
+    
+    # 生成版本文件
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/RenderEngineConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+
+    # 生成配置文件
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RenderEngineConfig.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/RenderEngineConfig.cmake"
+        INSTALL_DESTINATION lib/cmake/RenderEngine
+        PATH_VARS CMAKE_INSTALL_PREFIX
+    )
+
+    # 安装配置文件
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/RenderEngineConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/RenderEngineConfigVersion.cmake"
         DESTINATION lib/cmake/RenderEngine
     )
 endif()

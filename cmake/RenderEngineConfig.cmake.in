@@ -1,0 +1,22 @@
+@PACKAGE_INIT@
+
+# 设置库路径
+set(RenderEngine_LIBRARIES RenderEngine::RenderEngine)
+
+# 设置包含目录
+set(RenderEngine_INCLUDE_DIRS "@CMAKE_INSTALL_PREFIX@/include")
+
+# 设置shader目录
+set(RenderEngine_SHADER_DIR "@CMAKE_INSTALL_PREFIX@/share/RenderEngine/shaders")
+
+# 检查并包含目标文件
+if(NOT TARGET RenderEngine::RenderEngine)
+    include("${CMAKE_CURRENT_LIST_DIR}/RenderEngineTargets.cmake")
+endif()
+
+# 提供变量供其他项目使用
+set(RenderEngine_FOUND TRUE)
+set(RenderEngine_VERSION @PROJECT_VERSION@)
+
+# 显示配置信息
+check_required_components(RenderEngine)
