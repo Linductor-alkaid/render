@@ -669,23 +669,23 @@ physicsSystem.SyncTransformToPhysics(entity);
 **目标**：实现完整的物理特性
 
 1. **扩展 ColliderComponent**
-   - [ ] 支持 Capsule、Cylinder、Cone
-   - [ ] 支持 Mesh 碰撞体
-   - [ ] 支持 Plane
+   - [x] 支持 Capsule、Cylinder、Cone
+   - [x] 支持 Mesh 碰撞体
+   - [x] 支持 Plane
 
 2. **实现 ConstraintComponent**
-   - [ ] PointToPoint 约束
-   - [ ] Hinge 约束
-   - [ ] Generic6Dof 约束
+   - [x] PointToPoint 约束
+   - [x] Hinge 约束
+   - [x] Generic6Dof 约束
 
 3. **碰撞检测和查询**
-   - [ ] 射线检测（Raycast）
-   - [ ] 球形检测（SphereCast）
-   - [ ] 碰撞回调
+   - [x] 射线检测（Raycast）
+   - [x] 球形检测（SphereCast）
+   - [x] 碰撞回调
 
 4. **触发器支持**
-   - [ ] Trigger 检测
-   - [ ] Trigger 回调
+   - [x] Trigger 检测
+   - [x] Trigger 回调
 
 **预计时间**：3-4 天
 

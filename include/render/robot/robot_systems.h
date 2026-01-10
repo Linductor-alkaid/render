@@ -26,8 +26,10 @@
 #include "render/robot/robot_model.h"
 #include "render/ecs/system.h"
 #include "render/ecs/entity.h"
+#include "render/ecs/physics/physics_components.h"
 #include "render/renderer.h"
 #include "render/camera.h"
+#include "render/types.h"
 #include <string>
 #include <unordered_map>
 #include <memory>
@@ -65,9 +67,11 @@ public:
      * @brief 加载URDF文件并创建机器人实体
      * @param urdfPath URDF文件路径
      * @param meshBasePath mesh文件基准路径
+     * @param baseLinkType base link的刚体类型（默认Kinematic）
      * @return 机器人实体ID，失败返回Invalid
      */
-    EntityID LoadRobot(const std::string& urdfPath, const std::string& meshBasePath = "");
+    EntityID LoadRobot(const std::string& urdfPath, const std::string& meshBasePath = "", 
+                      RigidBodyType baseLinkType = RigidBodyType::Kinematic);
     
     /**
      * @brief 卸载机器人
@@ -95,6 +99,33 @@ private:
      * @brief 加载link的mesh
      */
     Ref<Mesh> LoadLinkMesh(const Render::Robot::URDFLink& link, const std::string& meshBasePath);
+    
+    /**
+     * @brief 为link创建物理组件（碰撞体和刚体）
+     * @param linkEntity link实体ID
+     * @param urdfLink URDF link信息
+     * @param isBaseLink 是否为base link
+     * @param baseLinkType base link的刚体类型（如果不是base link则忽略）
+     */
+    void CreateLinkPhysicsComponents(EntityID linkEntity, const Render::Robot::URDFLink& urdfLink, 
+                                    bool isBaseLink, RigidBodyType baseLinkType);
+    
+    /**
+     * @brief 为joint创建物理约束
+     * @param jointEntity joint实体ID
+     * @param urdfJoint URDF joint信息
+     * @param parentLinkEntity 父link实体ID
+     * @param childLinkEntity 子link实体ID
+     */
+    void CreateJointConstraint(EntityID jointEntity, const Render::Robot::URDFJoint& urdfJoint,
+                              EntityID parentLinkEntity, EntityID childLinkEntity);
+    
+    /**
+     * @brief 转换URDF惯性矩阵为Bullet惯性向量（对角化）
+     * @param inertiaMatrix URDF惯性矩阵
+     * @return Bullet惯性向量（ixx, iyy, izz）
+     */
+    static Vector3 ConvertURDFInertiaToBullet(const Matrix3& inertiaMatrix);
     
     std::unordered_map<EntityID, Ref<Render::Robot::RobotModel>, EntityID::Hash> m_robots;
 };

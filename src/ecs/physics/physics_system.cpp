@@ -536,8 +536,31 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
     }
     
     // 创建运动状态
-    Vector3 pos = transform.GetPosition();
-    Quaternion rot = transform.GetRotation();
+    // 使用世界位置和旋转（考虑Transform的父子关系）
+    // 注意：物理体需要世界空间的位置，而不是局部位置
+    // 确保Transform的世界矩阵已更新（通过GetWorldMatrix会自动更新）
+    Vector3 pos;
+    Quaternion rot;
+    
+    // 从世界矩阵中提取位置和旋转
+    Matrix4 worldMatrix = transform.GetWorldMatrix();
+    pos = worldMatrix.block<3, 1>(0, 3);  // 提取位置（第4列的前3个元素）
+    
+    // 提取旋转（从世界矩阵的3x3部分）
+    Matrix3 rotMatrix = worldMatrix.block<3, 3>(0, 0);
+    // 移除缩放影响（归一化列向量）
+    Vector3 scale(
+        rotMatrix.col(0).norm(),
+        rotMatrix.col(1).norm(),
+        rotMatrix.col(2).norm()
+    );
+    if (scale.x() > 0.001f && scale.y() > 0.001f && scale.z() > 0.001f) {
+        rotMatrix.col(0) /= scale.x();
+        rotMatrix.col(1) /= scale.y();
+        rotMatrix.col(2) /= scale.z();
+    }
+    rot = Quaternion(rotMatrix);
+    
     btTransform startTransform = ToBullet(pos, rot);
     btDefaultMotionState* motionState = new btDefaultMotionState(startTransform);
     
@@ -596,6 +619,12 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
     // 添加到映射表
     m_rigidBodyToEntity[bulletBody] = entity;
     m_entityToRigidBody[entity] = bulletBody;
+    
+    // 创建后立即同步一次，确保初始位置正确
+    // 对于TransformToPhysics模式，需要从Transform同步到物理体
+    if (rb.syncMode == RigidBodyComponent::SyncMode::TransformToPhysics) {
+        SyncTransformToPhysics(entity);
+    }
     
     Logger::GetInstance().InfoFormat("[PhysicsSystem] Created rigid body for entity %u", entity.index);
 }
@@ -948,19 +977,11 @@ void PhysicsSystem::CreateConstraint(EntityID entity) {
     
     btRigidBody* bodyB = static_cast<btRigidBody*>(rbB.bulletRigidBody);
     
-    // 获取Transform以计算世界空间位置
-    Vector3 pivotAWorld = constraint.pivotA;
-    Vector3 pivotBWorld = constraint.pivotB;
-    
-    if (m_world->HasComponent<TransformComponent>(entity)) {
-        auto& transformA = m_world->GetComponent<TransformComponent>(entity);
-        pivotAWorld = transformA.GetPosition() + constraint.pivotA;
-    }
-    
-    if (m_world->HasComponent<TransformComponent>(constraint.connectedEntity)) {
-        auto& transformB = m_world->GetComponent<TransformComponent>(constraint.connectedEntity);
-        pivotBWorld = transformB.GetPosition() + constraint.pivotB;
-    }
+    // 注意：Bullet约束的pivot点应该在刚体的本地坐标系中，不需要转换到世界空间
+    // constraint.pivotA和pivotB已经是本地坐标系中的点，直接使用即可
+    // Bullet会在内部处理坐标转换
+    Vector3 pivotA = constraint.pivotA;
+    Vector3 pivotB = constraint.pivotB;
     
     btTypedConstraint* bulletConstraint = nullptr;
     
@@ -970,8 +991,8 @@ void PhysicsSystem::CreateConstraint(EntityID entity) {
             btPoint2PointConstraint* p2p = new btPoint2PointConstraint(
                 *bodyA,
                 *bodyB,
-                ToBullet(pivotAWorld),
-                ToBullet(pivotBWorld)
+                ToBullet(pivotA),
+                ToBullet(pivotB)
             );
             bulletConstraint = p2p;
             break;
@@ -979,8 +1000,9 @@ void PhysicsSystem::CreateConstraint(EntityID entity) {
         
         case ConstraintType::Hinge: {
             // 铰链约束需要轴和锚点
-            btVector3 pivotInA = ToBullet(constraint.pivotA);
-            btVector3 pivotInB = ToBullet(constraint.pivotB);
+            // pivot点应该在各自刚体的本地坐标系中
+            btVector3 pivotInA = ToBullet(pivotA);
+            btVector3 pivotInB = ToBullet(pivotB);
             btVector3 axisInA = ToBullet(constraint.axisA.normalized());
             btVector3 axisInB = ToBullet(constraint.axisB.normalized());
             
@@ -1015,8 +1037,8 @@ void PhysicsSystem::CreateConstraint(EntityID entity) {
             frameInA.setIdentity();
             frameInB.setIdentity();
             
-            frameInA.setOrigin(ToBullet(constraint.pivotA));
-            frameInB.setOrigin(ToBullet(constraint.pivotB));
+            frameInA.setOrigin(ToBullet(pivotA));
+            frameInB.setOrigin(ToBullet(pivotB));
             
             // 设置旋转（基于轴）
             if (constraint.axisA.norm() > 0.001f) {
@@ -1215,9 +1237,26 @@ void PhysicsSystem::SyncTransformToPhysics(EntityID entity) {
     
     btRigidBody* bulletBody = static_cast<btRigidBody*>(rb.bulletRigidBody);
     
-    Vector3 pos = transform.GetPosition();
-    Quaternion rot = transform.GetRotation();
-    btTransform btTrans = ToBullet(pos, rot);
+    // 使用世界位置和旋转（考虑Transform的父子关系）
+    Matrix4 worldMatrix = transform.GetWorldMatrix();
+    Vector3 worldPos = worldMatrix.block<3, 1>(0, 3);
+    
+    // 提取旋转（从世界矩阵的3x3部分）
+    Matrix3 rotMatrix = worldMatrix.block<3, 3>(0, 0);
+    // 移除缩放影响
+    Vector3 scale(
+        rotMatrix.col(0).norm(),
+        rotMatrix.col(1).norm(),
+        rotMatrix.col(2).norm()
+    );
+    if (scale.x() > 0.001f && scale.y() > 0.001f && scale.z() > 0.001f) {
+        rotMatrix.col(0) /= scale.x();
+        rotMatrix.col(1) /= scale.y();
+        rotMatrix.col(2) /= scale.z();
+    }
+    Quaternion worldRot = Quaternion(rotMatrix);
+    
+    btTransform btTrans = ToBullet(worldPos, worldRot);
     
     bulletBody->setWorldTransform(btTrans);
     bulletBody->activate();
@@ -1244,12 +1283,51 @@ void PhysicsSystem::SyncPhysicsToTransform(EntityID entity) {
     btTransform btTrans;
     bulletBody->getMotionState()->getWorldTransform(btTrans);
     
-    Vector3 pos;
-    Quaternion rot;
-    FromBullet(btTrans, pos, rot);
+    Vector3 worldPos;
+    Quaternion worldRot;
+    FromBullet(btTrans, worldPos, worldRot);
     
-    transform.SetPosition(pos);
-    transform.SetRotation(rot);
+    // 将世界位置转换为局部位置（如果有父节点）
+    Vector3 localPos = worldPos;
+    Quaternion localRot = worldRot;
+    
+    // 检查是否有父节点
+    if (transform.parentEntity.IsValid() && 
+        m_world->HasComponent<TransformComponent>(transform.parentEntity)) {
+        auto& parentTransform = m_world->GetComponent<TransformComponent>(transform.parentEntity);
+        
+        // 使用父节点的逆变换将世界位置转换为局部位置
+        if (parentTransform.transform) {
+            Matrix4 parentWorldMatrix = parentTransform.GetWorldMatrix();
+            Matrix4 parentWorldMatrixInv = parentWorldMatrix.inverse();
+            
+            // 转换位置
+            Vector4 worldPos4(worldPos.x(), worldPos.y(), worldPos.z(), 1.0f);
+            Vector4 localPos4 = parentWorldMatrixInv * worldPos4;
+            localPos = localPos4.head<3>();
+            
+            // 转换旋转（从世界矩阵的3x3部分提取旋转）
+            Matrix3 parentRotMatrix = parentWorldMatrix.block<3, 3>(0, 0);
+            // 移除缩放影响
+            Vector3 parentScale(
+                parentRotMatrix.col(0).norm(),
+                parentRotMatrix.col(1).norm(),
+                parentRotMatrix.col(2).norm()
+            );
+            if (parentScale.x() > 0.001f && parentScale.y() > 0.001f && parentScale.z() > 0.001f) {
+                parentRotMatrix.col(0) /= parentScale.x();
+                parentRotMatrix.col(1) /= parentScale.y();
+                parentRotMatrix.col(2) /= parentScale.z();
+            }
+            Quaternion parentRot(parentRotMatrix);
+            
+            // 局部旋转 = 父旋转的逆 * 世界旋转
+            localRot = parentRot.inverse() * worldRot;
+        }
+    }
+    
+    transform.SetPosition(localPos);
+    transform.SetRotation(localRot);
 }
 
 void PhysicsSystem::DetectCollisionsAndTriggers() {

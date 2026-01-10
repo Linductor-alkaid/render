@@ -320,21 +320,73 @@ void URDFLoader::ParseJoint(const std::string& jointXml, URDFJoint& joint) {
         }
     }
     
-    // 解析axis
-    std::string axisXml = GetTagContent(jointXml, "axis");
-    if (!axisXml.empty()) {
-        joint.axis = ParseXYZ(GetAttribute(axisXml, "xyz"));
-        if (joint.axis.norm() < 0.001f) {
-            joint.axis = Vector3::UnitZ();
-        } else {
-            joint.axis.normalize();
+    // 解析axis（可能是自闭合标签，如 <axis xyz="-1 0 0"/>）
+    std::string axisOpenTag = "<axis";
+    size_t axisStart = jointXml.find(axisOpenTag);
+    if (axisStart != std::string::npos) {
+        size_t axisEnd = jointXml.find(">", axisStart);
+        if (axisEnd != std::string::npos) {
+            // 检查是否是自闭合标签（检查 axisEnd 前一个字符是否是 /）
+            if (axisEnd > axisStart && jointXml[axisEnd - 1] == '/') {
+                // 自闭合标签，提取整个标签（包括 />）
+                std::string axisTag = jointXml.substr(axisStart, axisEnd - axisStart + 1);
+                joint.axis = ParseXYZ(GetAttribute(axisTag, "xyz"));
+                if (joint.axis.norm() < 0.001f) {
+                    joint.axis = Vector3::UnitZ();
+                } else {
+                    joint.axis.normalize();
+                }
+            } else {
+                // 非自闭合标签，使用GetTagContent
+                std::string axisXml = GetTagContent(jointXml, "axis");
+                if (!axisXml.empty()) {
+                    joint.axis = ParseXYZ(GetAttribute(axisXml, "xyz"));
+                    if (joint.axis.norm() < 0.001f) {
+                        joint.axis = Vector3::UnitZ();
+                    } else {
+                        joint.axis.normalize();
+                    }
+                }
+            }
+        }
+    } else {
+        // 如果没找到，尝试GetTagContent（非自闭合标签）
+        std::string axisXml = GetTagContent(jointXml, "axis");
+        if (!axisXml.empty()) {
+            joint.axis = ParseXYZ(GetAttribute(axisXml, "xyz"));
+            if (joint.axis.norm() < 0.001f) {
+                joint.axis = Vector3::UnitZ();
+            } else {
+                joint.axis.normalize();
+            }
         }
     }
     
-    // 解析limits
-    std::string limitsXml = GetTagContent(jointXml, "limit");
-    if (!limitsXml.empty()) {
-        ParseLimits(limitsXml, joint.limits);
+    // 解析limits（可能是自闭合标签，如 <limit lower="-0.611" upper="0.436" effort="76.4" velocity="22.4"/>）
+    std::string limitOpenTag = "<limit";
+    size_t limitStart = jointXml.find(limitOpenTag);
+    if (limitStart != std::string::npos) {
+        size_t limitEnd = jointXml.find(">", limitStart);
+        if (limitEnd != std::string::npos) {
+            // 检查是否是自闭合标签（检查 limitEnd 前一个字符是否是 /）
+            if (limitEnd > limitStart && jointXml[limitEnd - 1] == '/') {
+                // 自闭合标签，提取整个标签（包括 />）
+                std::string limitTag = jointXml.substr(limitStart, limitEnd - limitStart + 1);
+                ParseLimits(limitTag, joint.limits);
+            } else {
+                // 非自闭合标签，使用GetTagContent
+                std::string limitsXml = GetTagContent(jointXml, "limit");
+                if (!limitsXml.empty()) {
+                    ParseLimits(limitsXml, joint.limits);
+                }
+            }
+        }
+    } else {
+        // 如果没找到，尝试GetTagContent（非自闭合标签）
+        std::string limitsXml = GetTagContent(jointXml, "limit");
+        if (!limitsXml.empty()) {
+            ParseLimits(limitsXml, joint.limits);
+        }
     }
 }
 
