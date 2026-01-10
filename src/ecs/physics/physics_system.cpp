@@ -34,6 +34,17 @@
 #include <BulletCollision/CollisionShapes/btBoxShape.h>
 #include <BulletCollision/CollisionShapes/btSphereShape.h>
 #include <BulletCollision/CollisionShapes/btStaticPlaneShape.h>
+#include <BulletCollision/CollisionShapes/btCapsuleShape.h>
+#include <BulletCollision/CollisionShapes/btCylinderShape.h>
+#include <BulletCollision/CollisionShapes/btConeShape.h>
+#include <BulletCollision/CollisionShapes/btConvexHullShape.h>
+#include <BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h>
+#include <BulletCollision/CollisionShapes/btTriangleIndexVertexArray.h>
+#include <BulletCollision/CollisionShapes/btCompoundShape.h>
+#include <BulletDynamics/ConstraintSolver/btPoint2PointConstraint.h>
+#include <BulletDynamics/ConstraintSolver/btHingeConstraint.h>
+#include <BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h>
+#include "render/resource_manager.h"
 
 namespace Render {
 namespace ECS {
@@ -164,10 +175,18 @@ void PhysicsSystem::Update(float deltaTime) {
     // 5. 批量同步 Physics → Transform（PhysicsToTransform 模式）
     BatchSyncPhysicsToTransforms();
     
-    // 6. 更新统计信息
+    // 6. 更新约束
+    UpdateConstraints();
+    
+    // 7. 检测碰撞和触发器
+    DetectCollisionsAndTriggers();
+    
+    // 8. 更新统计信息
     m_stats.rigidBodyCount = rigidBodyEntities.size();
     m_stats.colliderCount = colliderEntities.size();
-    m_stats.constraintCount = 0;  // 阶段一不支持约束
+    
+    auto constraintEntities = m_world->Query<ConstraintComponent>();
+    m_stats.constraintCount = constraintEntities.size();
 }
 
 EntityID PhysicsSystem::GetPhysicsWorldEntity() const {
@@ -275,8 +294,14 @@ std::vector<PhysicsSystem::RaycastHit> PhysicsSystem::Raycast(const Vector3& sta
         // 查找对应的实体（通过刚体指针）
         btRigidBody* hitBody = const_cast<btRigidBody*>(btRigidBody::upcast(rayCallback.m_collisionObject));
         if (hitBody) {
-            // 需要在创建刚体时存储实体ID映射，这里暂时返回Invalid
-            // 阶段一简化实现
+            // 通过映射表查找EntityID
+            auto it = m_rigidBodyToEntity.find(hitBody);
+            if (it != m_rigidBodyToEntity.end()) {
+                hit.entity = it->second;
+            } else {
+                hit.entity = EntityID::Invalid();
+            }
+        } else {
             hit.entity = EntityID::Invalid();
         }
         
@@ -289,10 +314,64 @@ std::vector<PhysicsSystem::RaycastHit> PhysicsSystem::Raycast(const Vector3& sta
 std::vector<EntityID> PhysicsSystem::SphereCast(const Vector3& center, float radius) const {
     std::vector<EntityID> entities;
     
-    // 阶段一简化实现，暂不支持球形检测
-    // 需要在阶段二实现
-    (void)center;
-    (void)radius;
+    if (!m_physicsWorldEntity.IsValid() || !m_world) {
+        return entities;
+    }
+    
+    if (!m_world->HasComponent<PhysicsWorldComponent>(m_physicsWorldEntity)) {
+        return entities;
+    }
+    
+    const auto& physicsWorld = m_world->GetComponent<PhysicsWorldComponent>(m_physicsWorldEntity);
+    if (!physicsWorld.bulletWorld) {
+        return entities;
+    }
+    
+    btDiscreteDynamicsWorld* bulletWorld = static_cast<btDiscreteDynamicsWorld*>(physicsWorld.bulletWorld);
+    btVector3 centerPos = ToBullet(center);
+    
+    // 遍历所有碰撞对象，检查是否在球形范围内
+    for (int i = 0; i < bulletWorld->getNumCollisionObjects(); i++) {
+        btCollisionObject* obj = bulletWorld->getCollisionObjectArray()[i];
+        btRigidBody* body = btRigidBody::upcast(obj);
+        
+        if (body) {
+            // 获取刚体的AABB
+            btVector3 aabbMin, aabbMax;
+            body->getCollisionShape()->getAabb(body->getWorldTransform(), aabbMin, aabbMax);
+            
+            // 计算AABB中心点到球形中心的距离
+            btVector3 aabbCenter = (aabbMin + aabbMax) * 0.5f;
+            btVector3 diff = aabbCenter - centerPos;
+            float distance = diff.length();
+            
+            // 计算AABB的最大半径（从中心到最远角）
+            btVector3 aabbHalfExtents = (aabbMax - aabbMin) * 0.5f;
+            float aabbMaxRadius = aabbHalfExtents.length();
+            
+            // 如果距离小于半径+AABB最大半径，则可能重叠
+            if (distance <= radius + aabbMaxRadius) {
+                // 更精确的检测：检查AABB是否与球相交
+                // 计算AABB到球心的最近点
+                btVector3 closestPoint;
+                closestPoint.setX(std::max(aabbMin.x(), std::min(centerPos.x(), aabbMax.x())));
+                closestPoint.setY(std::max(aabbMin.y(), std::min(centerPos.y(), aabbMax.y())));
+                closestPoint.setZ(std::max(aabbMin.z(), std::min(centerPos.z(), aabbMax.z())));
+                
+                btVector3 distVec = closestPoint - centerPos;
+                float distToClosest = distVec.length();
+                
+                // 如果最近点在球内，则相交
+                if (distToClosest <= radius) {
+                    // 通过映射表查找EntityID
+                    auto it = m_rigidBodyToEntity.find(body);
+                    if (it != m_rigidBodyToEntity.end()) {
+                        entities.push_back(it->second);
+                    }
+                }
+            }
+        }
+    }
     
     return entities;
 }
@@ -375,6 +454,16 @@ void PhysicsSystem::ShutdownPhysicsWorld() {
         }
     }
     
+    // 清空映射表
+    m_rigidBodyToEntity.clear();
+    m_entityToRigidBody.clear();
+    
+    // 清空碰撞状态跟踪
+    m_currentCollisions.clear();
+    m_previousCollisions.clear();
+    m_currentTriggers.clear();
+    m_previousTriggers.clear();
+    
     Logger::GetInstance().Info("[PhysicsSystem] Physics world shutdown");
 }
 
@@ -411,16 +500,38 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
         return;
     }
     
-    btCollisionShape* shape = static_cast<btCollisionShape*>(collider.bulletCollisionShape);
+    btCollisionShape* baseShape = static_cast<btCollisionShape*>(collider.bulletCollisionShape);
+    btCollisionShape* finalShape = baseShape;
     
-    // 计算惯性
+    // 处理碰撞体的偏移和旋转
+    // 检查是否需要使用复合形状（有偏移或旋转）
+    bool hasOffset = collider.offset.norm() > 0.001f;
+    bool hasRotation = (std::abs(collider.rotation.w() - 1.0f) > 0.001f || 
+                       std::abs(collider.rotation.x()) > 0.001f || 
+                       std::abs(collider.rotation.y()) > 0.001f || 
+                       std::abs(collider.rotation.z()) > 0.001f);
+    
+    if (hasOffset || hasRotation) {
+        // 使用复合形状来处理偏移和旋转
+        btCompoundShape* compoundShape = new btCompoundShape();
+        btTransform localTransform;
+        localTransform.setIdentity();
+        localTransform.setOrigin(ToBullet(collider.offset));
+        localTransform.setRotation(ToBullet(collider.rotation));
+        compoundShape->addChildShape(localTransform, baseShape);
+        finalShape = compoundShape;
+        // 注意：compoundShape不拥有baseShape，baseShape仍然由collider.bulletCollisionShape管理
+        // 当刚体销毁时，Bullet会自动清理compoundShape，但我们需要手动删除它
+    }
+    
+    // 计算惯性（使用最终形状）
     btVector3 localInertia(0, 0, 0);
     float mass = 0.0f;
     
     if (rb.type == RigidBodyType::Dynamic) {
         mass = rb.mass;
         if (mass > 0.0f) {
-            shape->calculateLocalInertia(mass, localInertia);
+            finalShape->calculateLocalInertia(mass, localInertia);
         }
     }
     
@@ -430,8 +541,8 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
     btTransform startTransform = ToBullet(pos, rot);
     btDefaultMotionState* motionState = new btDefaultMotionState(startTransform);
     
-    // 创建刚体构造信息
-    btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, motionState, shape, localInertia);
+    // 创建刚体构造信息（使用最终形状）
+    btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, motionState, finalShape, localInertia);
     rbInfo.m_friction = rb.friction;
     rbInfo.m_restitution = rb.restitution;
     rbInfo.m_linearDamping = rb.linearDamping;
@@ -459,17 +570,32 @@ void PhysicsSystem::CreateRigidBody(EntityID entity) {
         bulletBody->setActivationState(ISLAND_SLEEPING);
     }
     
+    // 处理触发器
+    if (collider.isTrigger) {
+        bulletBody->setCollisionFlags(
+            bulletBody->getCollisionFlags() | btCollisionObject::CF_NO_CONTACT_RESPONSE
+        );
+    }
+    
+    // 设置碰撞过滤
+    int group = static_cast<int>(collider.collisionGroup);
+    int mask = static_cast<int>(collider.collisionMask);
+    
     // 添加到物理世界
     if (m_bulletWorld && m_physicsWorldEntity.IsValid() && 
         m_world->HasComponent<PhysicsWorldComponent>(m_physicsWorldEntity)) {
         auto& physicsWorld = m_world->GetComponent<PhysicsWorldComponent>(m_physicsWorldEntity);
         if (physicsWorld.bulletWorld) {
             btDiscreteDynamicsWorld* bulletWorld = static_cast<btDiscreteDynamicsWorld*>(physicsWorld.bulletWorld);
-            bulletWorld->addRigidBody(bulletBody);
+            bulletWorld->addRigidBody(bulletBody, group, mask);
         }
     }
     
     rb.bulletRigidBody = bulletBody;
+    
+    // 添加到映射表
+    m_rigidBodyToEntity[bulletBody] = entity;
+    m_entityToRigidBody[entity] = bulletBody;
     
     Logger::GetInstance().InfoFormat("[PhysicsSystem] Created rigid body for entity %u", entity.index);
 }
@@ -491,17 +617,36 @@ void PhysicsSystem::DestroyRigidBody(EntityID entity) {
     
     btRigidBody* bulletBody = static_cast<btRigidBody*>(rb.bulletRigidBody);
     
+    // 检查是否使用了复合形状（需要在删除bulletBody之前检查）
+    btCollisionShape* bodyShape = bulletBody->getCollisionShape();
+    btCompoundShape* compoundShape = dynamic_cast<btCompoundShape*>(bodyShape);
+    
     // 从物理世界中移除
     if (m_bulletWorld) {
         btDiscreteDynamicsWorld* bulletWorld = static_cast<btDiscreteDynamicsWorld*>(m_bulletWorld);
         bulletWorld->removeRigidBody(bulletBody);
     }
     
+    // 从映射表中移除
+    m_rigidBodyToEntity.erase(bulletBody);
+    m_entityToRigidBody.erase(entity);
+    
     // 清理内存
     if (bulletBody->getMotionState()) {
         delete bulletBody->getMotionState();
     }
     delete bulletBody;
+    
+    // 如果使用了复合形状，需要清理它
+    // 注意：复合形状的子形状（baseShape）仍然由collider.bulletCollisionShape管理
+    // 我们只删除compoundShape本身，不删除子形状
+    if (compoundShape) {
+        // 移除所有子形状（但不删除它们，因为它们由collider管理）
+        for (int i = compoundShape->getNumChildShapes() - 1; i >= 0; i--) {
+            compoundShape->removeChildShapeByIndex(i);
+        }
+        delete compoundShape;
+    }
     
     rb.bulletRigidBody = nullptr;
 }
@@ -538,6 +683,150 @@ void PhysicsSystem::CreateCollider(EntityID entity) {
         
         case ColliderShape::Sphere: {
             shape = new btSphereShape(collider.sphereRadius);
+            break;
+        }
+        
+        case ColliderShape::Capsule: {
+            // 胶囊体：默认使用Y轴（垂直方向）
+            shape = new btCapsuleShape(collider.capsuleRadius, collider.capsuleHeight);
+            break;
+        }
+        
+        case ColliderShape::Cylinder: {
+            // 圆柱体：使用半尺寸，默认Y轴
+            btVector3 halfExtents(
+                collider.cylinderSize.x() * 0.5f,
+                collider.cylinderSize.y() * 0.5f,
+                collider.cylinderSize.z() * 0.5f
+            );
+            shape = new btCylinderShape(halfExtents);
+            break;
+        }
+        
+        case ColliderShape::Cone: {
+            // 圆锥体：radius 和 height，默认Y轴
+            float radius = collider.cylinderSize.x() * 0.5f;  // 使用x作为半径
+            float height = collider.cylinderSize.y();         // 使用y作为高度
+            shape = new btConeShape(radius, height);
+            break;
+        }
+        
+        case ColliderShape::Plane: {
+            // 平面：使用法线和常数
+            btVector3 normal = ToBullet(collider.planeNormal.normalized());
+            shape = new btStaticPlaneShape(normal, collider.planeConstant);
+            break;
+        }
+        
+        case ColliderShape::Mesh: {
+            // Mesh碰撞体需要从ResourceManager加载
+            if (collider.meshName.empty()) {
+                Logger::GetInstance().WarningFormat(
+                    "[PhysicsSystem] Mesh collider for entity %u has empty mesh name", entity.index
+                );
+                return;
+            }
+            
+            auto& resMgr = ResourceManager::GetInstance();
+            auto mesh = resMgr.GetMesh(collider.meshName);
+            
+            if (!mesh) {
+                Logger::GetInstance().WarningFormat(
+                    "[PhysicsSystem] Mesh '%s' not found for entity %u", 
+                    collider.meshName.c_str(), entity.index
+                );
+                return;
+            }
+            
+            if (collider.useConvexHull) {
+                // 凸包碰撞体
+                btConvexHullShape* convexShape = new btConvexHullShape();
+                
+                // 获取顶点数据
+                mesh->AccessVertices([&](const std::vector<Vertex>& vertices) {
+                    for (const auto& vertex : vertices) {
+                        btVector3 point(
+                            vertex.position.x(),
+                            vertex.position.y(),
+                            vertex.position.z()
+                        );
+                        convexShape->addPoint(point);
+                    }
+                });
+                
+                // 优化凸包形状
+                if (convexShape->getNumPoints() > 0) {
+                    convexShape->optimizeConvexHull();
+                } else {
+                    delete convexShape;
+                    Logger::GetInstance().WarningFormat(
+                        "[PhysicsSystem] Mesh '%s' has no vertices for convex hull (entity %u)",
+                        collider.meshName.c_str(), entity.index
+                    );
+                    return;
+                }
+                
+                shape = convexShape;
+            } else {
+                // 三角网格碰撞体（用于静态物体）
+                btTriangleIndexVertexArray* indexVertexArrays = new btTriangleIndexVertexArray();
+                
+                // 获取顶点和索引数据
+                std::vector<Vertex> vertices;
+                std::vector<uint32_t> indices;
+                
+                mesh->AccessVertices([&](const std::vector<Vertex>& verts) {
+                    vertices = verts;
+                });
+                
+                mesh->AccessIndices([&](const std::vector<uint32_t>& inds) {
+                    indices = inds;
+                });
+                
+                if (indices.size() > 0 && vertices.size() > 0 && indices.size() % 3 == 0) {
+                    size_t vertexCount = vertices.size();
+                    size_t indexCount = indices.size();
+                    int numTriangles = static_cast<int>(indexCount / 3);
+                    
+                    // 创建索引数组
+                    int* indexArray = new int[indexCount];
+                    for (size_t i = 0; i < indexCount; i++) {
+                        indexArray[i] = static_cast<int>(indices[i]);
+                    }
+                    
+                    // 创建顶点数组
+                    btScalar* vertexArray = new btScalar[vertexCount * 3];
+                    for (size_t i = 0; i < vertexCount; i++) {
+                        vertexArray[i * 3 + 0] = vertices[i].position.x();
+                        vertexArray[i * 3 + 1] = vertices[i].position.y();
+                        vertexArray[i * 3 + 2] = vertices[i].position.z();
+                    }
+                    
+                    // 设置索引和顶点数据
+                    btIndexedMesh meshPart;
+                    meshPart.m_numTriangles = numTriangles;
+                    meshPart.m_triangleIndexBase = reinterpret_cast<const unsigned char*>(indexArray);
+                    meshPart.m_triangleIndexStride = 3 * sizeof(int);
+                    meshPart.m_numVertices = static_cast<int>(vertexCount);
+                    meshPart.m_vertexBase = reinterpret_cast<const unsigned char*>(vertexArray);
+                    meshPart.m_vertexStride = 3 * sizeof(btScalar);
+                    meshPart.m_indexType = PHY_INTEGER;
+                    meshPart.m_vertexType = PHY_FLOAT;
+                    
+                    indexVertexArrays->addIndexedMesh(meshPart);
+                    
+                    // 创建BVH三角网格形状
+                    bool useQuantizedAabbCompression = true;
+                    shape = new btBvhTriangleMeshShape(indexVertexArrays, useQuantizedAabbCompression);
+                } else {
+                    delete indexVertexArrays;
+                    Logger::GetInstance().WarningFormat(
+                        "[PhysicsSystem] Mesh '%s' has no valid geometry for triangle mesh (entity %u)",
+                        collider.meshName.c_str(), entity.index
+                    );
+                    return;
+                }
+            }
             break;
         }
         
@@ -598,8 +887,285 @@ void PhysicsSystem::UpdateCollider(EntityID entity) {
     }
 }
 
+void PhysicsSystem::CreateConstraint(EntityID entity) {
+    if (!m_world || !entity.IsValid()) {
+        return;
+    }
+    
+    if (!m_world->HasComponent<ConstraintComponent>(entity)) {
+        return;
+    }
+    
+    auto& constraint = m_world->GetComponent<ConstraintComponent>(entity);
+    
+    if (constraint.bulletConstraint) {
+        // 已经创建
+        return;
+    }
+    
+    // 约束需要两个刚体：当前实体和连接的实体
+    if (!m_world->HasComponent<RigidBodyComponent>(entity)) {
+        Logger::GetInstance().WarningFormat(
+            "[PhysicsSystem] Constraint entity %u does not have RigidBodyComponent", entity.index
+        );
+        return;
+    }
+    
+    auto& rbA = m_world->GetComponent<RigidBodyComponent>(entity);
+    if (!rbA.bulletRigidBody) {
+        Logger::GetInstance().WarningFormat(
+            "[PhysicsSystem] Constraint entity %u has no bullet rigid body", entity.index
+        );
+        return;
+    }
+    
+    btRigidBody* bodyA = static_cast<btRigidBody*>(rbA.bulletRigidBody);
+    
+    // 检查连接的实体
+    if (!constraint.connectedEntity.IsValid()) {
+        Logger::GetInstance().WarningFormat(
+            "[PhysicsSystem] Constraint entity %u has invalid connected entity", entity.index
+        );
+        return;
+    }
+    
+    if (!m_world->HasComponent<RigidBodyComponent>(constraint.connectedEntity)) {
+        Logger::GetInstance().WarningFormat(
+            "[PhysicsSystem] Connected entity %u does not have RigidBodyComponent", 
+            constraint.connectedEntity.index
+        );
+        return;
+    }
+    
+    auto& rbB = m_world->GetComponent<RigidBodyComponent>(constraint.connectedEntity);
+    if (!rbB.bulletRigidBody) {
+        Logger::GetInstance().WarningFormat(
+            "[PhysicsSystem] Connected entity %u has no bullet rigid body", 
+            constraint.connectedEntity.index
+        );
+        return;
+    }
+    
+    btRigidBody* bodyB = static_cast<btRigidBody*>(rbB.bulletRigidBody);
+    
+    // 获取Transform以计算世界空间位置
+    Vector3 pivotAWorld = constraint.pivotA;
+    Vector3 pivotBWorld = constraint.pivotB;
+    
+    if (m_world->HasComponent<TransformComponent>(entity)) {
+        auto& transformA = m_world->GetComponent<TransformComponent>(entity);
+        pivotAWorld = transformA.GetPosition() + constraint.pivotA;
+    }
+    
+    if (m_world->HasComponent<TransformComponent>(constraint.connectedEntity)) {
+        auto& transformB = m_world->GetComponent<TransformComponent>(constraint.connectedEntity);
+        pivotBWorld = transformB.GetPosition() + constraint.pivotB;
+    }
+    
+    btTypedConstraint* bulletConstraint = nullptr;
+    
+    // 根据约束类型创建约束
+    switch (constraint.type) {
+        case ConstraintType::PointToPoint: {
+            btPoint2PointConstraint* p2p = new btPoint2PointConstraint(
+                *bodyA,
+                *bodyB,
+                ToBullet(pivotAWorld),
+                ToBullet(pivotBWorld)
+            );
+            bulletConstraint = p2p;
+            break;
+        }
+        
+        case ConstraintType::Hinge: {
+            // 铰链约束需要轴和锚点
+            btVector3 pivotInA = ToBullet(constraint.pivotA);
+            btVector3 pivotInB = ToBullet(constraint.pivotB);
+            btVector3 axisInA = ToBullet(constraint.axisA.normalized());
+            btVector3 axisInB = ToBullet(constraint.axisB.normalized());
+            
+            btHingeConstraint* hinge = new btHingeConstraint(
+                *bodyA,
+                *bodyB,
+                pivotInA,
+                pivotInB,
+                axisInA,
+                axisInB
+            );
+            
+            // 设置限制
+            // 注意：Bullet的Hinge约束如果不设置限制，默认是完全锁定的！
+            // 所以必须显式设置限制，即使范围很大
+            // 如果lowerLimit和upperLimit都是0，说明没有设置限制，使用默认大范围
+            if (constraint.lowerLimit == 0.0f && constraint.upperLimit == 0.0f) {
+                // 没有设置限制，默认允许完整旋转（-π到π）
+                hinge->setLimit(-SIMD_PI, SIMD_PI);
+            } else {
+                // 使用设置的限制值
+                hinge->setLimit(constraint.lowerLimit, constraint.upperLimit);
+            }
+            
+            bulletConstraint = hinge;
+            break;
+        }
+        
+        case ConstraintType::Generic6Dof: {
+            // 6自由度约束
+            btTransform frameInA, frameInB;
+            frameInA.setIdentity();
+            frameInB.setIdentity();
+            
+            frameInA.setOrigin(ToBullet(constraint.pivotA));
+            frameInB.setOrigin(ToBullet(constraint.pivotB));
+            
+            // 设置旋转（基于轴）
+            if (constraint.axisA.norm() > 0.001f) {
+                btVector3 axis = ToBullet(constraint.axisA.normalized());
+                btVector3 up(0, 1, 0);
+                if (axis.dot(up) > 0.99f) {
+                    up = btVector3(1, 0, 0);
+                }
+                btVector3 right = axis.cross(up).normalized();
+                up = right.cross(axis).normalized();
+                frameInA.getBasis().setValue(
+                    right.x(), up.x(), axis.x(),
+                    right.y(), up.y(), axis.y(),
+                    right.z(), up.z(), axis.z()
+                );
+            }
+            
+            if (constraint.axisB.norm() > 0.001f) {
+                btVector3 axis = ToBullet(constraint.axisB.normalized());
+                btVector3 up(0, 1, 0);
+                if (axis.dot(up) > 0.99f) {
+                    up = btVector3(1, 0, 0);
+                }
+                btVector3 right = axis.cross(up).normalized();
+                up = right.cross(axis).normalized();
+                frameInB.getBasis().setValue(
+                    right.x(), up.x(), axis.x(),
+                    right.y(), up.y(), axis.y(),
+                    right.z(), up.z(), axis.z()
+                );
+            }
+            
+            btGeneric6DofConstraint* dof6 = new btGeneric6DofConstraint(
+                *bodyA,
+                *bodyB,
+                frameInA,
+                frameInB,
+                false  // useLinearReferenceFrameA
+            );
+            
+            // 设置限制（简化：对所有轴设置相同限制）
+            if (constraint.lowerLimit != 0.0f || constraint.upperLimit != 0.0f) {
+                for (int i = 0; i < 6; i++) {
+                    dof6->setLimit(i, constraint.lowerLimit, constraint.upperLimit);
+                }
+            }
+            
+            bulletConstraint = dof6;
+            break;
+        }
+        
+        default:
+            Logger::GetInstance().WarningFormat(
+                "[PhysicsSystem] Unsupported constraint type for entity %u", entity.index
+            );
+            return;
+    }
+    
+    if (bulletConstraint) {
+        // 设置启用状态
+        bulletConstraint->setEnabled(constraint.enabled);
+        
+        // 添加到物理世界
+        if (m_bulletWorld && m_physicsWorldEntity.IsValid() && 
+            m_world->HasComponent<PhysicsWorldComponent>(m_physicsWorldEntity)) {
+            auto& physicsWorld = m_world->GetComponent<PhysicsWorldComponent>(m_physicsWorldEntity);
+            if (physicsWorld.bulletWorld) {
+                btDiscreteDynamicsWorld* bulletWorld = static_cast<btDiscreteDynamicsWorld*>(physicsWorld.bulletWorld);
+                bulletWorld->addConstraint(bulletConstraint, true);  // true = disable collisions between bodies
+            }
+        }
+        
+        constraint.bulletConstraint = bulletConstraint;
+        
+        Logger::GetInstance().InfoFormat(
+            "[PhysicsSystem] Created constraint for entity %u (type: %d)", 
+            entity.index, static_cast<int>(constraint.type)
+        );
+    }
+}
+
+void PhysicsSystem::DestroyConstraint(EntityID entity) {
+    if (!m_world || !entity.IsValid()) {
+        return;
+    }
+    
+    if (!m_world->HasComponent<ConstraintComponent>(entity)) {
+        return;
+    }
+    
+    auto& constraint = m_world->GetComponent<ConstraintComponent>(entity);
+    
+    if (!constraint.bulletConstraint) {
+        return;
+    }
+    
+    btTypedConstraint* bulletConstraint = static_cast<btTypedConstraint*>(constraint.bulletConstraint);
+    
+    // 从物理世界中移除
+    if (m_bulletWorld) {
+        btDiscreteDynamicsWorld* bulletWorld = static_cast<btDiscreteDynamicsWorld*>(m_bulletWorld);
+        bulletWorld->removeConstraint(bulletConstraint);
+    }
+    
+    // 删除约束对象
+    delete bulletConstraint;
+    
+    constraint.bulletConstraint = nullptr;
+}
+
 void PhysicsSystem::UpdateConstraints() {
-    // 阶段一不支持约束
+    if (!m_world) return;
+    
+    // 查询所有约束组件
+    auto constraintEntities = m_world->Query<ConstraintComponent>();
+    
+    for (const auto& entity : constraintEntities) {
+        auto& constraint = m_world->GetComponent<ConstraintComponent>(entity);
+        
+        // 如果还没有创建约束，则创建
+        if (!constraint.bulletConstraint) {
+            // 检查两个实体是否都有刚体且已创建
+            if (!m_world->HasComponent<RigidBodyComponent>(entity)) {
+                continue;  // 第一个实体没有刚体，跳过
+            }
+            
+            auto& rbA = m_world->GetComponent<RigidBodyComponent>(entity);
+            if (!rbA.bulletRigidBody) {
+                continue;  // 第一个实体的刚体还未创建，等待下一帧
+            }
+            
+            if (!constraint.connectedEntity.IsValid() || 
+                !m_world->HasComponent<RigidBodyComponent>(constraint.connectedEntity)) {
+                continue;  // 第二个实体无效或没有刚体，跳过
+            }
+            
+            auto& rbB = m_world->GetComponent<RigidBodyComponent>(constraint.connectedEntity);
+            if (!rbB.bulletRigidBody) {
+                continue;  // 第二个实体的刚体还未创建，等待下一帧
+            }
+            
+            // 两个刚体都已创建，现在可以创建约束
+            CreateConstraint(entity);
+        } else {
+            // 更新约束状态（如果启用状态改变）
+            btTypedConstraint* bulletConstraint = static_cast<btTypedConstraint*>(constraint.bulletConstraint);
+            bulletConstraint->setEnabled(constraint.enabled);
+        }
+    }
 }
 
 void PhysicsSystem::BatchSyncTransformsToPhysics() {
@@ -686,30 +1252,140 @@ void PhysicsSystem::SyncPhysicsToTransform(EntityID entity) {
     transform.SetRotation(rot);
 }
 
+void PhysicsSystem::DetectCollisionsAndTriggers() {
+    if (!m_world || !m_bulletWorld) return;
+    
+    btDiscreteDynamicsWorld* bulletWorld = static_cast<btDiscreteDynamicsWorld*>(m_bulletWorld);
+    btDispatcher* dispatcher = bulletWorld->getDispatcher();
+    
+    // 清空当前帧的碰撞和触发器集合
+    m_currentCollisions.clear();
+    m_currentTriggers.clear();
+    
+    // 遍历所有碰撞对
+    int numManifolds = dispatcher->getNumManifolds();
+    for (int i = 0; i < numManifolds; i++) {
+        btPersistentManifold* contactManifold = dispatcher->getManifoldByIndexInternal(i);
+        const btCollisionObject* objA = contactManifold->getBody0();
+        const btCollisionObject* objB = contactManifold->getBody1();
+        
+        btRigidBody* bodyA = const_cast<btRigidBody*>(btRigidBody::upcast(objA));
+        btRigidBody* bodyB = const_cast<btRigidBody*>(btRigidBody::upcast(objB));
+        
+        if (!bodyA || !bodyB) continue;
+        
+        // 查找对应的EntityID
+        auto itA = m_rigidBodyToEntity.find(bodyA);
+        auto itB = m_rigidBodyToEntity.find(bodyB);
+        
+        if (itA == m_rigidBodyToEntity.end() || itB == m_rigidBodyToEntity.end()) {
+            continue;
+        }
+        
+        EntityID entityA = itA->second;
+        EntityID entityB = itB->second;
+        
+        // 确保entityA < entityB（用于集合去重）
+        if (entityB < entityA) {
+            std::swap(entityA, entityB);
+            std::swap(bodyA, bodyB);
+        }
+        
+        std::pair<EntityID, EntityID> collisionPair(entityA, entityB);
+        
+        // 检查是否是触发器
+        bool isTriggerA = false;
+        bool isTriggerB = false;
+        
+        if (m_world->HasComponent<ColliderComponent>(entityA)) {
+            auto& colliderA = m_world->GetComponent<ColliderComponent>(entityA);
+            isTriggerA = colliderA.isTrigger;
+        }
+        
+        if (m_world->HasComponent<ColliderComponent>(entityB)) {
+            auto& colliderB = m_world->GetComponent<ColliderComponent>(entityB);
+            isTriggerB = colliderB.isTrigger;
+        }
+        
+        if (isTriggerA || isTriggerB) {
+            // 触发器重叠
+            m_currentTriggers.insert(collisionPair);
+        } else {
+            // 普通碰撞
+            int numContacts = contactManifold->getNumContacts();
+            if (numContacts > 0) {
+                m_currentCollisions.insert(collisionPair);
+                
+                // 获取第一个接触点的信息
+                btManifoldPoint& pt = contactManifold->getContactPoint(0);
+                Vector3 point = FromBullet(pt.getPositionWorldOnA());
+                Vector3 normal = FromBullet(pt.m_normalWorldOnB);
+                
+                // 检查是否是新的碰撞（Enter）
+                if (m_previousCollisions.find(collisionPair) == m_previousCollisions.end()) {
+                    OnCollisionEnter(entityA, entityB, point, normal);
+                }
+            }
+        }
+    }
+    
+    // 检测碰撞退出
+    for (const auto& pair : m_previousCollisions) {
+        if (m_currentCollisions.find(pair) == m_currentCollisions.end()) {
+            OnCollisionExit(pair.first, pair.second);
+        }
+    }
+    
+    // 检测触发器进入
+    for (const auto& pair : m_currentTriggers) {
+        if (m_previousTriggers.find(pair) == m_previousTriggers.end()) {
+            OnTriggerEnter(pair.first, pair.second);
+        }
+    }
+    
+    // 检测触发器退出
+    for (const auto& pair : m_previousTriggers) {
+        if (m_currentTriggers.find(pair) == m_currentTriggers.end()) {
+            OnTriggerExit(pair.first, pair.second);
+        }
+    }
+    
+    // 更新上一帧的状态
+    m_previousCollisions = m_currentCollisions;
+    m_previousTriggers = m_currentTriggers;
+}
+
 void PhysicsSystem::OnCollisionEnter(EntityID entityA, EntityID entityB, const Vector3& point, const Vector3& normal) {
-    // 阶段一不支持碰撞回调
-    (void)entityA;
-    (void)entityB;
-    (void)point;
-    (void)normal;
+    // 碰撞进入回调
+    // 可以在这里添加事件系统调用或日志
+    Logger::GetInstance().DebugFormat(
+        "[PhysicsSystem] Collision Enter: entity %u <-> entity %u at (%f, %f, %f)",
+        entityA.index, entityB.index, point.x(), point.y(), point.z()
+    );
 }
 
 void PhysicsSystem::OnCollisionExit(EntityID entityA, EntityID entityB) {
-    // 阶段一不支持碰撞回调
-    (void)entityA;
-    (void)entityB;
+    // 碰撞退出回调
+    Logger::GetInstance().DebugFormat(
+        "[PhysicsSystem] Collision Exit: entity %u <-> entity %u",
+        entityA.index, entityB.index
+    );
 }
 
 void PhysicsSystem::OnTriggerEnter(EntityID entityA, EntityID entityB) {
-    // 阶段一不支持触发器回调
-    (void)entityA;
-    (void)entityB;
+    // 触发器进入回调
+    Logger::GetInstance().DebugFormat(
+        "[PhysicsSystem] Trigger Enter: entity %u <-> entity %u",
+        entityA.index, entityB.index
+    );
 }
 
 void PhysicsSystem::OnTriggerExit(EntityID entityA, EntityID entityB) {
-    // 阶段一不支持触发器回调
-    (void)entityA;
-    (void)entityB;
+    // 触发器退出回调
+    Logger::GetInstance().DebugFormat(
+        "[PhysicsSystem] Trigger Exit: entity %u <-> entity %u",
+        entityA.index, entityB.index
+    );
 }
 
 } // namespace ECS

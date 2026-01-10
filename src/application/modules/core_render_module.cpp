@@ -85,6 +85,7 @@ void CoreRenderModule::RegisterCoreComponents(ECS::World& world, AppContext&) {
     // 注册物理组件
     world.RegisterComponent<Render::ECS::RigidBodyComponent>();
     world.RegisterComponent<Render::ECS::ColliderComponent>();
+    world.RegisterComponent<Render::ECS::ConstraintComponent>();
     world.RegisterComponent<Render::ECS::PhysicsWorldComponent>();
     
     Logger::GetInstance().Info("[CoreRenderModule] Core components registered");

@@ -138,11 +138,11 @@ struct RigidBodyComponent {
 enum class ColliderShape {
     Box,          ///< 盒子
     Sphere,       ///< 球体
-    Capsule,      ///< 胶囊体（阶段一暂不支持）
-    Cylinder,     ///< 圆柱体（阶段一暂不支持）
-    Cone,         ///< 圆锥体（阶段一暂不支持）
-    Mesh,         ///< 网格（阶段一暂不支持）
-    Plane         ///< 平面（阶段一暂不支持）
+    Capsule,      ///< 胶囊体
+    Cylinder,     ///< 圆柱体
+    Cone,         ///< 圆锥体
+    Mesh,         ///< 网格
+    Plane         ///< 平面
 };
 
 // ============================================================
@@ -165,18 +165,18 @@ struct ColliderComponent {
     // Sphere 参数
     float sphereRadius = 0.5f;                    ///< 球体半径
     
-    // Capsule 参数（阶段一暂不支持）
+    // Capsule 参数
     float capsuleRadius = 0.5f;                   ///< 胶囊体半径
     float capsuleHeight = 1.0f;                   ///< 胶囊体高度
     
-    // Cylinder/Cone 参数（阶段一暂不支持）
+    // Cylinder/Cone 参数
     Vector3 cylinderSize{1, 1, 1};                ///< 圆柱/圆锥尺寸
     
-    // Mesh 参数（阶段一暂不支持）
+    // Mesh 参数
     std::string meshName;                         ///< 网格资源名称（用于网格碰撞体）
     bool useConvexHull = true;                    ///< 是否使用凸包（否则使用三角网格）
     
-    // Plane 参数（阶段一暂不支持）
+    // Plane 参数
     Vector3 planeNormal{0, 1, 0};                  ///< 平面法线
     float planeConstant = 0.0f;                    ///< 平面常数
     
@@ -218,7 +218,7 @@ struct ColliderComponent {
     }
     
     /**
-     * @brief 设置胶囊体碰撞体（阶段一暂不支持）
+     * @brief 设置胶囊体碰撞体
      */
     void SetCapsule(float radius, float height) {
         shape = ColliderShape::Capsule;
@@ -228,7 +228,7 @@ struct ColliderComponent {
     }
     
     /**
-     * @brief 设置网格碰撞体（阶段一暂不支持）
+     * @brief 设置网格碰撞体
      */
     void SetMesh(const std::string& name, bool convexHull = true) {
         shape = ColliderShape::Mesh;
@@ -236,6 +236,60 @@ struct ColliderComponent {
         useConvexHull = convexHull;
         needsUpdate = true;
     }
+};
+
+// ============================================================
+// 约束类型
+// ============================================================
+
+/**
+ * @brief 约束类型
+ */
+enum class ConstraintType {
+    PointToPoint,     ///< 点对点约束
+    Hinge,            ///< 铰链约束
+    Slider,           ///< 滑动约束
+    ConeTwist,        ///< 圆锥扭转约束
+    Generic6Dof,      ///< 6自由度约束
+    Generic6DofSpring ///< 6自由度弹簧约束
+};
+
+// ============================================================
+// Constraint 组件
+// ============================================================
+
+/**
+ * @brief 约束组件
+ * 
+ * 连接两个刚体的约束
+ */
+struct ConstraintComponent {
+    ConstraintType type = ConstraintType::PointToPoint;
+    
+    EntityID connectedEntity = EntityID::Invalid();  ///< 连接的实体ID
+    
+    // 约束点（本地空间）
+    Vector3 pivotA{0, 0, 0};                          ///< 实体A的约束点
+    Vector3 pivotB{0, 0, 0};                          ///< 实体B的约束点
+    
+    // 约束轴（铰链、滑动等）
+    Vector3 axisA{1, 0, 0};                           ///< 实体A的轴
+    Vector3 axisB{1, 0, 0};                           ///< 实体B的轴
+    
+    // 限制（角度/距离）
+    float lowerLimit = 0.0f;                          ///< 下限
+    float upperLimit = 0.0f;                          ///< 上限
+    
+    // 弹簧参数（Generic6DofSpring）
+    bool enableSpring = false;                        ///< 是否启用弹簧
+    float springStiffness = 0.0f;                    ///< 弹簧刚度
+    float springDamping = 0.0f;                       ///< 弹簧阻尼
+    
+    bool enabled = true;                              ///< 是否启用
+    
+    void* bulletConstraint = nullptr;                 ///< Bullet 约束指针（内部使用）
+    
+    ConstraintComponent() = default;
 };
 
 // ============================================================

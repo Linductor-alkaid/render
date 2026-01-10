@@ -35,6 +35,8 @@
 #include <render/ecs/world.h>
 #include <render/ecs/components.h>
 #include <render/ecs/systems.h>
+#include <render/ecs/physics/physics_components.h>
+#include <render/ecs/physics/physics_system.h>
 #include <render/robot/robot_systems.h>
 #include <render/robot/robot_components.h>
 #include <render/robot/joint_tf_system.h>
@@ -97,6 +99,11 @@ int main() {
     world->RegisterComponent<LinkComponent>();
     world->RegisterComponent<JointComponent>();
     world->RegisterComponent<LightComponent>();  // 注册光源组件
+    // 注册物理组件
+    world->RegisterComponent<RigidBodyComponent>();
+    world->RegisterComponent<ColliderComponent>();
+    world->RegisterComponent<PhysicsWorldComponent>();
+    world->RegisterComponent<ConstraintComponent>();  // 注册约束组件
     Logger::GetInstance().Info("[URDFRobotDemo] Components registered");
     
     // 注册系统
@@ -109,6 +116,9 @@ int main() {
     
     // 注册光源系统（必须在UniformSystem之后，MeshRenderSystem之前）
     world->RegisterSystem<LightSystem>(renderer);
+    
+    // 注册物理系统（必须在MeshRenderSystem之前）
+    auto* physicsSystem = world->RegisterSystem<PhysicsSystem>();
     
     world->RegisterSystem<MeshRenderSystem>(renderer);
     
@@ -125,6 +135,15 @@ int main() {
     world->PostInitialize();
     Logger::GetInstance().Info("[URDFRobotDemo] World PostInitialize complete");
     
+    // ==================== 创建物理世界 ====================
+    EntityID physicsWorldEntity = physicsSystem->CreatePhysicsWorld();
+    if (!physicsWorldEntity.IsValid()) {
+        Logger::GetInstance().Error("[URDFRobotDemo] Failed to create physics world");
+        Renderer::Destroy(renderer);
+        return -1;
+    }
+    Logger::GetInstance().Info("[URDFRobotDemo] Physics world created successfully");
+    
     // 创建相机
     EntityID cameraEntity = world->CreateEntity();
     CameraComponent cameraComp;
@@ -135,7 +154,7 @@ int main() {
     
     // 相机初始位置和朝向
     Vector3 cameraPosition(3.0f, 2.0f, 3.0f);
-    Vector3 cameraTarget(0.0f, 0.6f, 0.0f);  // 看向机器人位置
+    Vector3 cameraTarget(10.0f, 0.6f, 0.0f);  // 看向机器人位置
     TransformComponent cameraTransformComp;
     cameraTransformComp.SetPosition(cameraPosition);
     cameraTransformComp.LookAt(cameraTarget);
@@ -175,6 +194,218 @@ int main() {
         Logger::GetInstance().Info("[URDFRobotDemo] Set robot initial position");
     }
     
+    // 为所有link添加物理组件
+    // 注意：机器人根实体只是一个容器，不需要物理组件
+    // 实际的物理碰撞应该添加到各个link实体上
+    Logger::GetInstance().Info("[URDFRobotDemo] Starting to add physics components to links...");
+    if (world->HasComponent<RobotComponent>(robotEntity)) {
+        const auto& robotComp = world->GetComponent<RobotComponent>(robotEntity);
+        Logger::GetInstance().InfoFormat("[URDFRobotDemo] RobotComponent found, model: %s", robotComp.model ? "valid" : "null");
+        Logger::GetInstance().InfoFormat("[URDFRobotDemo] LinkEntityMap size: %zu", robotComp.linkEntityMap.size());
+        if (robotComp.model) {
+            int linkCount = 0;
+            // 遍历所有link实体
+            for (const auto& linkPair : robotComp.linkEntityMap) {
+                const std::string& linkName = linkPair.first;
+                EntityID linkEntity = linkPair.second;
+                
+                if (!linkEntity.IsValid() || !world->HasComponent<LinkComponent>(linkEntity)) {
+                    continue;
+                }
+                
+                const auto& linkComp = world->GetComponent<LinkComponent>(linkEntity);
+                const auto& model = robotComp.model;
+                
+                // 查找对应的URDF link信息
+                auto urdfLinkIt = model->links.find(linkName);
+                if (urdfLinkIt == model->links.end()) {
+                    continue;
+                }
+                
+                const auto& urdfLink = urdfLinkIt->second;
+                
+                // 估算碰撞体尺寸
+                // 如果有mesh，尝试从mesh获取边界框
+                Vector3 colliderSize(0.1f, 0.1f, 0.1f);  // 默认小尺寸
+                
+                if (linkComp.visualMesh) {
+                    // 尝试从mesh获取边界框（如果mesh有bounds信息）
+                    // 这里使用简单的启发式方法：根据link名称估算尺寸
+                    if (linkName.find("foot") != std::string::npos || 
+                        linkName.find("Foot") != std::string::npos) {
+                        colliderSize = Vector3(0.15f, 0.05f, 0.15f);  // 脚部：小盒子
+                    } else if (linkName.find("leg") != std::string::npos || 
+                               linkName.find("Leg") != std::string::npos ||
+                               linkName.find("thigh") != std::string::npos ||
+                               linkName.find("Thigh") != std::string::npos ||
+                               linkName.find("shank") != std::string::npos ||
+                               linkName.find("Shank") != std::string::npos) {
+                        colliderSize = Vector3(0.08f, 0.3f, 0.08f);  // 腿部：细长盒子
+                    } else if (linkName.find("base") != std::string::npos || 
+                               linkName.find("Base") != std::string::npos ||
+                               linkName.find("body") != std::string::npos ||
+                               linkName.find("Body") != std::string::npos ||
+                               linkName.find("trunk") != std::string::npos ||
+                               linkName.find("Trunk") != std::string::npos) {
+                        colliderSize = Vector3(0.4f, 0.3f, 0.5f);  // 躯干：大盒子
+                    } else {
+                        // 默认使用中等尺寸
+                        colliderSize = Vector3(0.1f, 0.2f, 0.1f);
+                    }
+                }
+                
+                // 如果有URDF碰撞体信息，优先使用
+                if (!urdfLink.collisions.empty()) {
+                    const auto& collision = urdfLink.collisions[0];  // 使用第一个碰撞体
+                    if (collision.geometryType == "box") {
+                        colliderSize = collision.size;
+                    } else if (collision.geometryType == "sphere") {
+                        float radius = collision.radius > 0.0f ? collision.radius : 0.1f;
+                        // 将球体转换为盒子（使用直径）
+                        colliderSize = Vector3(radius * 2.0f, radius * 2.0f, radius * 2.0f);
+                    } else if (collision.geometryType == "cylinder") {
+                        float radius = collision.radius > 0.0f ? collision.radius : 0.1f;
+                        float length = collision.length > 0.0f ? collision.length : 0.2f;
+                        colliderSize = Vector3(radius * 2.0f, length, radius * 2.0f);
+                    }
+                }
+                
+                // 添加碰撞体组件
+                ColliderComponent linkCollider;
+                linkCollider.SetBox(colliderSize);
+                // 如果有URDF碰撞体的origin偏移，使用它
+                if (!urdfLink.collisions.empty()) {
+                    linkCollider.offset = urdfLink.collisions[0].origin;
+                    linkCollider.rotation = urdfLink.collisions[0].originRotation;
+                }
+                world->AddComponent(linkEntity, linkCollider);
+                
+                // 添加刚体组件
+                RigidBodyComponent linkRigidBody;
+                linkRigidBody.type = RigidBodyType::Dynamic;
+                // 使用URDF中的质量，如果没有则使用默认值
+                linkRigidBody.mass = urdfLink.mass > 0.0f ? urdfLink.mass : 1.0f;
+                linkRigidBody.friction = 0.7f;
+                linkRigidBody.restitution = 0.1f;
+                linkRigidBody.useGravity = true;
+                linkRigidBody.linearDamping = 0.1f;
+                linkRigidBody.angularDamping = 0.2f;
+                linkRigidBody.syncMode = RigidBodyComponent::SyncMode::PhysicsToTransform;
+                world->AddComponent(linkEntity, linkRigidBody);
+                
+                linkCount++;
+            }
+            
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Added physics components to %d links", linkCount);
+            
+            // 为所有关节添加物理约束
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Starting to add joint constraints, total joints: %zu", robotComp.model->joints.size());
+            int constraintCount = 0;
+            for (const auto& jointPair : robotComp.model->joints) {
+                const std::string& jointName = jointPair.first;
+                const Render::Robot::URDFJoint& urdfJoint = jointPair.second;
+                
+                // 查找joint对应的实体（如果有）
+                // 注意：URDF系统可能为joint创建了实体，也可能没有
+                // 我们需要通过parent和child link来找到对应的实体
+                auto parentLinkIt = robotComp.linkEntityMap.find(urdfJoint.parentLink);
+                auto childLinkIt = robotComp.linkEntityMap.find(urdfJoint.childLink);
+                
+                if (parentLinkIt == robotComp.linkEntityMap.end() || 
+                    childLinkIt == robotComp.linkEntityMap.end()) {
+                    Logger::GetInstance().WarningFormat(
+                        "[URDFRobotDemo] Skipping constraint for joint '%s': parent='%s' or child='%s' link not found in linkEntityMap",
+                        jointName.c_str(), urdfJoint.parentLink.c_str(), urdfJoint.childLink.c_str()
+                    );
+                    continue;  // 找不到对应的link实体，跳过
+                }
+                
+                EntityID parentLinkEntity = parentLinkIt->second;
+                EntityID childLinkEntity = childLinkIt->second;
+                
+                // 确保两个link都有物理组件
+                if (!world->HasComponent<RigidBodyComponent>(parentLinkEntity) ||
+                    !world->HasComponent<RigidBodyComponent>(childLinkEntity)) {
+                    Logger::GetInstance().WarningFormat(
+                        "[URDFRobotDemo] Skipping constraint for joint '%s': parent or child link missing RigidBodyComponent",
+                        jointName.c_str()
+                    );
+                    continue;  // link没有物理组件，跳过
+                }
+                
+                // 创建约束组件
+                // 约束添加到子link实体上，连接到父link实体
+                ConstraintComponent constraint;
+                
+                // 根据joint类型选择约束类型
+                if (urdfJoint.type == Render::Robot::JointType::Revolute || 
+                    urdfJoint.type == Render::Robot::JointType::Continuous) {
+                    // 旋转关节使用铰链约束
+                    constraint.type = ConstraintType::Hinge;
+                    constraint.axisA = urdfJoint.axis.normalized();
+                    constraint.axisB = urdfJoint.axis.normalized();
+                    
+                    // 设置角度限制
+                    // 注意：Bullet的Hinge约束如果不设置限制，默认是完全锁定的！
+                    // 所以必须显式设置限制，即使范围很大
+                    if (urdfJoint.type == Render::Robot::JointType::Revolute) {
+                        // Revolute关节：使用URDF中的限制
+                        // 如果限制都是0，说明没有设置限制，使用默认大范围
+                        if (urdfJoint.limits.lower == 0.0f && urdfJoint.limits.upper == 0.0f) {
+                            constraint.lowerLimit = -MathUtils::PI;
+                            constraint.upperLimit = MathUtils::PI;
+                        } else {
+                            constraint.lowerLimit = urdfJoint.limits.lower;
+                            constraint.upperLimit = urdfJoint.limits.upper;
+                        }
+                    } else {
+                        // Continuous关节：设置一个很大的范围（接近无限制）
+                        // 使用-π到π的范围，允许完整旋转
+                        constraint.lowerLimit = -MathUtils::PI;
+                        constraint.upperLimit = MathUtils::PI;
+                    }
+                } else if (urdfJoint.type == Render::Robot::JointType::Prismatic) {
+                    // 滑动关节使用6自由度约束（简化处理）
+                    constraint.type = ConstraintType::Generic6Dof;
+                    constraint.axisA = urdfJoint.axis.normalized();
+                    constraint.axisB = urdfJoint.axis.normalized();
+                    constraint.lowerLimit = urdfJoint.limits.lower;
+                    constraint.upperLimit = urdfJoint.limits.upper;
+                } else {
+                    // 其他类型使用点对点约束（固定连接）
+                    constraint.type = ConstraintType::PointToPoint;
+                }
+                
+                // 设置约束点
+                // pivotA在父link的本地坐标系中（joint的origin）
+                constraint.pivotA = urdfJoint.origin;
+                // pivotB在子link的本地坐标系中（通常是(0,0,0)，因为子link相对于joint的位置）
+                constraint.pivotB = Vector3::Zero();
+                
+                // 约束连接到父link
+                constraint.connectedEntity = parentLinkEntity;
+                constraint.enabled = true;
+                
+                // 将约束添加到子link实体上
+                world->AddComponent(childLinkEntity, constraint);
+                
+                Logger::GetInstance().InfoFormat(
+                    "[URDFRobotDemo] Created constraint for joint '%s': parent='%s', child='%s', type=%d, limits=[%.3f, %.3f]",
+                    jointName.c_str(), urdfJoint.parentLink.c_str(), urdfJoint.childLink.c_str(),
+                    static_cast<int>(constraint.type), constraint.lowerLimit, constraint.upperLimit
+                );
+                
+                constraintCount++;
+            }
+            
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Added %d joint constraints", constraintCount);
+        } else {
+            Logger::GetInstance().Warning("[URDFRobotDemo] RobotComponent.model is null, cannot add physics components");
+        }
+    } else {
+        Logger::GetInstance().Warning("[URDFRobotDemo] RobotEntity does not have RobotComponent, cannot add physics components");
+    }
+    
     // 创建地面
     Logger::GetInstance().Info("[URDFRobotDemo] Creating ground plane...");
     EntityID groundEntity = world->CreateEntity();
@@ -203,7 +434,21 @@ int main() {
     groundMeshComp.visible = true;
     groundMeshComp.resourcesLoaded = true;
     world->AddComponent(groundEntity, groundMeshComp);
-    Logger::GetInstance().Info("[URDFRobotDemo] Ground plane created");
+    
+    // 为地面添加物理组件（静态刚体）
+    ColliderComponent groundCollider;
+    // 地面是10x10的平面，使用盒子碰撞体，高度很小
+    groundCollider.SetBox(Vector3(10.0f, 0.1f, 10.0f));
+    world->AddComponent(groundEntity, groundCollider);
+    
+    RigidBodyComponent groundRigidBody;
+    groundRigidBody.type = RigidBodyType::Static;
+    groundRigidBody.mass = 0.0f;
+    groundRigidBody.friction = 0.8f;  // 较高的摩擦系数
+    groundRigidBody.restitution = 0.1f;  // 低弹性
+    world->AddComponent(groundEntity, groundRigidBody);
+    
+    Logger::GetInstance().Info("[URDFRobotDemo] Ground plane created with physics");
     
     // 创建光源
     Logger::GetInstance().Info("[URDFRobotDemo] Creating lights...");

@@ -24,6 +24,9 @@
 #include "render/ecs/entity.h"
 #include "render/types.h"
 #include <vector>
+#include <unordered_map>
+#include <set>
+#include <utility>
 
 namespace Render {
 namespace ECS {
@@ -150,6 +153,13 @@ private:
     void CreateCollider(EntityID entity);
     void DestroyCollider(EntityID entity);
     
+    // ==================== 约束管理 ====================
+    void CreateConstraint(EntityID entity);
+    void DestroyConstraint(EntityID entity);
+    
+    // ==================== 碰撞检测 ====================
+    void DetectCollisionsAndTriggers();
+    
     // ==================== 碰撞回调 ====================
     void OnCollisionEnter(EntityID entityA, EntityID entityB, const Vector3& point, const Vector3& normal);
     void OnCollisionExit(EntityID entityA, EntityID entityB);
@@ -160,6 +170,16 @@ private:
     EntityID m_physicsWorldEntity = EntityID::Invalid();  ///< 物理世界实体ID
     bool m_enabled = true;                                 ///< 是否启用
     PhysicsStats m_stats;                                  ///< 统计信息
+    
+    // 实体ID映射（用于从Bullet对象查找EntityID）
+    std::unordered_map<void*, EntityID> m_rigidBodyToEntity;  ///< Bullet刚体指针到EntityID的映射
+    std::unordered_map<EntityID, void*, EntityID::Hash> m_entityToRigidBody;  ///< EntityID到Bullet刚体指针的映射
+    
+    // 碰撞状态跟踪（用于检测Enter/Exit）
+    std::set<std::pair<EntityID, EntityID>> m_currentCollisions;  ///< 当前帧的碰撞对
+    std::set<std::pair<EntityID, EntityID>> m_previousCollisions;  ///< 上一帧的碰撞对
+    std::set<std::pair<EntityID, EntityID>> m_currentTriggers;  ///< 当前帧的触发器重叠对
+    std::set<std::pair<EntityID, EntityID>> m_previousTriggers;  ///< 上一帧的触发器重叠对
     
     // Bullet 对象（通过 void* 存储，避免暴露 Bullet 头文件）
     void* m_bulletWorld = nullptr;                         ///< btDiscreteDynamicsWorld
