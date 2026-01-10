@@ -714,15 +714,15 @@ physicsSystem.SyncTransformToPhysics(entity);
 **目标**：完善文档和示例
 
 1. **API 文档**
-   - [ ] 物理组件 API 文档
-   - [ ] PhysicsSystem API 文档
-   - [ ] 使用指南
+   - [x] 物理组件 API 文档
+   - [x] PhysicsSystem API 文档
+   - [x] 使用指南
 
 2. **示例程序**
-   - [ ] 基础物理示例
-   - [ ] 约束示例
-   - [ ] 触发器示例
-   - [ ] 物理材质示例
+   - [x] 基础物理示例
+   - [x] 约束示例
+   - [x] 触发器示例
+   - [x] 物理材质示例
 
 **预计时间**：1-2 天
 
@@ -1028,5 +1028,5 @@ void CreateTriggerZone(World& world) {
 ---
 
 **文档版本**：1.0  
-**最后更新**：2026-01-10  
+**最后更新**：2026-01-11
 **作者**：Linductor
