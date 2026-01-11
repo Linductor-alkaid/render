@@ -348,6 +348,11 @@ set(RENDER_SOURCES
     src/application/toolchain/layermask_editor.cpp
     src/application/toolchain/scene_graph_visualizer.cpp
 
+    # Editor
+    src/editor/editor_state.cpp
+    src/editor/editor_context.cpp
+    src/editor/editor_application.cpp
+
     # Debug
     src/debug/sprite_animation_debugger.cpp
     src/debug/sprite_animation_debug_panel.cpp
