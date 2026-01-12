@@ -2,6 +2,10 @@
 
 本文档说明如何构建和使用RenderEngine的预编译库，以缩短其他项目的编译时间。
 
+**重要提示**：
+- **推荐在Windows上使用动态库版本**（`-DBUILD_SHARED_LIBS=ON`），可以避免静态库链接问题（见[Q8](#q8-sdl3链接错误lnk2019)）
+- 静态库版本在Windows上可能遇到SDL3链接错误，这是Windows静态库链接机制的特性
+
 ## 目录
 
 - [构建预编译库](#构建预编译库)
@@ -14,6 +18,7 @@
 
 首先，确保项目已经完成构建：
 
+**构建静态库（默认）**：
 ```powershell
 # 配置CMake（如果还没有）
 mkdir build
@@ -23,6 +28,19 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 # 构建Release版本
 cmake --build . --config Release
 ```
+
+**构建动态库（推荐用于Windows，可避免静态库链接问题）**：
+```powershell
+# 配置CMake，启用动态库构建
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+
+# 构建Release版本
+cmake --build . --config Release
+```
+
+**注意**：在Windows上，建议使用动态库版本（`-DBUILD_SHARED_LIBS=ON`）以避免静态库链接问题（见[Q8](#q8-sdl3链接错误lnk2019)）。
 
 ### 步骤2: 安装库
 
@@ -141,12 +159,39 @@ target_include_directories(my_app PRIVATE
 
 # 链接库文件
 if(WIN32)
-    set(RENDER_ENGINE_LIB "${RENDER_ENGINE_ROOT}/lib/RenderEngine.lib")
+    # 检查是否是动态库版本（检查bin目录是否存在）
+    if(EXISTS "${RENDER_ENGINE_ROOT}/bin/RenderEngine.dll")
+        # 动态库版本：链接导入库
+        target_link_libraries(my_app PRIVATE
+            "${RENDER_ENGINE_ROOT}/lib/RenderEngine.lib"
+        )
+        # 复制DLL到输出目录
+        add_custom_command(TARGET my_app POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${RENDER_ENGINE_ROOT}/bin/RenderEngine.dll"
+            $<TARGET_FILE_DIR:my_app>
+        )
+    else()
+        # 静态库版本：需要链接所有依赖库
+        # 所有依赖的静态库文件都包含在lib目录中
+        target_link_libraries(my_app PRIVATE
+            "${RENDER_ENGINE_ROOT}/lib/RenderEngine.lib"
+            "${RENDER_ENGINE_ROOT}/lib/SDL3-static.lib"
+            "${RENDER_ENGINE_ROOT}/lib/SDL3_image-static.lib"
+            "${RENDER_ENGINE_ROOT}/lib/SDL3_ttf-static.lib"
+            "${RENDER_ENGINE_ROOT}/lib/assimp.lib"
+            "${RENDER_ENGINE_ROOT}/lib/meshoptimizer.lib"
+            "${RENDER_ENGINE_ROOT}/lib/BulletDynamics.lib"
+            "${RENDER_ENGINE_ROOT}/lib/BulletCollision.lib"
+            "${RENDER_ENGINE_ROOT}/lib/LinearMath.lib"
+        )
+    endif()
 else()
-    set(RENDER_ENGINE_LIB "${RENDER_ENGINE_ROOT}/lib/libRenderEngine.a")
+    # Linux/Mac: 静态库
+    target_link_libraries(my_app PRIVATE
+        "${RENDER_ENGINE_ROOT}/lib/libRenderEngine.a"
+    )
 endif()
-
-target_link_libraries(my_app PRIVATE ${RENDER_ENGINE_LIB})
 
 # 链接OpenGL（RenderEngine需要）
 find_package(OpenGL REQUIRED)
@@ -181,11 +226,33 @@ target_link_libraries(my_app PRIVATE RenderEngine::RenderEngine)
 
 预编译库的目录结构如下：
 
+**静态库版本**：
+```
+RenderEngine-prebuilt-Release-x64-Static/
+├── lib/                           # 库文件目录
+│   ├── RenderEngine.lib          # RenderEngine主库（Windows）
+│   ├── SDL3-static.lib           # SDL3静态库（依赖）
+│   ├── SDL3_image-static.lib     # SDL3_image静态库（依赖）
+│   ├── SDL3_ttf-static.lib       # SDL3_ttf静态库（依赖）
+│   ├── assimp.lib                # Assimp模型加载库（依赖）
+│   ├── meshoptimizer.lib         # 网格优化库（依赖）
+│   ├── BulletDynamics.lib        # Bullet物理引擎（依赖）
+│   ├── BulletCollision.lib       # Bullet碰撞检测（依赖）
+│   ├── LinearMath.lib            # Bullet数学库（依赖）
+│   └── cmake/
+│       └── RenderEngine/         # CMake配置文件
+│           ├── RenderEngineConfig.cmake
+│           ├── RenderEngineConfigVersion.cmake
+│           └── RenderEngineTargets.cmake
+```
+
+**动态库版本**（Windows）：
 ```
 RenderEngine-prebuilt-Release-x64/
+├── bin/                           # 运行时文件目录
+│   ├── RenderEngine.dll          # 动态库（Windows）
+│   └── RenderEngine.lib          # 导入库（Windows）
 ├── lib/                           # 库文件目录
-│   ├── RenderEngine.lib          # 静态库（Windows）
-│   │   (或 libRenderEngine.a)    # 静态库（Linux）
 │   └── cmake/
 │       └── RenderEngine/         # CMake配置文件
 │           ├── RenderEngineConfig.cmake
@@ -199,6 +266,11 @@ RenderEngine-prebuilt-Release-x64/
 │   ├── SDL3/                     # SDL3头文件
 │   │   ├── SDL.h
 │   │   └── ...
+│   ├── glad/                     # GLAD头文件
+│   │   ├── glad.h
+│   │   └── ...
+│   ├── KHR/                      # KHR平台头文件
+│   │   └── khrplatform.h
 │   ├── imgui.h                   # ImGui头文件
 │   ├── imgui_internal.h
 │   ├── backends/                 # ImGui后端头文件
@@ -218,7 +290,7 @@ RenderEngine-prebuilt-Release-x64/
 
 ### 已包含的依赖
 
-以下依赖已静态链接到RenderEngine库中，**不需要**单独链接：
+以下依赖已包含在RenderEngine的构建中，它们的头文件已提供：
 - SDL3（库和头文件）
 - SDL3_image
 - SDL3_ttf
@@ -226,12 +298,18 @@ RenderEngine-prebuilt-Release-x64/
 - meshoptimizer
 - Bullet Physics
 - Eigen3（仅头文件）
-- GLAD
+- GLAD（库和头文件）
 - ImGui（库和头文件）
 - nlohmann/json（仅头文件）
 
-**注意**：预编译库包含了SDL3和ImGui的头文件，可以直接使用：
+**重要说明**：
+- 预编译库包含了SDL3、GLAD和ImGui的头文件，可以直接使用
+- **在Windows上**，推荐使用动态库版本（`-DBUILD_SHARED_LIBS=ON`）以避免静态库链接问题
+- 如果使用静态库版本并遇到SDL3链接错误（见Q8），建议改用动态库版本或从源码构建
+
+**头文件使用**：
 - SDL3头文件：`#include <SDL3/SDL.h>`
+- GLAD头文件：`#include <glad/glad.h>`
 - ImGui头文件：`#include "imgui.h"` 或 `#include <imgui.h>`
 
 ### 需要单独提供的依赖
@@ -262,6 +340,27 @@ target_link_libraries(your_target PRIVATE OpenMP::OpenMP_CXX)
 ```
 
 **注意：** 如果使用 `find_package(RenderEngine REQUIRED)` 方式（方法1），OpenMP依赖会自动处理，无需手动添加。
+
+#### 使用动态库版本的运行时要求
+
+如果使用动态库版本（`-DBUILD_SHARED_LIBS=ON`构建），需要确保DLL文件在运行时可用：
+
+**方法1（推荐）**：将DLL复制到可执行文件目录
+```cmake
+# 在CMakeLists.txt中
+if(WIN32 AND TARGET RenderEngine::RenderEngine)
+    get_target_property(RenderEngine_DLL RenderEngine::RenderEngine LOCATION)
+    get_filename_component(RenderEngine_DLL_DIR ${RenderEngine_DLL} DIRECTORY)
+    # 复制DLL到输出目录
+    add_custom_command(TARGET your_target POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${RenderEngine_DLL_DIR}/RenderEngine.dll"
+        $<TARGET_FILE_DIR:your_target>
+    )
+endif()
+```
+
+**方法2**：将DLL目录添加到PATH环境变量
 
 ## 常见问题
 
@@ -295,10 +394,15 @@ target_link_libraries(your_target PRIVATE OpenMP::OpenMP_CXX)
 
 ### Q3: 运行时找不到DLL（Windows）
 
-**说明：** RenderEngine是静态库，理论上不应该需要DLL。但如果出现此错误：
+**说明**：
+- 如果使用**静态库版本**，理论上不应该需要DLL。如果出现此错误：
+  1. 检查是否有第三方库的DLL依赖
+  2. 确保所有必要的运行时库都已安装（Visual C++ Redistributable）
 
-1. 检查是否有第三方库的DLL依赖
-2. 确保所有必要的运行时库都已安装（Visual C++ Redistributable）
+- 如果使用**动态库版本**（`-DBUILD_SHARED_LIBS=ON`），需要确保`RenderEngine.dll`在运行时可用：
+  1. 将`RenderEngine.dll`复制到可执行文件目录
+  2. 或者将包含DLL的目录添加到PATH环境变量
+  3. 参考[使用动态库版本的运行时要求](#使用动态库版本的运行时要求)部分
 
 ### Q4: Shader文件路径问题
 
@@ -336,14 +440,20 @@ std::string shaderPath = std::string(SHADER_DIR) + "/sprite.vert";
    cmake ..
    ```
 
-### Q6: 如何使用SDL3和ImGui头文件
+### Q6: 如何使用SDL3、GLAD和ImGui头文件
 
-预编译库已包含SDL3和ImGui的头文件，可以直接使用：
+预编译库已包含SDL3、GLAD和ImGui的头文件，可以直接使用：
 
 **使用SDL3**：
 ```cpp
 #include <SDL3/SDL.h>
 // 使用SDL3 API
+```
+
+**使用GLAD**：
+```cpp
+#include <glad/glad.h>
+// 使用OpenGL API（通过GLAD加载）
 ```
 
 **使用ImGui**：
@@ -354,7 +464,67 @@ std::string shaderPath = std::string(SHADER_DIR) + "/sprite.vert";
 // 使用ImGui API
 ```
 
+**重要提示**：
+- **不要**在自己的项目中编译 `imgui_impl_sdl3.cpp` 和 `imgui_impl_opengl3.cpp`
+- 这些文件已经编译并静态链接到RenderEngine库中
+- 只需要包含头文件即可使用ImGui后端功能
+- 如果自己编译这些文件，会导致SDL3链接错误（见Q8）
+
 **注意**：使用 `find_package(RenderEngine REQUIRED)` 方式时，这些头文件会自动包含在头文件搜索路径中。使用直接包含方式时，确保包含路径指向预编译库的 `include` 目录。
+
+### Q7: ImGui DockSpaceOverViewport不可用
+
+如果遇到 `ImGui::DockSpaceOverViewport` 不可用的错误，可能的原因：
+
+1. **ImGui版本问题**：Docking功能需要ImGui 1.89+版本，且需要启用docking分支
+2. **缺少docking头文件**：某些ImGui版本需要额外的docking扩展
+
+**解决方案**：
+- 检查ImGui版本，确保使用支持docking的版本
+- 如果不需要docking功能，可以注释掉相关代码
+- 或者使用传统的窗口布局方式替代docking
+
+### Q8: SDL3链接错误（LNK2019）
+
+如果遇到大量SDL3函数无法解析的链接错误（如 `SDL_CloseGamepad`, `SDL_GetKeyboardFocus` 等），这通常是因为**没有链接所有依赖的静态库**。
+
+#### 问题原因
+
+在Windows/MSVC上，静态库（.lib文件）是对象文件的归档，而不是合并后的代码：
+- RenderEngine.lib包含了imgui_impl_sdl3.obj（已编译的ImGui后端代码）
+- imgui_impl_sdl3.obj引用了SDL3函数
+- 但SDL3的代码**没有**被合并到RenderEngine.lib中（因为SDL3是另一个静态库）
+- 当只链接RenderEngine.lib时，链接器找不到SDL3的实现，导致链接错误
+
+**注意**：这与"静态链接"的概念不同。SDL3的代码确实被包含在RenderEngine的构建中，但在Windows上，静态库之间的依赖需要在最终链接时解决。
+
+#### 解决方案
+
+**方案1（推荐）**：链接所有依赖库
+- 预编译库的`lib`目录中包含了所有依赖的静态库文件
+- 使用静态库版本时，需要链接所有依赖库（见[方法2](#方法2-直接包含简单项目)的示例代码）
+- 所有需要的库文件都在预编译包的`lib`目录中：
+  - `RenderEngine.lib`
+  - `SDL3-static.lib`
+  - `SDL3_image-static.lib`
+  - `SDL3_ttf-static.lib`
+  - `assimp.lib`
+  - `meshoptimizer.lib`
+  - `BulletDynamics.lib`, `BulletCollision.lib`, `LinearMath.lib`
+
+**方案2**：使用动态库版本
+- 在构建预编译库时，使用 `-DBUILD_SHARED_LIBS=ON` 选项构建动态库版本
+- 动态库版本可以避免静态库链接问题，只需要链接一个导入库
+- 使用方法：
+  ```powershell
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+  cmake --build . --config Release
+  ```
+- 使用动态库时，需要在运行时提供DLL文件（通常在`bin`目录）
+
+**方案3**：从源码构建（使用`add_subdirectory`方式）
+- 使用[方法3](#方法3-作为子项目开发时)从源码构建
+- 这样可以避免预编译库的链接问题，CMake会自动处理所有依赖
 
 ## 性能优化建议
 

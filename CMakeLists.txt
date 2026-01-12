@@ -20,6 +20,11 @@ endif()
 # OpenMP 支持（用于批量变换的并行处理）
 option(ENABLE_OPENMP "Enable OpenMP for parallel processing" ON)
 
+# 构建选项：动态库或静态库
+# 注意：使用BUILD_SHARED_LIBS而不是自定义选项，这是CMake的标准选项
+# 在Windows上构建动态库可以避免静态库链接问题（Q8）
+# 使用方法: cmake .. -DBUILD_SHARED_LIBS=ON
+
 if(ENABLE_OPENMP)
     find_package(OpenMP)
     if(OpenMP_CXX_FOUND)
@@ -45,6 +50,12 @@ set(THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 # ============================================================================
 set(SDL3_DIR ${THIRD_PARTY_DIR}/SDL)
 
+# 保存RenderEngine的BUILD_SHARED_LIBS设置（在配置第三方库之前）
+# 第三方库始终使用静态库，但RenderEngine本身可以使用动态库
+if(NOT DEFINED RENDER_ENGINE_BUILD_SHARED_LIBS)
+    set(RENDER_ENGINE_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS} CACHE INTERNAL "RenderEngine BUILD_SHARED_LIBS setting")
+endif()
+
 # 禁用 SDL3 的一些不需要的选项
 set(SDL_SHARED OFF CACHE BOOL "Build shared library" FORCE)
 set(SDL_STATIC ON CACHE BOOL "Build static library" FORCE)
@@ -69,6 +80,11 @@ endif()
 set(SDL3_IMAGE_DIR ${THIRD_PARTY_DIR}/SDL_image)
 
 # 禁用 SDL3_image 的一些不需要的选项
+# 注意：保存RenderEngine的BUILD_SHARED_LIBS设置，只对SDL3_image强制使用静态库
+# 第三方库始终使用静态库，但RenderEngine本身可以使用动态库
+if(NOT DEFINED RENDER_ENGINE_BUILD_SHARED_LIBS)
+    set(RENDER_ENGINE_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
+endif()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library" FORCE)
 set(SDLIMAGE_INSTALL OFF CACHE BOOL "Enable SDL3_image install target" FORCE)
 set(SDLIMAGE_DEPS_SHARED OFF CACHE BOOL "Load dependencies dynamically" FORCE)
@@ -104,6 +120,7 @@ endif()
 set(SDL3_TTF_DIR ${THIRD_PARTY_DIR}/SDL3_ttf-3.2.2)
 
 # 配置 SDL3_ttf 构建选项
+# 注意：恢复RenderEngine的BUILD_SHARED_LIBS设置，只对SDL3_ttf强制使用静态库
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library" FORCE)
 set(SDLTTF_INSTALL OFF CACHE BOOL "Enable SDL3_ttf install target" FORCE)
 set(SDLTTF_INSTALL_CPACK OFF CACHE BOOL "Disable SDL3_ttf CPack packaging" FORCE)
@@ -120,6 +137,13 @@ if(EXISTS ${SDL3_TTF_DIR}/CMakeLists.txt)
     message(STATUS "SDL3_ttf configured as subproject")
 else()
     message(FATAL_ERROR "SDL3_ttf source not found at ${SDL3_TTF_DIR}")
+endif()
+
+# 恢复RenderEngine的BUILD_SHARED_LIBS设置（在配置完所有第三方库后）
+# 这样RenderEngine本身可以根据用户设置构建为静态库或动态库
+if(DEFINED RENDER_ENGINE_BUILD_SHARED_LIBS)
+    set(BUILD_SHARED_LIBS ${RENDER_ENGINE_BUILD_SHARED_LIBS} CACHE BOOL "Build shared library" FORCE)
+    message(STATUS "Restored BUILD_SHARED_LIBS to: ${BUILD_SHARED_LIBS}")
 endif()
 
 # ============================================================================
@@ -561,7 +585,19 @@ set(RENDER_HEADERS
 # ============================================================================
 # 创建库
 # ============================================================================
-add_library(RenderEngine STATIC ${RENDER_SOURCES} ${RENDER_HEADERS})
+# 使用BUILD_SHARED_LIBS选项控制构建静态库或动态库
+# 默认构建静态库，使用 -DBUILD_SHARED_LIBS=ON 构建动态库
+
+# Windows动态库需要导出符号
+# 注意：CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS需要作为target属性设置
+add_library(RenderEngine ${RENDER_SOURCES} ${RENDER_HEADERS})
+
+if(WIN32 AND BUILD_SHARED_LIBS)
+    # 使用CMake的内置功能自动导出所有符号（简化配置）
+    set_target_properties(RenderEngine PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
 
 # 头文件搜索路径
 target_include_directories(RenderEngine
@@ -612,11 +648,17 @@ if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
     # 安装库文件
     install(TARGETS RenderEngine
         EXPORT RenderEngineTargets
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib
-        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib      # 动态库（.so/.dylib）
+        ARCHIVE DESTINATION lib      # 静态库（.lib/.a）
+        RUNTIME DESTINATION bin      # Windows DLL（.dll）
         INCLUDES DESTINATION include
     )
+    
+    # Windows动态库：复制DLL到bin目录（如果需要）
+    if(WIN32 AND BUILD_SHARED_LIBS)
+        # DLL会在RUNTIME DESTINATION中安装
+        # 第三方库的DLL需要单独处理（如果需要）
+    endif()
 
     # 安装头文件
     install(DIRECTORY include/render
@@ -651,6 +693,16 @@ if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
         DESTINATION include
         FILES_MATCHING PATTERN "*.h"
     )
+    
+    # 安装GLAD头文件（OpenGL加载库）
+    install(DIRECTORY third_party/glad/include/glad
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
+    install(DIRECTORY third_party/glad/include/KHR
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
 
     # 安装shader文件
     install(DIRECTORY shaders
@@ -665,6 +717,63 @@ if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
         NAMESPACE RenderEngine::
         DESTINATION lib/cmake/RenderEngine
     )
+    
+    # 安装第三方静态库文件（仅静态库构建，用于预编译包）
+    # 这些库文件需要与RenderEngine.lib一起提供给用户，以解决Windows静态库链接问题
+    if(NOT BUILD_SHARED_LIBS)
+        # SDL3静态库
+        if(TARGET SDL3::SDL3-static)
+            install(FILES $<TARGET_FILE:SDL3::SDL3-static>
+                DESTINATION lib
+                OPTIONAL
+            )
+        endif()
+        
+        # SDL3_image静态库
+        if(TARGET SDL3_image::SDL3_image-static)
+            install(FILES $<TARGET_FILE:SDL3_image::SDL3_image-static>
+                DESTINATION lib
+                OPTIONAL
+            )
+        endif()
+        
+        # SDL3_ttf静态库
+        if(TARGET SDL3_ttf::SDL3_ttf-static)
+            install(FILES $<TARGET_FILE:SDL3_ttf::SDL3_ttf-static>
+                DESTINATION lib
+                OPTIONAL
+            )
+        endif()
+        
+        # Assimp静态库
+        # Note: Assimp库文件名可能包含MSVC版本后缀（如assimp-vc142-mt.lib）
+        # 我们安装时重命名为assimp.lib以便统一使用
+        if(TARGET assimp)
+            install(FILES $<TARGET_FILE:assimp>
+                DESTINATION lib
+                RENAME assimp.lib
+                OPTIONAL
+            )
+        endif()
+        
+        # MeshOptimizer静态库
+        if(TARGET meshoptimizer)
+            install(FILES $<TARGET_FILE:meshoptimizer>
+                DESTINATION lib
+                OPTIONAL
+            )
+        endif()
+        
+        # Bullet Physics静态库
+        foreach(BULLET_LIB ${BULLET_LIBRARIES})
+            if(TARGET ${BULLET_LIB})
+                install(FILES $<TARGET_FILE:${BULLET_LIB}>
+                    DESTINATION lib
+                    OPTIONAL
+                )
+            endif()
+        endforeach()
+    endif()
 
     # 创建并安装RenderEngineConfig.cmake
     include(CMakePackageConfigHelpers)

@@ -35,7 +35,17 @@ if (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
 }
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 
-$PackageName = "RenderEngine-prebuilt-$Config-$Arch"
+# 检测是否构建为动态库
+$IsShared = $false
+if (Test-Path (Join-Path $BuildDirAbs "CMakeCache.txt")) {
+    $CacheContent = Get-Content (Join-Path $BuildDirAbs "CMakeCache.txt") -Raw
+    if ($CacheContent -match "BUILD_SHARED_LIBS:BOOL=(ON|TRUE)") {
+        $IsShared = $true
+    }
+}
+
+$LibraryType = if ($IsShared) { "Shared" } else { "Static" }
+$PackageName = "RenderEngine-prebuilt-$Config-$Arch-$LibraryType"
 $PackagePath = Join-Path $OutputDir $PackageName
 
 if (Test-Path $PackagePath) {
@@ -112,13 +122,96 @@ if (-not $ActualInstallDir) {
 # 2. Copy library files
 Write-Host "`nStep 2/5: Copying library files..." -ForegroundColor Cyan
 $LibSource = Join-Path $ActualInstallDir "lib"
+$BinSource = Join-Path $ActualInstallDir "bin"
 $LibDest = Join-Path $PackagePath "lib"
+$BinDest = Join-Path $PackagePath "bin"
+
+# Copy library files
 if (Test-Path $LibSource) {
     Copy-Item -Recurse $LibSource $LibDest -Force
     Write-Host "  Copied library files to: $LibDest" -ForegroundColor Green
 } else {
     Write-Host "  Warning: Library directory not found at: $LibSource" -ForegroundColor Yellow
     Write-Host "  This may indicate that installation did not complete successfully." -ForegroundColor Yellow
+}
+
+# Copy third-party static libraries (for static library builds only)
+# These libraries should be installed by CMake, so we copy them from the install directory
+# This ensures all dependencies are available when linking against the prebuilt library
+if (-not $IsShared) {
+    Write-Host "  Copying third-party static libraries from install directory..." -ForegroundColor Cyan
+    
+    # List of third-party library files that should be in the install lib directory
+    # These are installed by CMakeLists.txt install rules
+    # Note: Assimp library filename may have MSVC version suffix (e.g., assimp-vc142-mt.lib)
+    $ThirdPartyLibPatterns = @(
+        @{ Pattern = "SDL3-static.lib"; Required = $true }
+        @{ Pattern = "SDL3_image-static.lib"; Required = $true }
+        @{ Pattern = "SDL3_ttf-static.lib"; Required = $true }
+        @{ Pattern = "assimp*.lib"; Required = $true }  # Assimp may have version suffix
+        @{ Pattern = "meshoptimizer.lib"; Required = $true }
+        @{ Pattern = "BulletDynamics.lib"; Required = $true }
+        @{ Pattern = "BulletCollision.lib"; Required = $true }
+        @{ Pattern = "LinearMath.lib"; Required = $true }
+    )
+    
+    $CopiedCount = 0
+    $NotFoundLibs = @()
+    $CopiedLibs = @()
+    
+    if (Test-Path $LibSource) {
+        foreach ($libInfo in $ThirdPartyLibPatterns) {
+            $pattern = $libInfo.Pattern
+            $required = $libInfo.Required
+            
+            # Use wildcard search for patterns (like assimp*.lib)
+            $matchingFiles = Get-ChildItem -Path $LibSource -Filter $pattern -ErrorAction SilentlyContinue
+            
+            if ($matchingFiles.Count -gt 0) {
+                foreach ($file in $matchingFiles) {
+                    $libName = $file.Name
+                    $srcPath = $file.FullName
+                    $destPath = Join-Path $LibDest $libName
+                    
+                    # For assimp, rename to assimp.lib if it has a suffix
+                    if ($pattern -eq "assimp*.lib" -and $libName -ne "assimp.lib" -and $libName -ne "assimpd.lib") {
+                        $destPath = Join-Path $LibDest "assimp.lib"
+                    }
+                    
+                    Copy-Item $srcPath $destPath -Force
+                    Write-Host "    Copied: $libName -> $([System.IO.Path]::GetFileName($destPath))" -ForegroundColor Green
+                    $CopiedCount++
+                    $CopiedLibs += [System.IO.Path]::GetFileName($destPath)
+                }
+            } else {
+                if ($required) {
+                    $NotFoundLibs += $pattern
+                }
+            }
+        }
+    }
+    
+    if ($CopiedCount -gt 0) {
+        Write-Host "  Copied $CopiedCount third-party library file(s)" -ForegroundColor Green
+        Write-Host "  Libraries copied: $($CopiedLibs -join ', ')" -ForegroundColor Gray
+    }
+    
+    if ($NotFoundLibs.Count -gt 0) {
+        Write-Host "  Warning: The following library patterns were not found in install directory:" -ForegroundColor Yellow
+        foreach ($lib in $NotFoundLibs) {
+            Write-Host "    - $lib" -ForegroundColor Yellow
+        }
+        Write-Host "  This may indicate that CMake install rules need to be updated." -ForegroundColor Yellow
+    }
+}
+
+# Copy runtime files (DLL for Windows shared library)
+if ($IsShared -and (Test-Path $BinSource)) {
+    New-Item -ItemType Directory -Path $BinDest -Force | Out-Null
+    Copy-Item -Recurse $BinSource\* $BinDest -Force
+    Write-Host "  Copied runtime files (DLL) to: $BinDest" -ForegroundColor Green
+} elseif ($IsShared) {
+    Write-Host "  Warning: Bin directory not found for shared library: $BinSource" -ForegroundColor Yellow
 }
 
 # 3. Copy header files
@@ -170,17 +263,29 @@ $null = $sb.AppendLine("")
 $null = $sb.AppendLine("## Version Information")
 $null = $sb.AppendLine("- Build Configuration: $Config")
 $null = $sb.AppendLine("- Architecture: $Arch")
+$null = $sb.AppendLine("- Library Type: $LibraryType")
 $null = $sb.AppendLine("- Build Date: $BuildDate")
 $null = $sb.AppendLine("")
 $null = $sb.AppendLine("## Directory Structure")
 $null = $sb.AppendLine('```')
 $null = $sb.AppendLine("$PackageName/")
+if ($IsShared) {
+    $null = $sb.AppendLine("  bin/                    # Runtime files (DLL)")
+    $null = $sb.AppendLine("    RenderEngine.dll      # Dynamic library")
+}
 $null = $sb.AppendLine("  lib/                    # Library files")
+if ($IsShared) {
+    $null = $sb.AppendLine("    RenderEngine.lib      # Import library (Windows)")
+} else {
+    $null = $sb.AppendLine("    RenderEngine.lib      # Static library (Windows)")
+}
 $null = $sb.AppendLine("    cmake/")
 $null = $sb.AppendLine("      RenderEngine/   # CMake configuration files")
 $null = $sb.AppendLine("  include/                # Header files")
 $null = $sb.AppendLine("    render/           # RenderEngine headers")
 $null = $sb.AppendLine("    SDL3/             # SDL3 headers")
+$null = $sb.AppendLine("    glad/             # GLAD headers")
+$null = $sb.AppendLine("    KHR/              # KHR platform headers")
 $null = $sb.AppendLine("    imgui.h           # ImGui headers")
 $null = $sb.AppendLine("    backends/         # ImGui backend headers")
 $null = $sb.AppendLine("    json/             # nlohmann/json headers")
@@ -215,9 +320,31 @@ $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/
 $null = $sb.AppendLine(')')
 $null = $sb.AppendLine('')
 $null = $sb.AppendLine('# Link library files')
-$null = $sb.AppendLine('target_link_libraries(your_target PRIVATE ')
-$null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/RenderEngine.lib`"")
-$null = $sb.AppendLine(')')
+if ($IsShared) {
+    $null = $sb.AppendLine('target_link_libraries(your_target PRIVATE ')
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/RenderEngine.lib`"")
+    $null = $sb.AppendLine(')')
+    $null = $sb.AppendLine('')
+    $null = $sb.AppendLine('# Copy DLL to output directory')
+    $null = $sb.AppendLine('add_custom_command(TARGET your_target POST_BUILD')
+    $null = $sb.AppendLine("    COMMAND `${CMAKE_COMMAND} -E copy_if_different")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/bin/RenderEngine.dll`"")
+    $null = $sb.AppendLine('    $<TARGET_FILE_DIR:your_target>')
+    $null = $sb.AppendLine(')')
+} else {
+    $null = $sb.AppendLine('# Static library: link all dependencies')
+    $null = $sb.AppendLine('target_link_libraries(your_target PRIVATE ')
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/RenderEngine.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/SDL3-static.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/SDL3_image-static.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/SDL3_ttf-static.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/assimp.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/meshoptimizer.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/BulletDynamics.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/BulletCollision.lib`"")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/LinearMath.lib`"")
+    $null = $sb.AppendLine(')')
+}
 $null = $sb.AppendLine('')
 $null = $sb.AppendLine('# Link OpenMP (required for parallel processing)')
 $null = $sb.AppendLine('find_package(OpenMP REQUIRED)')
@@ -230,12 +357,14 @@ $null = $sb.AppendLine("### Included Dependencies")
 $null = $sb.AppendLine("")
 $null = $sb.AppendLine("The following dependencies are statically linked and their headers are included:")
 $null = $sb.AppendLine("- SDL3 (library and headers)")
+$null = $sb.AppendLine("- GLAD (library and headers)")
 $null = $sb.AppendLine("- ImGui (library and headers)")
 $null = $sb.AppendLine("- SDL3_image, SDL3_ttf, Assimp, Bullet Physics, etc. (statically linked)")
 $null = $sb.AppendLine("- nlohmann/json (header-only)")
 $null = $sb.AppendLine("")
-$null = $sb.AppendLine("You can directly use SDL3 and ImGui headers:")
+$null = $sb.AppendLine("You can directly use SDL3, GLAD and ImGui headers:")
 $null = $sb.AppendLine('- `#include <SDL3/SDL.h>`')
+$null = $sb.AppendLine('- `#include <glad/glad.h>`')
 $null = $sb.AppendLine('- `#include "imgui.h"` or `#include <imgui.h>`')
 $null = $sb.AppendLine("")
 $null = $sb.AppendLine("### Required External Dependencies")
@@ -257,7 +386,46 @@ $null = $sb.AppendLine('# Link OpenMP to your target')
 $null = $sb.AppendLine('target_link_libraries(your_target PRIVATE OpenMP::OpenMP_CXX)')
 $null = $sb.AppendLine('```')
 $null = $sb.AppendLine("")
-$null = $sb.AppendLine("Note: Third-party libraries (SDL3, Assimp, etc.) are statically linked into the RenderEngine library.")
+if ($IsShared) {
+    $null = $sb.AppendLine("### Runtime Requirements (Shared Library)")
+    $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("This is a shared library (DLL) version. You need to ensure `RenderEngine.dll` is available at runtime.")
+    $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("**Option 1**: Copy the DLL to your executable directory")
+    $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("**Option 2**: Add the DLL directory to your PATH environment variable")
+    $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("Third-party libraries (SDL3, Assimp, etc.) are statically linked into the RenderEngine DLL.")
+} else {
+    $null = $sb.AppendLine("### Static Library Dependencies")
+    $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("This is a static library version. All required third-party static libraries are included in the `lib` directory:")
+    $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("- `RenderEngine.lib` - Main RenderEngine library")
+    $null = $sb.AppendLine("- `SDL3-static.lib` - SDL3 static library")
+    $null = $sb.AppendLine("- `SDL3_image-static.lib` - SDL3_image static library")
+    $null = $sb.AppendLine("- `SDL3_ttf-static.lib` - SDL3_ttf static library")
+    $null = $sb.AppendLine("- `assimp.lib` - Assimp model loader library")
+    $null = $sb.AppendLine("- `meshoptimizer.lib` - Mesh optimization library")
+    $null = $sb.AppendLine("- `BulletDynamics.lib`, `BulletCollision.lib`, `LinearMath.lib` - Bullet Physics libraries")
+    $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("**Important**: When linking against this static library, you need to link all these libraries together. See the usage documentation for examples.")
+}
+$null = $sb.AppendLine("")
+$null = $sb.AppendLine("## Important Notes")
+$null = $sb.AppendLine("")
+$null = $sb.AppendLine("### Using ImGui Backends")
+$null = $sb.AppendLine("")
+$null = $sb.AppendLine("The ImGui backend files (`imgui_impl_sdl3.cpp` and `imgui_impl_opengl3.cpp`) are already compiled and statically linked into the RenderEngine library.")
+$null = $sb.AppendLine("")
+$null = $sb.AppendLine("**Do NOT** compile these files in your own project. Only include the header files:")
+$null = $sb.AppendLine("")
+$null = $sb.AppendLine('```cpp')
+$null = $sb.AppendLine('#include "backends/imgui_impl_sdl3.h"')
+$null = $sb.AppendLine('#include "backends/imgui_impl_opengl3.h"')
+$null = $sb.AppendLine('```')
+$null = $sb.AppendLine("")
+$null = $sb.AppendLine("If you compile these files yourself, you will encounter SDL3 linking errors because your project will need to link SDL3 separately.")
 $null = $sb.AppendLine("")
 $null = $sb.AppendLine("## License")
 $null = $sb.AppendLine("")
