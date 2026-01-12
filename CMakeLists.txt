@@ -703,6 +703,44 @@ if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
         DESTINATION include
         FILES_MATCHING PATTERN "*.h"
     )
+    
+    # 安装Bullet Physics头文件（用户代码可能需要使用Bullet API）
+    # Bullet头文件在src目录下的各个子目录中
+    if(EXISTS ${BULLET_ROOT}/src)
+        # 安装BulletCollision头文件
+        install(DIRECTORY third_party/bullet3/src/BulletCollision
+            DESTINATION include
+            FILES_MATCHING PATTERN "*.h"
+        )
+        
+        # 安装BulletDynamics头文件
+        install(DIRECTORY third_party/bullet3/src/BulletDynamics
+            DESTINATION include
+            FILES_MATCHING PATTERN "*.h"
+        )
+        
+        # 安装LinearMath头文件
+        install(DIRECTORY third_party/bullet3/src/LinearMath
+            DESTINATION include
+            FILES_MATCHING PATTERN "*.h"
+        )
+        
+        # 安装BulletInverseDynamics头文件（如果存在）
+        if(EXISTS ${BULLET_ROOT}/src/BulletInverseDynamics)
+            install(DIRECTORY third_party/bullet3/src/BulletInverseDynamics
+                DESTINATION include
+                FILES_MATCHING PATTERN "*.hpp"
+            )
+        endif()
+        
+        # 安装BulletSoftBody头文件（如果存在）
+        if(EXISTS ${BULLET_ROOT}/src/BulletSoftBody)
+            install(DIRECTORY third_party/bullet3/src/BulletSoftBody
+                DESTINATION include
+                FILES_MATCHING PATTERN "*.h"
+            )
+        endif()
+    endif()
 
     # 安装shader文件
     install(DIRECTORY shaders

@@ -100,6 +100,9 @@ RenderEngine-prebuilt-Release-x64-Static/
 │   ├── KHR/                      # KHR平台头文件
 │   ├── imgui.h                   # ImGui头文件（可直接使用）
 │   ├── backends/                 # ImGui后端头文件
+│   ├── BulletCollision/          # Bullet Physics头文件（可直接使用）
+│   ├── BulletDynamics/           # Bullet Physics头文件（可直接使用）
+│   ├── LinearMath/               # Bullet Physics头文件（可直接使用）
 │   └── json/                     # nlohmann/json头文件
 └── share/
     └── RenderEngine/
@@ -166,10 +169,11 @@ cmake --build . --config Release
 - ImGui（UI 后端）
 
 **头文件可直接使用：**
-预编译包已包含 SDL3、GLAD 和 ImGui 的头文件，可以直接使用：
-- `#include <SDL3/SDL.h>`
-- `#include <glad/glad.h>`
-- `#include "imgui.h"`
+预编译包已包含 SDL3、GLAD、ImGui 和 Bullet Physics 的头文件，可以直接使用：
+- SDL3：`#include <SDL3/SDL.h>`
+- GLAD：`#include <glad/glad.h>`
+- ImGui：`#include "imgui.h"`
+- Bullet Physics：`#include <BulletCollision/CollisionDispatch/btCollisionWorld.h>`、`#include <BulletDynamics/Dynamics/btRigidBody.h>`、`#include <LinearMath/btVector3.h>` 等
 
 **需要单独提供的依赖：**
 - **OpenGL 4.5+** - 通过系统驱动提供

@@ -311,6 +311,12 @@ RenderEngine-prebuilt-Release-x64/
 - SDL3头文件：`#include <SDL3/SDL.h>`
 - GLAD头文件：`#include <glad/glad.h>`
 - ImGui头文件：`#include "imgui.h"` 或 `#include <imgui.h>`
+- Bullet Physics头文件：
+  - `#include <BulletCollision/CollisionDispatch/btCollisionWorld.h>`
+  - `#include <BulletDynamics/Dynamics/btRigidBody.h>`
+  - `#include <LinearMath/btVector3.h>`
+  - `#include <LinearMath/btTransform.h>`
+  - 等等
 
 ### 需要单独提供的依赖
 
