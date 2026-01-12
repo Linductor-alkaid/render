@@ -151,6 +151,10 @@ target_link_libraries(my_app PRIVATE ${RENDER_ENGINE_LIB})
 # 链接OpenGL（RenderEngine需要）
 find_package(OpenGL REQUIRED)
 target_link_libraries(my_app PRIVATE OpenGL::GL)
+
+# 链接OpenMP（RenderEngine需要，用于并行处理）
+find_package(OpenMP REQUIRED)
+target_link_libraries(my_app PRIVATE OpenMP::OpenMP_CXX)
 ```
 
 ### 方法3: 作为子项目（开发时）
@@ -221,8 +225,11 @@ RenderEngine-prebuilt-Release-x64/
 以下依赖**需要**在你的项目中单独提供：
 - **OpenGL 4.5+** - 通过系统驱动提供
 - **C++20编译器** - MSVC 2019+, GCC 10+, Clang 12+
+- **OpenMP** - 用于并行处理（批量操作优化）
 
-### 链接OpenGL
+### 链接依赖库
+
+#### 链接OpenGL
 
 在使用预编译库时，你仍需要链接OpenGL：
 
@@ -230,6 +237,17 @@ RenderEngine-prebuilt-Release-x64/
 find_package(OpenGL REQUIRED)
 target_link_libraries(your_target PRIVATE OpenGL::GL)
 ```
+
+#### 链接OpenMP
+
+RenderEngine使用OpenMP进行并行处理，提升批量操作的性能（如批量变换）。当使用**方法1（find_package）**时，CMake会自动处理OpenMP依赖。当使用**方法2（直接包含）**时，需要手动链接OpenMP：
+
+```cmake
+find_package(OpenMP REQUIRED)
+target_link_libraries(your_target PRIVATE OpenMP::OpenMP_CXX)
+```
+
+**注意：** 如果使用 `find_package(RenderEngine REQUIRED)` 方式（方法1），OpenMP依赖会自动处理，无需手动添加。
 
 ## 常见问题
 
