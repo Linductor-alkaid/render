@@ -629,6 +629,28 @@ if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
         DESTINATION include/json
         FILES_MATCHING PATTERN "*.hpp"
     )
+    
+    # 安装SDL3头文件（用户代码可能需要包含SDL3/SDL.h）
+    install(DIRECTORY third_party/SDL/include/SDL3
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
+    
+    # 安装ImGui头文件（用户代码可能需要使用ImGui后端）
+    install(FILES
+        third_party/imgui/imgui.h
+        third_party/imgui/imgui_internal.h
+        third_party/imgui/imconfig.h
+        third_party/imgui/imstb_rectpack.h
+        third_party/imgui/imstb_textedit.h
+        third_party/imgui/imstb_truetype.h
+        DESTINATION include
+    )
+    # 安装ImGui后端头文件
+    install(DIRECTORY third_party/imgui/backends
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
 
     # 安装shader文件
     install(DIRECTORY shaders

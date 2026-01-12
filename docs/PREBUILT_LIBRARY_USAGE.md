@@ -192,10 +192,20 @@ RenderEngine-prebuilt-Release-x64/
 │           ├── RenderEngineConfigVersion.cmake
 │           └── RenderEngineTargets.cmake
 ├── include/                       # 头文件目录
-│   └── render/                    # RenderEngine头文件
-│       ├── renderer.h
-│       ├── shader.h
-│       └── ...
+│   ├── render/                   # RenderEngine头文件
+│   │   ├── renderer.h
+│   │   ├── shader.h
+│   │   └── ...
+│   ├── SDL3/                     # SDL3头文件
+│   │   ├── SDL.h
+│   │   └── ...
+│   ├── imgui.h                   # ImGui头文件
+│   ├── imgui_internal.h
+│   ├── backends/                 # ImGui后端头文件
+│   │   ├── imgui_impl_sdl3.h
+│   │   └── ...
+│   └── json/                     # nlohmann/json头文件
+│       └── nlohmann/
 └── share/
     └── RenderEngine/
         └── shaders/               # Shader文件
@@ -209,7 +219,7 @@ RenderEngine-prebuilt-Release-x64/
 ### 已包含的依赖
 
 以下依赖已静态链接到RenderEngine库中，**不需要**单独链接：
-- SDL3
+- SDL3（库和头文件）
 - SDL3_image
 - SDL3_ttf
 - Assimp
@@ -217,8 +227,12 @@ RenderEngine-prebuilt-Release-x64/
 - Bullet Physics
 - Eigen3（仅头文件）
 - GLAD
-- ImGui
+- ImGui（库和头文件）
 - nlohmann/json（仅头文件）
+
+**注意**：预编译库包含了SDL3和ImGui的头文件，可以直接使用：
+- SDL3头文件：`#include <SDL3/SDL.h>`
+- ImGui头文件：`#include "imgui.h"` 或 `#include <imgui.h>`
 
 ### 需要单独提供的依赖
 
@@ -321,6 +335,26 @@ std::string shaderPath = std::string(SHADER_DIR) + "/sprite.vert";
    cd build
    cmake ..
    ```
+
+### Q6: 如何使用SDL3和ImGui头文件
+
+预编译库已包含SDL3和ImGui的头文件，可以直接使用：
+
+**使用SDL3**：
+```cpp
+#include <SDL3/SDL.h>
+// 使用SDL3 API
+```
+
+**使用ImGui**：
+```cpp
+#include "imgui.h"
+#include "backends/imgui_impl_sdl3.h"
+#include "backends/imgui_impl_opengl3.h"
+// 使用ImGui API
+```
+
+**注意**：使用 `find_package(RenderEngine REQUIRED)` 方式时，这些头文件会自动包含在头文件搜索路径中。使用直接包含方式时，确保包含路径指向预编译库的 `include` 目录。
 
 ## 性能优化建议
 
