@@ -179,7 +179,7 @@ if(WIN32)
             "${RENDER_ENGINE_ROOT}/lib/SDL3-static.lib"
             "${RENDER_ENGINE_ROOT}/lib/SDL3_image-static.lib"
             "${RENDER_ENGINE_ROOT}/lib/SDL3_ttf-static.lib"
-            "${RENDER_ENGINE_ROOT}/lib/assimp.lib"
+            "${RENDER_ENGINE_ROOT}/lib/assimp-vc143-mt.lib"  # 文件名可能因MSVC版本而异，请检查lib目录中的实际文件名
             "${RENDER_ENGINE_ROOT}/lib/meshoptimizer.lib"
             "${RENDER_ENGINE_ROOT}/lib/BulletDynamics.lib"
             "${RENDER_ENGINE_ROOT}/lib/BulletCollision.lib"
@@ -234,7 +234,7 @@ RenderEngine-prebuilt-Release-x64-Static/
 │   ├── SDL3-static.lib           # SDL3静态库（依赖）
 │   ├── SDL3_image-static.lib     # SDL3_image静态库（依赖）
 │   ├── SDL3_ttf-static.lib       # SDL3_ttf静态库（依赖）
-│   ├── assimp.lib                # Assimp模型加载库（依赖）
+│   ├── assimp-vc143-mt.lib      # Assimp模型加载库（依赖，文件名包含MSVC版本后缀）
 │   ├── meshoptimizer.lib         # 网格优化库（依赖）
 │   ├── BulletDynamics.lib        # Bullet物理引擎（依赖）
 │   ├── BulletCollision.lib       # Bullet碰撞检测（依赖）
@@ -514,7 +514,7 @@ std::string shaderPath = std::string(SHADER_DIR) + "/sprite.vert";
   - `SDL3-static.lib`
   - `SDL3_image-static.lib`
   - `SDL3_ttf-static.lib`
-  - `assimp.lib`
+  - `assimp-vc143-mt.lib`（或类似，文件名包含MSVC版本后缀，请检查lib目录中的实际文件名）
   - `meshoptimizer.lib`
   - `BulletDynamics.lib`, `BulletCollision.lib`, `LinearMath.lib`
 

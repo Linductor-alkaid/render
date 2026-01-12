@@ -160,6 +160,11 @@ message(STATUS "Using Eigen3 from: ${EIGEN3_INCLUDE_DIR}")
 # ============================================================================
 set(ASSIMP_DIR ${THIRD_PARTY_DIR}/assimp)
 
+# 强制 Assimp 构建为静态库（与 RenderEngine 的 BUILD_SHARED_LIBS 设置无关）
+# 保存当前的 BUILD_SHARED_LIBS 设置
+set(ASSIMP_BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared library" FORCE)
+
 # 禁用 Assimp 的一些不需要的选项
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "Build Assimp tests" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "Build Assimp tools" FORCE)
@@ -187,7 +192,10 @@ if(EXISTS ${ASSIMP_DIR}/CMakeLists.txt)
     add_subdirectory(${ASSIMP_DIR} ${CMAKE_BINARY_DIR}/assimp EXCLUDE_FROM_ALL)
     set(ASSIMP_LIBRARY assimp)
     set(ASSIMP_INCLUDE_DIRS ${ASSIMP_DIR}/include ${CMAKE_BINARY_DIR}/assimp/include)
-    message(STATUS "Assimp configured as subproject")
+    message(STATUS "Assimp configured as subproject (static library)")
+    
+    # 恢复 BUILD_SHARED_LIBS 设置（用于 RenderEngine）
+    set(BUILD_SHARED_LIBS ${ASSIMP_BUILD_SHARED_LIBS_SAVED} CACHE BOOL "Build shared library" FORCE)
 else()
     message(FATAL_ERROR "Assimp source not found at ${ASSIMP_DIR}")
 endif()
@@ -784,15 +792,9 @@ if(RENDER_ENGINE_IS_TOP_LEVEL OR RENDER_ENGINE_INSTALL)
         endif()
         
         # Assimp静态库
-        # Note: Assimp库文件名可能包含MSVC版本后缀（如assimp-vc142-mt.lib）
-        # 我们安装时重命名为assimp.lib以便统一使用
-        if(TARGET assimp)
-            install(FILES $<TARGET_FILE:assimp>
-                DESTINATION lib
-                RENAME assimp.lib
-                OPTIONAL
-            )
-        endif()
+        # Note: Assimp库文件名包含MSVC版本后缀（如assimp-vc143-mt.lib）
+        # 不再安装assimp库，由打包脚本直接从build目录复制原始文件名
+        # 这样可以避免文件损坏问题，并且包更小
         
         # MeshOptimizer静态库
         if(TARGET meshoptimizer)

@@ -136,19 +136,17 @@ if (Test-Path $LibSource) {
 }
 
 # Copy third-party static libraries (for static library builds only)
-# These libraries should be installed by CMake, so we copy them from the install directory
+# Most libraries are installed by CMake, but assimp is copied directly from build directory
 # This ensures all dependencies are available when linking against the prebuilt library
 if (-not $IsShared) {
-    Write-Host "  Copying third-party static libraries from install directory..." -ForegroundColor Cyan
+    Write-Host "  Copying third-party static libraries..." -ForegroundColor Cyan
     
     # List of third-party library files that should be in the install lib directory
     # These are installed by CMakeLists.txt install rules
-    # Note: Assimp library filename may have MSVC version suffix (e.g., assimp-vc142-mt.lib)
     $ThirdPartyLibPatterns = @(
         @{ Pattern = "SDL3-static.lib"; Required = $true }
         @{ Pattern = "SDL3_image-static.lib"; Required = $true }
         @{ Pattern = "SDL3_ttf-static.lib"; Required = $true }
-        @{ Pattern = "assimp*.lib"; Required = $true }  # Assimp may have version suffix
         @{ Pattern = "meshoptimizer.lib"; Required = $true }
         @{ Pattern = "BulletDynamics.lib"; Required = $true }
         @{ Pattern = "BulletCollision.lib"; Required = $true }
@@ -158,6 +156,47 @@ if (-not $IsShared) {
     $CopiedCount = 0
     $NotFoundLibs = @()
     $CopiedLibs = @()
+    
+    $CopiedCount = 0
+    $NotFoundLibs = @()
+    $CopiedLibs = @()
+    
+    # Copy assimp library directly from build directory (not installed by CMake)
+    # Assimp library filename includes MSVC version suffix (e.g., assimp-vc143-mt.lib)
+    Write-Host "  Copying assimp library from build directory..." -ForegroundColor Cyan
+    $AssimpBuildPaths = @(
+        Join-Path $BuildDir "assimp\code\$Config"  # MSVC generator
+        Join-Path $BuildDir "assimp\code"           # Alternative path
+        Join-Path $BuildDir "lib\$Config"           # If assimp is in lib directory
+    )
+    
+    $AssimpCopied = $false
+    foreach ($assimpPath in $AssimpBuildPaths) {
+        if (Test-Path $assimpPath) {
+            $assimpFiles = Get-ChildItem -Path $assimpPath -Filter "assimp*.lib" -ErrorAction SilentlyContinue
+            if ($assimpFiles.Count -gt 0) {
+                foreach ($file in $assimpFiles) {
+                    # Only copy static library files (not DLL import libraries)
+                    # Static libraries are typically larger than 1MB
+                    if ($file.Name -notmatch "assimpd\.lib$" -and $file.Length -gt 1MB) {
+                        $destPath = Join-Path $LibDest $file.Name
+                        Copy-Item $file.FullName $destPath -Force
+                        Write-Host "    Copied: $($file.Name) -> $($file.Name)" -ForegroundColor Green
+                        $CopiedCount++
+                        $CopiedLibs += $file.Name
+                        $AssimpCopied = $true
+                        break
+                    }
+                }
+                if ($AssimpCopied) { break }
+            }
+        }
+    }
+    
+    if (-not $AssimpCopied) {
+        Write-Host "    Warning: Assimp library not found in build directory" -ForegroundColor Yellow
+        $NotFoundLibs += "assimp*.lib"
+    }
     
     if (Test-Path $LibSource) {
         foreach ($libInfo in $ThirdPartyLibPatterns) {
@@ -173,10 +212,8 @@ if (-not $IsShared) {
                     $srcPath = $file.FullName
                     $destPath = Join-Path $LibDest $libName
                     
-                    # For assimp, rename to assimp.lib if it has a suffix
-                    if ($pattern -eq "assimp*.lib" -and $libName -ne "assimp.lib" -and $libName -ne "assimpd.lib") {
-                        $destPath = Join-Path $LibDest "assimp.lib"
-                    }
+                    # Keep original assimp filename (e.g., assimp-vc143-mt.lib)
+                    # No renaming needed - use the original filename directly
                     
                     Copy-Item $srcPath $destPath -Force
                     Write-Host "    Copied: $libName -> $([System.IO.Path]::GetFileName($destPath))" -ForegroundColor Green
@@ -341,7 +378,12 @@ if ($IsShared) {
     $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/SDL3-static.lib`"")
     $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/SDL3_image-static.lib`"")
     $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/SDL3_ttf-static.lib`"")
-    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/assimp.lib`"")
+    # Note: Assimp library filename includes MSVC version suffix (e.g., assimp-vc143-mt.lib)
+    # Find the actual assimp library file name
+    $assimpLibName = "assimp*.lib"  # Will be replaced with actual name in documentation
+    $null = $sb.AppendLine("    # Assimp library (filename may vary, e.g., assimp-vc143-mt.lib)")
+    $null = $sb.AppendLine("    # Replace 'assimp-vc143-mt.lib' with the actual filename in lib directory")
+    $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/assimp-vc143-mt.lib`"")
     $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/meshoptimizer.lib`"")
     $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/BulletDynamics.lib`"")
     $null = $sb.AppendLine("    `"`${CMAKE_CURRENT_SOURCE_DIR}/path/to/$PackageName/lib/BulletCollision.lib`"")
@@ -408,7 +450,7 @@ if ($IsShared) {
     $null = $sb.AppendLine("- `SDL3-static.lib` - SDL3 static library")
     $null = $sb.AppendLine("- `SDL3_image-static.lib` - SDL3_image static library")
     $null = $sb.AppendLine("- `SDL3_ttf-static.lib` - SDL3_ttf static library")
-    $null = $sb.AppendLine("- `assimp.lib` - Assimp model loader library")
+    $null = $sb.AppendLine("- `assimp-vc143-mt.lib` (or similar, filename includes MSVC version suffix) - Assimp model loader library")
     $null = $sb.AppendLine("- `meshoptimizer.lib` - Mesh optimization library")
     $null = $sb.AppendLine("- `BulletDynamics.lib`, `BulletCollision.lib`, `LinearMath.lib` - Bullet Physics libraries")
     $null = $sb.AppendLine("")
