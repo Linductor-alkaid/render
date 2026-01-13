@@ -69,6 +69,7 @@ set(EXAMPLES
     65_urdf_robot_demo
     66_physics_advanced_test
     67_physics_stage3_test
+    68_urdf_kinematic_robot_demo
 )
 
 # 批量创建示例程序

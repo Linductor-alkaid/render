@@ -201,6 +201,19 @@ private:
     void ApplyJointTorqueOrForce(EntityID jointEntity, const JointComponent& jointComp, 
                                   float torqueOrForce);
     
+    /**
+     * @brief 根据关节实体查找机器人实体
+     * @param jointEntity 关节实体ID
+     * @return 机器人实体ID，如果不存在返回Invalid
+     */
+    EntityID FindRobotEntity(EntityID jointEntity) const;
+    
+    /**
+     * @brief 将JointTF应用到link的TransformComponent（用于Kinematic模式）
+     * @param robotEntity 机器人实体ID
+     */
+    void ApplyTFsToTransforms(EntityID robotEntity);
+    
     // 关节实体映射（机器人实体 -> 关节名称 -> 关节实体ID）
     std::unordered_map<EntityID, std::unordered_map<std::string, EntityID>, EntityID::Hash> m_jointEntityMap;
 };

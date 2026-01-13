@@ -29,6 +29,7 @@
 #include "render/math_utils.h"
 #include <btBulletDynamicsCommon.h>
 #include <algorithm>
+#include <set>
 
 namespace Render {
 namespace ECS {
@@ -39,6 +40,9 @@ void RobotControlSystem::Update(float deltaTime) {
     
     // 获取所有机器人实体
     auto robots = m_world->Query<RobotComponent>();
+    
+    // 记录哪些机器人有Kinematic关节需要更新TF
+    std::set<EntityID> robotsNeedingTFUpdate;
     
     for (const auto& robotEntity : robots) {
         const auto& robotComp = m_world->GetComponent<RobotComponent>(robotEntity);
@@ -67,7 +71,17 @@ void RobotControlSystem::Update(float deltaTime) {
             
             // 应用控制输出
             ApplyControl(jointEntity, jointComp, deltaTime);
+            
+            // 如果关节是Kinematic模式，标记需要更新TF
+            if (jointComp.controlMode == JointComponent::ControlMode::Kinematic) {
+                robotsNeedingTFUpdate.insert(robotEntity);
+            }
         }
+    }
+    
+    // 统一更新所有Kinematic机器人的TF（避免重复更新）
+    for (EntityID robotEntity : robotsNeedingTFUpdate) {
+        ApplyTFsToTransforms(robotEntity);
     }
 }
 
@@ -112,6 +126,18 @@ void RobotControlSystem::SetJointTargetPosition(EntityID robotEntity, const std:
             jointComp.limits.upper
         );
     }
+    
+    // 如果是Kinematic模式，立即更新JointTFSystem
+    if (jointComp.controlMode == JointComponent::ControlMode::Kinematic) {
+        auto* jointTFSystem = m_world->GetSystem<JointTFSystem>();
+        if (jointTFSystem) {
+            jointTFSystem->SetJointPosition(robotEntity, jointName, jointComp.targetPosition);
+            jointComp.kinematicPosition = jointComp.targetPosition;
+            jointComp.currentPosition = jointComp.targetPosition;
+            jointComp.currentVelocity = 0.0f;
+            jointComp.kinematicVelocity = 0.0f;
+        }
+    }
 }
 
 void RobotControlSystem::SetJointTargetVelocity(EntityID robotEntity, const std::string& jointName, 
@@ -137,6 +163,18 @@ void RobotControlSystem::SetJointTargetVelocity(EntityID robotEntity, const std:
             -jointComp.limits.velocity,
             jointComp.limits.velocity
         );
+    }
+    
+    // 如果是Kinematic模式，更新运动学速度
+    if (jointComp.controlMode == JointComponent::ControlMode::Kinematic) {
+        jointComp.kinematicVelocity = jointComp.targetVelocity;
+        jointComp.currentVelocity = jointComp.targetVelocity;
+        
+        // 如果kinematicPosition未初始化，从当前位置初始化
+        // 这样可以避免从0位置开始积分
+        if (std::abs(jointComp.kinematicPosition) < 1e-6f && std::abs(jointComp.currentPosition) > 1e-6f) {
+            jointComp.kinematicPosition = jointComp.currentPosition;
+        }
     }
 }
 
@@ -268,6 +306,22 @@ EntityID RobotControlSystem::FindJointEntity(EntityID robotEntity, const std::st
 void RobotControlSystem::UpdateJointState(EntityID jointEntity, JointComponent& jointComp) {
     if (!m_world) return;
     
+    // Kinematic模式：从JointTFSystem和运动学状态获取
+    if (jointComp.controlMode == JointComponent::ControlMode::Kinematic) {
+        auto* jointTFSystem = m_world->GetSystem<JointTFSystem>();
+        if (jointTFSystem) {
+            EntityID robotEntity = FindRobotEntity(jointEntity);
+            if (robotEntity.IsValid()) {
+                // 从JointTFSystem获取位置
+                jointComp.currentPosition = jointTFSystem->GetJointPosition(robotEntity, jointComp.jointName);
+                // 从运动学状态获取速度
+                jointComp.currentVelocity = jointComp.kinematicVelocity;
+            }
+        }
+        return;  // Kinematic模式处理完成
+    }
+    
+    // 物理控制模式：从物理系统获取状态
     // 优先从物理约束获取关节状态（最准确）
     if (jointComp.childLinkEntity.IsValid() &&
         m_world->HasComponent<ConstraintComponent>(jointComp.childLinkEntity)) {
@@ -310,16 +364,7 @@ void RobotControlSystem::UpdateJointState(EntityID jointEntity, JointComponent& 
     // 回退：从JointTFSystem获取关节位置
     auto* jointTFSystem = m_world->GetSystem<JointTFSystem>();
     if (jointTFSystem) {
-        EntityID robotEntity = EntityID::Invalid();
-        auto robots = m_world->Query<RobotComponent>();
-        for (const auto& robot : robots) {
-            const auto& robotComp = m_world->GetComponent<RobotComponent>(robot);
-            if (robotComp.linkEntityMap.find(jointComp.parentLink) != robotComp.linkEntityMap.end() ||
-                robotComp.linkEntityMap.find(jointComp.childLink) != robotComp.linkEntityMap.end()) {
-                robotEntity = robot;
-                break;
-            }
-        }
+        EntityID robotEntity = FindRobotEntity(jointEntity);
         if (robotEntity.IsValid()) {
             jointComp.currentPosition = jointTFSystem->GetJointPosition(robotEntity, jointComp.jointName);
         }
@@ -327,10 +372,71 @@ void RobotControlSystem::UpdateJointState(EntityID jointEntity, JointComponent& 
 }
 
 void RobotControlSystem::ApplyControl(EntityID jointEntity, JointComponent& jointComp, float deltaTime) {
-    (void)deltaTime;
-    
     if (!m_world) return;
     
+    // Kinematic模式：直接设置位置/速度，不通过物理模拟
+    if (jointComp.controlMode == JointComponent::ControlMode::Kinematic) {
+        auto* jointTFSystem = m_world->GetSystem<JointTFSystem>();
+        if (!jointTFSystem) {
+            return;
+        }
+        
+        // 获取机器人实体
+        EntityID robotEntity = FindRobotEntity(jointEntity);
+        if (!robotEntity.IsValid()) {
+            return;
+        }
+        
+        // 根据目标值类型决定控制方式
+        // 如果targetVelocity不为0，使用速度控制；否则使用位置控制
+        if (std::abs(jointComp.targetVelocity) > 1e-6f) {
+            // 速度控制：通过积分计算位置
+            // 如果kinematicPosition未初始化（为0且当前不在0位置），从当前位置初始化
+            if (std::abs(jointComp.kinematicPosition) < 1e-6f && std::abs(jointComp.currentPosition) > 1e-6f) {
+                jointComp.kinematicPosition = jointComp.currentPosition;
+            }
+            
+            jointComp.kinematicPosition += jointComp.targetVelocity * deltaTime;
+            
+            // 限制在关节限制范围内
+            if (jointComp.limits.lower < jointComp.limits.upper) {
+                jointComp.kinematicPosition = std::clamp(
+                    jointComp.kinematicPosition,
+                    jointComp.limits.lower,
+                    jointComp.limits.upper
+                );
+            }
+            
+            // 设置到JointTFSystem
+            jointTFSystem->SetJointPosition(robotEntity, jointComp.jointName, jointComp.kinematicPosition);
+            jointComp.currentPosition = jointComp.kinematicPosition;
+            jointComp.currentVelocity = jointComp.targetVelocity;
+            jointComp.kinematicVelocity = jointComp.targetVelocity;
+        } else {
+            // 位置控制：直接设置目标位置
+            float targetPos = jointComp.targetPosition;
+            
+            // 限制在关节限制范围内
+            if (jointComp.limits.lower < jointComp.limits.upper) {
+                targetPos = std::clamp(
+                    targetPos,
+                    jointComp.limits.lower,
+                    jointComp.limits.upper
+                );
+            }
+            
+            // 设置到JointTFSystem
+            jointTFSystem->SetJointPosition(robotEntity, jointComp.jointName, targetPos);
+            jointComp.kinematicPosition = targetPos;
+            jointComp.currentPosition = targetPos;
+            jointComp.currentVelocity = 0.0f;
+            jointComp.kinematicVelocity = 0.0f;
+        }
+        
+        return;  // Kinematic模式处理完成
+    }
+    
+    // 物理控制模式（Position/Velocity/Torque）
     // 检查是否有约束（优先使用约束控制）
     bool hasConstraint = false;
     if (jointComp.childLinkEntity.IsValid() &&
@@ -372,6 +478,10 @@ void RobotControlSystem::ApplyControl(EntityID jointEntity, JointComponent& join
                     constraint.usePositionControl = false;
                     // 继续执行下面的代码，直接对刚体施加力矩
                     break;
+                    
+                case JointComponent::ControlMode::Kinematic:
+                    // Kinematic模式不应该到这里（已在上面处理）
+                    break;
             }
         }
     }
@@ -399,10 +509,132 @@ void RobotControlSystem::ApplyControl(EntityID jointEntity, JointComponent& join
                 jointComp.maxTorque
             );
             break;
+            
+        case JointComponent::ControlMode::Kinematic:
+            // Kinematic模式不应该到这里（已在上面处理）
+            break;
     }
     
     // 应用力矩/力到关节
     ApplyJointTorqueOrForce(jointEntity, jointComp, torqueOrForce);
+}
+
+EntityID RobotControlSystem::FindRobotEntity(EntityID jointEntity) const {
+    if (!m_world || !jointEntity.IsValid()) {
+        return EntityID::Invalid();
+    }
+    
+    if (!m_world->HasComponent<JointComponent>(jointEntity)) {
+        return EntityID::Invalid();
+    }
+    
+    const auto& jointComp = m_world->GetComponent<JointComponent>(jointEntity);
+    
+    // 查找所有机器人实体
+    auto robots = m_world->Query<RobotComponent>();
+    for (const auto& robotEntity : robots) {
+        const auto& robotComp = m_world->GetComponent<RobotComponent>(robotEntity);
+        if (!robotComp.model) {
+            continue;
+        }
+        
+        // 检查关节的父link或子link是否在机器人的linkEntityMap中
+        if (robotComp.linkEntityMap.find(jointComp.parentLink) != robotComp.linkEntityMap.end() ||
+            robotComp.linkEntityMap.find(jointComp.childLink) != robotComp.linkEntityMap.end()) {
+            return robotEntity;
+        }
+    }
+    
+    return EntityID::Invalid();
+}
+
+void RobotControlSystem::ApplyTFsToTransforms(EntityID robotEntity) {
+    if (!m_world || !robotEntity.IsValid()) {
+        return;
+    }
+    
+    if (!m_world->HasComponent<RobotComponent>(robotEntity)) {
+        return;
+    }
+    
+    const auto& robotComp = m_world->GetComponent<RobotComponent>(robotEntity);
+    if (!robotComp.model) {
+        return;
+    }
+    
+    // 获取JointTFSystem
+    auto* jointTFSystem = m_world->GetSystem<JointTFSystem>();
+    if (!jointTFSystem) {
+        return;
+    }
+    
+    // 获取所有TF（这会触发TF计算）
+    const auto& tfs = jointTFSystem->GetAllTFs(robotEntity);
+    
+    // 获取基座link的世界Transform（用于计算相对位置）
+    Transform baseWorldTF;
+    if (robotComp.baseLinkEntity.IsValid() &&
+        m_world->HasComponent<TransformComponent>(robotComp.baseLinkEntity)) {
+        const auto& baseTransformComp = m_world->GetComponent<TransformComponent>(robotComp.baseLinkEntity);
+        if (baseTransformComp.transform) {
+            baseWorldTF.SetPosition(baseTransformComp.transform->GetWorldPosition());
+            baseWorldTF.SetRotation(baseTransformComp.transform->GetWorldRotation());
+            baseWorldTF.SetScale(baseTransformComp.transform->GetWorldScale());
+        }
+    }
+    
+    // 将TF应用到joint的TransformComponent（因为link是相对于joint的）
+    for (const auto& [jointName, jointTF] : tfs) {
+        // 获取joint实体
+        EntityID jointEntity = GetJointEntity(robotEntity, jointName);
+        if (!jointEntity.IsValid() || !m_world->HasComponent<TransformComponent>(jointEntity)) {
+            continue;
+        }
+        
+        // JointTF中的transform是相对于基座的世界坐标
+        // 需要转换为相对于父link的局部坐标
+        const auto& jointInfo = robotComp.model->joints.find(jointName);
+        if (jointInfo == robotComp.model->joints.end()) {
+            continue;
+        }
+        
+        // 找到父link实体
+        auto parentLinkIt = robotComp.linkEntityMap.find(jointInfo->second.parentLink);
+        if (parentLinkIt == robotComp.linkEntityMap.end()) {
+            continue;
+        }
+        
+        EntityID parentLinkEntity = parentLinkIt->second;
+        if (!parentLinkEntity.IsValid() || !m_world->HasComponent<TransformComponent>(parentLinkEntity)) {
+            continue;
+        }
+        
+        // 获取父link的世界Transform
+        const auto& parentTransformComp = m_world->GetComponent<TransformComponent>(parentLinkEntity);
+        if (!parentTransformComp.transform) {
+            continue;
+        }
+        
+        Transform parentWorldTF;
+        parentWorldTF.SetPosition(parentTransformComp.transform->GetWorldPosition());
+        parentWorldTF.SetRotation(parentTransformComp.transform->GetWorldRotation());
+        parentWorldTF.SetScale(parentTransformComp.transform->GetWorldScale());
+        
+        // 计算joint相对于父link的局部Transform
+        // joint局部位置 = parentWorldTF^(-1) * jointWorldPos
+        Vector3 jointLocalPos = parentWorldTF.InverseTransformPoint(jointTF.transform.GetWorldPosition());
+        
+        // joint局部旋转 = parentWorldRot^(-1) * jointWorldRot
+        Quaternion parentWorldRotInv = parentWorldTF.GetWorldRotation().inverse();
+        Quaternion jointLocalRot = parentWorldRotInv * jointTF.transform.GetWorldRotation();
+        
+        // 更新joint的TransformComponent
+        auto& jointTransformComp = m_world->GetComponent<TransformComponent>(jointEntity);
+        if (jointTransformComp.transform) {
+            jointTransformComp.transform->SetPosition(jointLocalPos);
+            jointTransformComp.transform->SetRotation(jointLocalRot);
+        }
+    }
 }
 
 float RobotControlSystem::ComputePositionControl(const JointComponent& jointComp) const {

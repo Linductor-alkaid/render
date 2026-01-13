@@ -10,7 +10,7 @@
 
 - ✅ URDF文件加载和解析
 - ✅ 机器人模型构建（Link、Joint）
-- ✅ 关节控制（位置、速度、力矩）
+- ✅ 关节控制（位置、速度、力矩、运动学）
 - ✅ 物理约束集成（Bullet Physics）
 - ✅ TF（Transform）可视化
 - ✅ 正向运动学计算
@@ -23,7 +23,7 @@
 - `<render/robot/robot_control_system.h>` - 关节控制系统
 - `<render/robot/urdf_loader.h>` - URDF加载器
 
-**最后更新**：2026-01-12
+**最后更新**：2026-01-13
 
 ---
 
@@ -168,9 +168,10 @@ struct JointComponent {
     // ==================== 关节控制 ====================
     
     enum class ControlMode {
-        Position,    ///< 位置控制（使用PD控制器）
-        Velocity,    ///< 速度控制（使用P控制器）
-        Torque       ///< 力矩控制（直接施加力矩）
+        Position,    ///< 位置控制（使用PD控制器，通过物理约束）
+        Velocity,    ///< 速度控制（使用P控制器，通过物理约束）
+        Torque,      ///< 力矩控制（直接施加力矩，通过物理约束）
+        Kinematic    ///< 运动学控制（直接设置位置/速度，不通过物理模拟）
     };
     
     ControlMode controlMode = ControlMode::Position;  ///< 当前控制模式
@@ -194,15 +195,20 @@ struct JointComponent {
     float currentPosition = 0.0f;  ///< 当前位置（角度或距离）
     float currentVelocity = 0.0f;  ///< 当前速度（rad/s 或 m/s）
     
+    // 运动学状态（用于Kinematic模式）
+    float kinematicPosition = 0.0f;  ///< 运动学位置（用于速度积分）
+    float kinematicVelocity = 0.0f;  ///< 运动学速度（用于速度控制）
+
     JointComponent();
 };
 ```
 
 **控制模式说明**：
 
-- **Position（位置控制）**：使用PD控制器，根据位置误差计算目标速度，然后通过物理约束的马达功能驱动关节到达目标位置。
-- **Velocity（速度控制）**：使用P控制器，根据速度误差计算目标力矩，直接控制关节速度。
-- **Torque（力矩控制）**：直接对刚体施加力矩，完全由用户控制。
+- **Position（位置控制）**：使用PD控制器，根据位置误差计算目标速度，然后通过物理约束的马达功能驱动关节到达目标位置。适用于需要物理交互的场景。
+- **Velocity（速度控制）**：使用P控制器，根据速度误差计算目标力矩，直接控制关节速度。适用于需要精确速度控制的场景。
+- **Torque（力矩控制）**：直接对刚体施加力矩，完全由用户控制。适用于需要精确力矩控制的场景。
+- **Kinematic（运动学控制）**：直接设置关节位置/速度，不通过物理模拟。响应更快、更平滑，适合动画、演示和不需要物理交互的场景。在Kinematic模式下，link的刚体类型应为Kinematic，不会与场景发生物理碰撞。
 
 **控制参数调优建议**：
 
@@ -409,7 +415,7 @@ void SetJointControlMode(EntityID robotEntity, const std::string& jointName,
 
 - `robotEntity` - 机器人实体ID
 - `jointName` - 关节名称
-- `mode` - 控制模式（Position、Velocity、Torque）
+- `mode` - 控制模式（Position、Velocity、Torque、Kinematic）
 
 **示例**：
 
@@ -423,8 +429,12 @@ robotControlSystem->SetJointControlMode(robotEntity, "elbow_joint",
                                        JointComponent::ControlMode::Velocity);
 
 // 设置为力矩控制
-robotControlSystem->SetJointControlMode(robotEntity, "wrist_joint", 
+robotControlSystem->SetJointControlMode(robotEntity, "wrist_joint",
                                        JointComponent::ControlMode::Torque);
+
+// 设置为运动学控制
+robotControlSystem->SetJointControlMode(robotEntity, "wrist_joint",
+                                       JointComponent::ControlMode::Kinematic);
 ```
 
 ##### `SetJointTargetPosition()`
@@ -445,7 +455,8 @@ void SetJointTargetPosition(EntityID robotEntity, const std::string& jointName,
 **说明**：
 
 - 目标位置会被限制在关节的 `limits.lower` 和 `limits.upper` 范围内
-- 只有在位置控制模式下才会生效
+- **Position模式**：通过PD控制器驱动关节到达目标位置
+- **Kinematic模式**：直接设置关节位置，立即生效（如果 `targetVelocity` 为0）
 
 **示例**：
 
@@ -470,13 +481,24 @@ void SetJointTargetVelocity(EntityID robotEntity, const std::string& jointName,
 - `jointName` - 关节名称
 - `velocity` - 目标速度（旋转关节：rad/s，平移关节：m/s）
 
-**说明**：只有在速度控制模式下才会生效
+**说明**：
+- **Velocity模式**：通过P控制器控制关节速度
+- **Kinematic模式**：
+  - 如果 `targetVelocity` 不为0，系统会通过积分计算位置：`kinematicPosition += targetVelocity * deltaTime`
+  - 如果 `targetVelocity` 为0，系统使用 `targetPosition` 进行位置控制
+  - 速度控制模式下，位置会自动更新，无需手动设置 `targetPosition`
 
 **示例**：
 
 ```cpp
 // 设置关节以1 rad/s的速度旋转
 robotControlSystem->SetJointTargetVelocity(robotEntity, "shoulder_joint", 1.0f);
+
+// Kinematic模式下，速度控制会自动积分计算位置
+robotControlSystem->SetJointControlMode(robotEntity, "shoulder_joint",
+                                       JointComponent::ControlMode::Kinematic);
+robotControlSystem->SetJointTargetVelocity(robotEntity, "shoulder_joint", 1.0f);
+// 关节会以1 rad/s的速度持续旋转
 ```
 
 ##### `SetJointTargetTorque()`
@@ -867,9 +889,19 @@ robotControlSystem->SetJointControlMode(robotEntity, "joint1",
 robotControlSystem->SetJointTargetVelocity(robotEntity, "joint1", 1.0f);
 
 // 切换到力矩控制
-robotControlSystem->SetJointControlMode(robotEntity, "joint1", 
+robotControlSystem->SetJointControlMode(robotEntity, "joint1",
                                         JointComponent::ControlMode::Torque);
 robotControlSystem->SetJointTargetTorque(robotEntity, "joint1", 10.0f);
+
+// 切换到运动学控制（位置控制）
+robotControlSystem->SetJointControlMode(robotEntity, "joint1",
+                                        JointComponent::ControlMode::Kinematic);
+robotControlSystem->SetJointTargetPosition(robotEntity, "joint1", 1.57f);
+
+// 切换到运动学控制（速度控制）
+robotControlSystem->SetJointControlMode(robotEntity, "joint1",
+                                        JointComponent::ControlMode::Kinematic);
+robotControlSystem->SetJointTargetVelocity(robotEntity, "joint1", 1.0f);
 ```
 
 ### 示例：批量控制多个关节
@@ -884,11 +916,174 @@ positions["wrist_joint"] = 0.3f;
 robotControlSystem->SetJointTargetPositions(robotEntity, positions);
 ```
 
+### 示例：运动学控制（Kinematic模式）
+
+完整的运动学控制设置示例：
+
+```cpp
+#include "render/ecs/physics/physics_components.h"
+#include <LinearMath/btVector3.h>
+#include <BulletCollision/CollisionDispatch/btCollisionObject.h>
+#include <BulletDynamics/Dynamics/btRigidBody.h>
+
+// 1. 加载机器人（使用Kinematic类型）
+EntityID robotEntity = urdfLoadSystem->LoadRobot(
+    "robots/my_robot.urdf",
+    "robots/meshes/",
+    RigidBodyType::Kinematic  // base link使用Kinematic类型
+);
+
+// 2. 将所有link设置为Kinematic类型（重要！）
+if (world.HasComponent<RobotComponent>(robotEntity)) {
+    const auto& robotComp = world.GetComponent<RobotComponent>(robotEntity);
+    for (const auto& [linkName, linkEntity] : robotComp.linkEntityMap) {
+        if (world.HasComponent<RigidBodyComponent>(linkEntity)) {
+            auto& rb = world.GetComponent<RigidBodyComponent>(linkEntity);
+            rb.type = RigidBodyType::Kinematic;
+            rb.useGravity = false;
+            rb.syncMode = RigidBodyComponent::SyncMode::TransformToPhysics;
+            
+            // 如果Bullet刚体已创建，更新其标志
+            if (rb.bulletRigidBody) {
+                btRigidBody* bulletBody = static_cast<btRigidBody*>(rb.bulletRigidBody);
+                int flags = bulletBody->getCollisionFlags();
+                flags &= ~(btCollisionObject::CF_STATIC_OBJECT | btCollisionObject::CF_KINEMATIC_OBJECT);
+                flags |= btCollisionObject::CF_KINEMATIC_OBJECT;
+                bulletBody->setCollisionFlags(flags);
+                bulletBody->setActivationState(DISABLE_DEACTIVATION);
+                bulletBody->setGravity(btVector3(0, 0, 0));
+            }
+        }
+    }
+}
+
+// 3. 设置所有关节为Kinematic控制模式
+if (world.HasComponent<RobotComponent>(robotEntity)) {
+    const auto& robotComp = world.GetComponent<RobotComponent>(robotEntity);
+    if (robotComp.model) {
+        for (const auto& [jointName, jointInfo] : robotComp.model->joints) {
+            robotControlSystem->SetJointControlMode(robotEntity, jointName,
+                                                   JointComponent::ControlMode::Kinematic);
+            
+            // 根据关节类型设置初始值
+            if (jointInfo.type == Render::Robot::JointType::Revolute) {
+                // Revolute关节：设置到中间位置
+                float midPosition = (jointInfo.limits.lower + jointInfo.limits.upper) * 0.5f;
+                robotControlSystem->SetJointTargetPosition(robotEntity, jointName, midPosition);
+            } else if (jointInfo.type == Render::Robot::JointType::Continuous) {
+                // Continuous关节：初始速度为0
+                robotControlSystem->SetJointTargetVelocity(robotEntity, jointName, 0.0f);
+            }
+        }
+    }
+}
+
+// 4. 在主循环中控制关节
+float time = 0.0f;
+while (running) {
+    float deltaTime = GetDeltaTime();
+    time += deltaTime;
+    
+    // 位置控制示例：正弦波运动
+    robotControlSystem->SetJointTargetPosition(robotEntity, "shoulder_joint",
+                                              0.5f + 0.3f * std::sin(time));
+    
+    // 速度控制示例：持续旋转
+    robotControlSystem->SetJointTargetVelocity(robotEntity, "wheel_joint", 1.0f);
+    
+    // 更新系统
+    world.Update(deltaTime);
+}
+```
+
+**关键点**：
+- ✅ 必须将所有link设置为Kinematic类型，否则仍会与场景发生物理碰撞
+- ✅ Kinematic模式下，控制响应立即生效，无延迟
+- ✅ 速度控制通过积分自动计算位置，无需手动更新
+- ✅ 适合动画、演示和不需要物理交互的场景
+
 ---
 
 ## ⚠️ 注意事项
 
-### 1. 系统执行顺序
+### 1. 运动学控制（Kinematic模式）
+
+运动学控制模式提供了直接控制关节位置/速度的能力，不通过物理模拟：
+
+**特点**：
+- ✅ 响应更快、更平滑，无物理抖动
+- ✅ 不需要调优PD控制器参数
+- ✅ 适合动画、演示和离线规划
+- ⚠️ 不进行物理碰撞检测（link应为Kinematic类型）
+- ⚠️ 不响应重力和其他物理力
+
+**使用场景**：
+- 机器人动画演示
+- 路径规划可视化
+- 离线运动学仿真
+- 不需要物理交互的场景
+
+**设置方法**：
+
+```cpp
+// 1. 加载机器人时使用Kinematic类型
+EntityID robotEntity = urdfLoadSystem->LoadRobot(
+    "robots/my_robot.urdf",
+    "robots/meshes/",
+    RigidBodyType::Kinematic  // base link使用Kinematic类型
+);
+
+// 2. 将所有link设置为Kinematic类型（重要！）
+// LoadRobot只设置了baseLink为Kinematic，其他link需要手动设置
+if (world.HasComponent<RobotComponent>(robotEntity)) {
+    const auto& robotComp = world.GetComponent<RobotComponent>(robotEntity);
+    for (const auto& [linkName, linkEntity] : robotComp.linkEntityMap) {
+        if (world.HasComponent<RigidBodyComponent>(linkEntity)) {
+            auto& rb = world.GetComponent<RigidBodyComponent>(linkEntity);
+            rb.type = RigidBodyType::Kinematic;
+            rb.useGravity = false;
+            rb.syncMode = RigidBodyComponent::SyncMode::TransformToPhysics;
+            
+            // 如果Bullet刚体已创建，更新其标志
+            if (rb.bulletRigidBody) {
+                btRigidBody* bulletBody = static_cast<btRigidBody*>(rb.bulletRigidBody);
+                int flags = bulletBody->getCollisionFlags();
+                flags &= ~(btCollisionObject::CF_STATIC_OBJECT | btCollisionObject::CF_KINEMATIC_OBJECT);
+                flags |= btCollisionObject::CF_KINEMATIC_OBJECT;
+                bulletBody->setCollisionFlags(flags);
+                bulletBody->setActivationState(DISABLE_DEACTIVATION);
+                bulletBody->setGravity(btVector3(0, 0, 0));
+            }
+        }
+    }
+}
+
+// 3. 设置关节为Kinematic控制模式
+robotControlSystem->SetJointControlMode(robotEntity, "joint1",
+                                        JointComponent::ControlMode::Kinematic);
+
+// 4. 位置控制：直接设置角度
+robotControlSystem->SetJointTargetPosition(robotEntity, "joint1", 1.57f);
+
+// 5. 速度控制：设置角速度（通过积分计算位置）
+robotControlSystem->SetJointTargetVelocity(robotEntity, "joint1", 1.0f);
+// 当targetVelocity不为0时，系统会自动积分计算位置
+// 当targetVelocity为0时，系统使用targetPosition进行位置控制
+```
+
+**工作原理**：
+- 位置控制：直接调用 `JointTFSystem::SetJointPosition()` 设置关节位置，系统自动计算并应用TF到link的Transform
+- 速度控制：通过积分 `kinematicPosition += targetVelocity * deltaTime` 计算位置，然后设置到JointTFSystem
+- 系统在每帧结束时统一更新所有Kinematic机器人的TF，确保link位置正确
+
+**注意事项**：
+- Kinematic模式下，`positionKp`、`positionKd`、`velocityKp`、`maxTorque` 等参数无效
+- 速度控制模式下，`kinematicPosition` 会通过积分自动更新
+- 位置控制模式下，直接设置 `targetPosition` 即可
+- 系统会自动将TF应用到joint的Transform，childLink会跟随joint移动
+- 确保所有link的刚体类型为Kinematic，否则仍会与场景发生物理碰撞
+
+### 2. 系统执行顺序
 
 机器人系统的执行顺序很重要：
 
@@ -913,9 +1108,9 @@ robotControlSystem->SetJointTargetPositions(robotEntity, positions);
 - `velocityKp`: 10-50
 - `maxTorque`: 根据机器人大小和重量调整
 
-### 3. 物理约束集成
+### 3. 物理约束集成（仅适用于Position/Velocity/Torque模式）
 
-关节控制通过物理约束的马达功能实现，因此：
+对于Position、Velocity、Torque控制模式，关节控制通过物理约束的马达功能实现，因此：
 
 - 确保物理系统已正确初始化
 - 确保约束已正确创建（由 `URDFLoadSystem` 自动创建）

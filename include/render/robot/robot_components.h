@@ -73,9 +73,10 @@ struct JointComponent {
      * @brief 关节控制模式
      */
     enum class ControlMode {
-        Position,    ///< 位置控制（使用PD控制器）
-        Velocity,    ///< 速度控制（使用P控制器）
-        Torque       ///< 力矩控制（直接施加力矩）
+        Position,    ///< 位置控制（使用PD控制器，通过物理约束）
+        Velocity,    ///< 速度控制（使用P控制器，通过物理约束）
+        Torque,      ///< 力矩控制（直接施加力矩，通过物理约束）
+        Kinematic    ///< 运动学控制（直接设置位置/速度，不通过物理模拟）
     };
     
     ControlMode controlMode = ControlMode::Position;  ///< 当前控制模式
@@ -98,6 +99,10 @@ struct JointComponent {
     // 当前状态（由RobotControlSystem更新）
     float currentPosition = 0.0f;  ///< 当前位置（角度或距离）
     float currentVelocity = 0.0f;  ///< 当前速度（rad/s 或 m/s）
+    
+    // 运动学状态（用于Kinematic模式）
+    float kinematicPosition = 0.0f;  ///< 运动学位置（用于速度积分）
+    float kinematicVelocity = 0.0f;  ///< 运动学速度（用于速度控制）
     
     JointComponent() 
         : type(Render::Robot::JointType::Unknown)
