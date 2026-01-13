@@ -323,6 +323,7 @@ int main() {
             std::unordered_map<std::string, float> jointPositions;
             
             // 示例：设置所有关节为运动学控制（Kinematic）
+            // 按照URDF文件中的定义顺序遍历关节（通过jointOrder）
             int controlledJointCount = 0;
             int revoluteJointCount = 0;
             int prismaticJointCount = 0;
@@ -330,9 +331,10 @@ int main() {
             int fixedJointCount = 0;
             int otherJointCount = 0;
             
-            for (const auto& pair : robotComp.model->joints) {
-                const std::string& jointName = pair.first;
-                const Render::Robot::URDFJoint& joint = pair.second;
+            for (const std::string& jointName : robotComp.model->jointOrder) {
+                const auto& jointIt = robotComp.model->joints.find(jointName);
+                if (jointIt == robotComp.model->joints.end()) continue;
+                const Render::Robot::URDFJoint& joint = jointIt->second;
                 
                 // 获取关节实体并验证
                 EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
@@ -503,8 +505,13 @@ int main() {
                     // 数字键1-9控制关节位置
                     if (event.key.key >= SDLK_1 && event.key.key <= SDLK_9) {
                         int jointIndex = static_cast<int>(event.key.key - SDLK_1);
-                        if (jointIndex < static_cast<int>(controllableJoints.size())) {
+                        if (jointIndex >= 0 && jointIndex < static_cast<int>(controllableJoints.size())) {
                             const std::string& jointName = controllableJoints[jointIndex];
+                            
+                            Logger::GetInstance().InfoFormat(
+                                "[URDFKinematicRobotDemo] Keyboard %d pressed, controlling joint index %d: '%s'",
+                                jointIndex + 1, jointIndex, jointName.c_str()
+                            );
                             
                             // 检查是否按住Ctrl（减少角度）
                             bool decrease = (keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL]);
@@ -516,22 +523,50 @@ int main() {
                             EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
                             if (jointEntity.IsValid() && world->HasComponent<JointComponent>(jointEntity)) {
                                 const auto& jointComp = world->GetComponent<JointComponent>(jointEntity);
-                                float step = (jointComp.limits.upper - jointComp.limits.lower) * 0.1f;  // 10%步进
+                                
+                                // 检查是否为Continuous关节（轮关节）
+                                bool isContinuous = (jointComp.type == Render::Robot::JointType::Continuous);
+                                
+                                float step = 0.0f;
+                                if (isContinuous) {
+                                    // Continuous关节使用固定步长（0.1弧度）
+                                    step = 0.1f;
+                                } else {
+                                    // Revolute关节使用范围的10%作为步长
+                                    if (jointComp.limits.lower < jointComp.limits.upper) {
+                                        step = (jointComp.limits.upper - jointComp.limits.lower) * 0.1f;
+                                    } else {
+                                        // 如果limits无效，使用固定步长
+                                        step = 0.1f;
+                                    }
+                                }
                                 
                                 float newTarget = currentTarget + (decrease ? -step : step);
                                 
-                                // 限制在关节范围内
-                                if (jointComp.limits.lower < jointComp.limits.upper) {
+                                // 限制在关节范围内（仅对Revolute关节）
+                                if (!isContinuous && jointComp.limits.lower < jointComp.limits.upper) {
                                     newTarget = std::clamp(newTarget, jointComp.limits.lower, jointComp.limits.upper);
                                 }
+                                // Continuous关节不受限制，可以无限旋转
                                 
                                 robotControlSystem->SetJointTargetPosition(robotEntity, jointName, newTarget);
                                 
                                 Logger::GetInstance().InfoFormat(
-                                    "[URDFKinematicRobotDemo] Joint '%s' target position: %.3f rad (%.1f deg)",
-                                    jointName.c_str(), newTarget, MathUtils::RadiansToDegrees(newTarget)
+                                    "[URDFKinematicRobotDemo] Joint '%s' (type=%d) target position: %.3f rad (%.1f deg), step=%.3f",
+                                    jointName.c_str(), static_cast<int>(jointComp.type), 
+                                    newTarget, MathUtils::RadiansToDegrees(newTarget), step
+                                );
+                            } else {
+                                Logger::GetInstance().WarningFormat(
+                                    "[URDFKinematicRobotDemo] Joint entity for '%s' is invalid or missing JointComponent",
+                                    jointName.c_str()
                                 );
                             }
+                        } else {
+                            Logger::GetInstance().WarningFormat(
+                                "[URDFKinematicRobotDemo] Keyboard %d pressed, but joint index %d is out of range (controllableJoints.size()=%zu)",
+                                jointIndex + 1, jointIndex, controllableJoints.size()
+                            );
                         }
                     }
                     

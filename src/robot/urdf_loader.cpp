@@ -185,6 +185,8 @@ void URDFLoader::ParseRobot(const std::string& xml, RobotModel& model, const std
         ParseJoint(jointTag, joint);
         if (!joint.name.empty()) {
             model.joints[joint.name] = joint;
+            // 保存关节定义顺序（按照URDF文件中的定义顺序）
+            model.jointOrder.push_back(joint.name);
             
             // 记录所有child links
             if (!joint.childLink.empty()) {

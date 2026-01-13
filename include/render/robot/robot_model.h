@@ -154,6 +154,9 @@ struct RobotModel {
     std::unordered_map<std::string, URDFLink> links;
     std::unordered_map<std::string, URDFJoint> joints;
     
+    // 关节定义顺序（按照URDF文件中的定义顺序保存）
+    std::vector<std::string> jointOrder;
+    
     // Link到ECS实体的映射（加载后填充）
     std::unordered_map<std::string, ECS::EntityID> linkEntities;
     
