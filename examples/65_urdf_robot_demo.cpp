@@ -40,6 +40,7 @@
 #include <render/robot/robot_systems.h>
 #include <render/robot/robot_components.h>
 #include <render/robot/joint_tf_system.h>
+#include <render/robot/robot_control_system.h>
 #include <render/robot/imu_interface.h>
 #include <render/shader_cache.h>
 #include <render/material.h>
@@ -126,6 +127,8 @@ int main() {
     auto* urdfLoadSystem = world->RegisterSystem<URDFLoadSystem>();
     
     auto* jointTFSystem = world->RegisterSystem<JointTFSystem>();
+    
+    auto* robotControlSystem = world->RegisterSystem<RobotControlSystem>();
     
     auto* robotRenderSystem = world->RegisterSystem<RobotRenderSystem>();
     
@@ -264,26 +267,105 @@ int main() {
     // 注意：环境光通过材质的 SetAmbientColor 设置，而不是通过 LightComponent
     // 环境光已经在材质的 Phong 着色器中处理
     
-    // 设置一些关节的初始位置（示例）
+    // 设置关节控制（示例）
+    std::vector<std::string> controllableJoints;  // 存储可控制的关节名称
+    Logger::GetInstance().InfoFormat("[URDFRobotDemo] Checking robot entity %u for RobotComponent...", robotEntity.index);
     if (world->HasComponent<RobotComponent>(robotEntity)) {
         const auto& robotComp = world->GetComponent<RobotComponent>(robotEntity);
+        Logger::GetInstance().InfoFormat("[URDFRobotDemo] RobotComponent found, model pointer: %p", robotComp.model.get());
         if (robotComp.model) {
-            // 设置一些关节位置
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Robot model has %zu joints", robotComp.model->joints.size());
+            // 设置一些关节位置（用于TF计算）
             std::unordered_map<std::string, float> jointPositions;
             
             // 示例：设置一些关节的角度
+            int controlledJointCount = 0;
+            int revoluteJointCount = 0;
+            int otherJointCount = 0;
             for (const auto& pair : robotComp.model->joints) {
                 const std::string& jointName = pair.first;
                 const Render::Robot::URDFJoint& joint = pair.second;
                 if (joint.type == Render::Robot::JointType::Revolute) {
+                    revoluteJointCount++;
                     // 设置到中间位置
-                    jointPositions[jointName] = (joint.limits.lower + joint.limits.upper) * 0.5f;
+                    float midPosition = (joint.limits.lower + joint.limits.upper) * 0.5f;
+                    jointPositions[jointName] = midPosition;
+                    
+                    // 设置关节控制模式为位置控制
+                    robotControlSystem->SetJointControlMode(robotEntity, jointName, 
+                                                           JointComponent::ControlMode::Position);
+                    robotControlSystem->SetJointTargetPosition(robotEntity, jointName, midPosition);
+                    
+                    // 设置控制参数（降低增益以减少抖动）
+                    EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
+                    if (jointEntity.IsValid() && world->HasComponent<JointComponent>(jointEntity)) {
+                        auto& jointComp = world->GetComponent<JointComponent>(jointEntity);
+                        jointComp.positionKp = 50.0f;   // 降低位置增益以减少抖动
+                        jointComp.positionKd = 1.0f;  // 降低阻尼增益
+                        jointComp.velocityKp = 20.0f;   // 速度增益
+                        jointComp.maxTorque = 100.0f;   // 最大力矩
+                    }
+                    
+                    // 保存可控制的关节名称（用于键盘控制）
+                    controllableJoints.push_back(jointName);
+                    controlledJointCount++;
+                } else if (joint.type == Render::Robot::JointType::Continuous) {
+                    // Continuous关节（轮关节）：通常用于速度控制或力矩控制
+                    revoluteJointCount++;
+                    
+                    // Continuous关节没有位置限制，初始位置设为0
+                    jointPositions[jointName] = 0.0f;
+                    
+                    // 默认设置为速度控制模式（适合轮关节）
+                    robotControlSystem->SetJointControlMode(robotEntity, jointName, 
+                                                           JointComponent::ControlMode::Velocity);
+                    robotControlSystem->SetJointTargetVelocity(robotEntity, jointName, 0.0f);  // 初始速度为0
+                    
+                    // 设置控制参数
+                    EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
+                    if (jointEntity.IsValid() && world->HasComponent<JointComponent>(jointEntity)) {
+                        auto& jointComp = world->GetComponent<JointComponent>(jointEntity);
+                        jointComp.velocityKp = 20.0f;   // 速度增益
+                        jointComp.maxTorque = 100.0f;   // 最大力矩
+                        // Continuous关节也可以使用位置控制，但通常使用速度或力矩控制
+                        jointComp.positionKp = 50.0f;   // 位置增益（如果切换到位置控制）
+                        jointComp.positionKd = 1.0f;   // 阻尼增益
+                    }
+                    
+                    // 保存可控制的关节名称（用于键盘控制）
+                    controllableJoints.push_back(jointName);
+                    controlledJointCount++;
+                    
+                    Logger::GetInstance().InfoFormat("[URDFRobotDemo] Configured Continuous joint '%s' for velocity control", 
+                        jointName.c_str());
+                } else {
+                    otherJointCount++;
+                    Logger::GetInstance().InfoFormat("[URDFRobotDemo] Joint '%s' type is %d (not Revolute or Continuous)", 
+                        jointName.c_str(), static_cast<int>(joint.type));
                 }
             }
             
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Joint type summary: %d Revolute, %d other types", 
+                revoluteJointCount, otherJointCount);
+            
             jointTFSystem->SetJointPositions(robotEntity, jointPositions);
-            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Set %zu joint positions", jointPositions.size());
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Set %zu joint positions for TF calculation", 
+                jointPositions.size());
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Configured %d joints for position control", 
+                controlledJointCount);
+            Logger::GetInstance().InfoFormat("[URDFRobotDemo] Controllable joints count: %zu", 
+                controllableJoints.size());
+            if (!controllableJoints.empty()) {
+                Logger::GetInstance().InfoFormat("[URDFRobotDemo] First controllable joint: %s", 
+                    controllableJoints[0].c_str());
+            } else {
+                Logger::GetInstance().Warning("[URDFRobotDemo] No controllable joints found! Check if robot has Revolute joints.");
+            }
+        } else {
+            Logger::GetInstance().Error("[URDFRobotDemo] RobotComponent.model is null!");
         }
+    } else {
+        Logger::GetInstance().ErrorFormat("[URDFRobotDemo] Robot entity %u does not have RobotComponent!", robotEntity.index);
     }
     
     // 创建IMU接口（示例）
@@ -299,9 +381,22 @@ int main() {
     tfVisualizer.SetAxisLength(0.1f);
     
     Logger::GetInstance().Info("[URDFRobotDemo] Starting main loop...");
-    Logger::GetInstance().Info("[URDFRobotDemo] Controls: ESC to exit");
-    Logger::GetInstance().Info("[URDFRobotDemo] Controls: WASD 前后左右, Q/E 上下, Shift 加速");
-    Logger::GetInstance().Info("[URDFRobotDemo] Controls: 鼠标视角, Tab 捕获/释放鼠标");
+    Logger::GetInstance().Info("[URDFRobotDemo] === Camera Controls ===");
+    Logger::GetInstance().Info("[URDFRobotDemo] ESC: 退出");
+    Logger::GetInstance().Info("[URDFRobotDemo] WASD: 前后左右移动, Q/E: 上下移动, Shift: 加速");
+    Logger::GetInstance().Info("[URDFRobotDemo] 鼠标: 视角控制, Tab: 捕获/释放鼠标");
+    Logger::GetInstance().Info("[URDFRobotDemo] === Joint Controls ===");
+    Logger::GetInstance().Info("[URDFRobotDemo] 1-9: 控制前9个关节位置 (增加角度)");
+    Logger::GetInstance().Info("[URDFRobotDemo] Ctrl+1-9: 控制前9个关节位置 (减少角度)");
+    Logger::GetInstance().Info("[URDFRobotDemo] R: 切换为位置控制模式");
+    Logger::GetInstance().Info("[URDFRobotDemo] T: 切换为速度控制模式");
+    Logger::GetInstance().Info("[URDFRobotDemo] Y: 切换为力矩控制模式");
+    Logger::GetInstance().Info("[URDFRobotDemo] Space: 启用/禁用自动动画演示");
+    
+    // 控制状态
+    bool autoAnimationEnabled = true;  // 自动动画演示
+    JointComponent::ControlMode currentControlMode = JointComponent::ControlMode::Position;
+    int selectedJointIndex = 0;  // 当前选中的关节索引
     
     // 主循环
     bool running = true;
@@ -318,6 +413,15 @@ int main() {
             
             // 键盘控制
             if (event.type == SDL_EVENT_KEY_DOWN) {
+                // 调试：输出所有按键（仅限字母键）
+                if ((event.key.key >= 'a' && event.key.key <= 'z') || 
+                    (event.key.key >= 'A' && event.key.key <= 'Z')) {
+                    Logger::GetInstance().InfoFormat(
+                        "[URDFRobotDemo] Key pressed: keycode=0x%08X ('%c'), scancode=%d",
+                        event.key.key, static_cast<char>(event.key.key), event.key.scancode
+                    );
+                }
+                
                 if (event.key.key == SDLK_ESCAPE) {
                     running = false;
                 }
@@ -326,6 +430,102 @@ int main() {
                     mouseCaptured = !mouseCaptured;
                     if (auto context = renderer->GetContext()) {
                         SDL_SetWindowRelativeMouseMode(context->GetWindow(), mouseCaptured);
+                    }
+                }
+                
+                // 关节控制
+                if (!controllableJoints.empty()) {
+                    // 获取当前键盘状态（用于检查Ctrl键）
+                    const bool* keyboardState = SDL_GetKeyboardState(nullptr);
+                    
+                    // 数字键1-9控制关节位置
+                    if (event.key.key >= SDLK_1 && event.key.key <= SDLK_9) {
+                        int jointIndex = static_cast<int>(event.key.key - SDLK_1);
+                        if (jointIndex < static_cast<int>(controllableJoints.size())) {
+                            const std::string& jointName = controllableJoints[jointIndex];
+                            
+                            // 检查是否按住Ctrl（减少角度）
+                            bool decrease = (keyboardState[SDL_SCANCODE_LCTRL] || keyboardState[SDL_SCANCODE_RCTRL]);
+                            
+                            // 获取当前目标位置
+                            float currentTarget = robotControlSystem->GetJointPosition(robotEntity, jointName);
+                            
+                            // 获取关节限制
+                            EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
+                            if (jointEntity.IsValid() && world->HasComponent<JointComponent>(jointEntity)) {
+                                const auto& jointComp = world->GetComponent<JointComponent>(jointEntity);
+                                float step = (jointComp.limits.upper - jointComp.limits.lower) * 0.1f;  // 10%步进
+                                
+                                float newTarget = currentTarget + (decrease ? -step : step);
+                                
+                                // 限制在关节范围内
+                                if (jointComp.limits.lower < jointComp.limits.upper) {
+                                    newTarget = std::clamp(newTarget, jointComp.limits.lower, jointComp.limits.upper);
+                                }
+                                
+                                robotControlSystem->SetJointTargetPosition(robotEntity, jointName, newTarget);
+                                
+                                Logger::GetInstance().InfoFormat(
+                                    "[URDFRobotDemo] Joint '%s' target position: %.3f rad (%.1f deg)",
+                                    jointName.c_str(), newTarget, MathUtils::RadiansToDegrees(newTarget)
+                                );
+                            }
+                        }
+                    }
+                    
+                    // 控制模式切换
+                    // SDL3中SDLK_R实际上是'r'的Unicode值(0x72)，SDLK_T是't'(0x74)，SDLK_Y是'y'(0x79)
+                    // 注意：SDL3的keycode是Unicode值，小写字母的Unicode值就是SDLK_*的值
+                    if (event.key.key == SDLK_R || event.key.key == 'r' || event.key.key == 'R') {
+                        currentControlMode = JointComponent::ControlMode::Position;
+                        for (const auto& jointName : controllableJoints) {
+                            robotControlSystem->SetJointControlMode(robotEntity, jointName, currentControlMode);
+                        }
+                        Logger::GetInstance().InfoFormat(
+                            "[URDFRobotDemo] Switched to Position Control Mode (keycode=0x%08X, %zu joints)",
+                            event.key.key, controllableJoints.size()
+                        );
+                    } else if (event.key.key == SDLK_T || event.key.key == 't' || event.key.key == 'T') {
+                        currentControlMode = JointComponent::ControlMode::Velocity;
+                        for (const auto& jointName : controllableJoints) {
+                            robotControlSystem->SetJointControlMode(robotEntity, jointName, currentControlMode);
+                            // 设置初始目标速度
+                            robotControlSystem->SetJointTargetVelocity(robotEntity, jointName, 0.0f);
+                        }
+                        Logger::GetInstance().InfoFormat(
+                            "[URDFRobotDemo] Switched to Velocity Control Mode (keycode=0x%08X, %zu joints)",
+                            event.key.key, controllableJoints.size()
+                        );
+                    } else if (event.key.key == SDLK_Y || event.key.key == 'y' || event.key.key == 'Y') {
+                        currentControlMode = JointComponent::ControlMode::Torque;
+                        for (const auto& jointName : controllableJoints) {
+                            robotControlSystem->SetJointControlMode(robotEntity, jointName, currentControlMode);
+                            // 设置初始目标力矩
+                            robotControlSystem->SetJointTargetTorque(robotEntity, jointName, 0.0f);
+                        }
+                        Logger::GetInstance().InfoFormat(
+                            "[URDFRobotDemo] Switched to Torque Control Mode (keycode=0x%08X, %zu joints)",
+                            event.key.key, controllableJoints.size()
+                        );
+                    }
+                    
+                    // 空格键切换自动动画
+                    if (event.key.key == SDLK_SPACE) {
+                        autoAnimationEnabled = !autoAnimationEnabled;
+                        Logger::GetInstance().InfoFormat(
+                            "[URDFRobotDemo] Auto animation: %s",
+                            autoAnimationEnabled ? "ENABLED" : "DISABLED"
+                        );
+                    }
+                } else {
+                    // 如果controllableJoints为空，输出调试信息
+                    if (event.key.key == SDLK_R || event.key.key == 'r' || event.key.key == 'R' ||
+                        event.key.key == SDLK_T || event.key.key == 't' || event.key.key == 'T' ||
+                        event.key.key == SDLK_Y || event.key.key == 'y' || event.key.key == 'Y') {
+                        Logger::GetInstance().WarningFormat(
+                            "[URDFRobotDemo] Control mode key pressed (0x%08X) but no controllable joints! controllableJoints.size()=%zu",
+                            event.key.key, controllableJoints.size()
+                        );
                     }
                 }
             }
@@ -373,6 +573,86 @@ int main() {
         auto& cameraTransformComp = world->GetComponent<TransformComponent>(cameraEntity);
         cameraTransformComp.SetPosition(cameraPosition);
         cameraTransformComp.SetRotation(viewRotation);
+        
+        // 自动动画演示（正弦波控制关节位置）
+        if (autoAnimationEnabled && !controllableJoints.empty() && 
+            currentControlMode == JointComponent::ControlMode::Position) {
+            for (size_t i = 0; i < controllableJoints.size() && i < 6; ++i) {  // 只控制前6个关节
+                const std::string& jointName = controllableJoints[i];
+                
+                // 获取关节限制
+                EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
+                if (jointEntity.IsValid() && world->HasComponent<JointComponent>(jointEntity)) {
+                    const auto& jointComp = world->GetComponent<JointComponent>(jointEntity);
+                    
+                    // 检查是否为Continuous关节（没有位置限制或限制范围很大）
+                    bool isContinuous = (jointComp.type == Render::Robot::JointType::Continuous);
+                    
+                    if (isContinuous) {
+                        // Continuous关节：使用连续旋转（位置控制也可以，但通常用速度控制）
+                        // 这里使用位置控制，但目标位置是连续增加的
+                        float targetPosition = time * 0.5f + static_cast<float>(i) * 1.0f;  // 连续旋转
+                        robotControlSystem->SetJointTargetPosition(robotEntity, jointName, targetPosition);
+                    } else if (jointComp.limits.lower < jointComp.limits.upper) {
+                        // Revolute关节：使用正弦波生成平滑的关节运动
+                        float range = (jointComp.limits.upper - jointComp.limits.lower) * 0.5f;  // 50%范围
+                        float center = (jointComp.limits.lower + jointComp.limits.upper) * 0.5f;
+                        float phase = time * 0.5f + static_cast<float>(i) * 0.8f;  // 不同相位
+                        float targetPosition = center + range * std::sin(phase);
+                        
+                        robotControlSystem->SetJointTargetPosition(robotEntity, jointName, targetPosition);
+                    }
+                }
+            }
+        }
+        
+        // 速度控制演示（如果处于速度控制模式，适合Continuous关节/轮关节）
+        if (currentControlMode == JointComponent::ControlMode::Velocity && autoAnimationEnabled) {
+            for (size_t i = 0; i < controllableJoints.size() && i < 6; ++i) {  // 控制前6个关节
+                const std::string& jointName = controllableJoints[i];
+                
+                // 获取关节类型
+                EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
+                if (jointEntity.IsValid() && world->HasComponent<JointComponent>(jointEntity)) {
+                    const auto& jointComp = world->GetComponent<JointComponent>(jointEntity);
+                    bool isContinuous = (jointComp.type == Render::Robot::JointType::Continuous);
+                    
+                    if (isContinuous) {
+                        // Continuous关节：使用恒定速度或正弦波速度（适合轮关节）
+                        float targetVelocity = 1.0f + 0.5f * std::sin(time * 0.3f + static_cast<float>(i) * 1.0f);
+                        robotControlSystem->SetJointTargetVelocity(robotEntity, jointName, targetVelocity);
+                    } else {
+                        // Revolute关节：使用正弦波生成目标速度
+                        float targetVelocity = 0.5f * std::sin(time * 0.3f + static_cast<float>(i) * 1.0f);
+                        robotControlSystem->SetJointTargetVelocity(robotEntity, jointName, targetVelocity);
+                    }
+                }
+            }
+        }
+        
+        // 力矩控制演示（如果处于力矩控制模式，适合Continuous关节/轮关节）
+        if (currentControlMode == JointComponent::ControlMode::Torque && autoAnimationEnabled) {
+            for (size_t i = 0; i < controllableJoints.size() && i < 6; ++i) {  // 控制前6个关节
+                const std::string& jointName = controllableJoints[i];
+                
+                // 获取关节类型
+                EntityID jointEntity = robotControlSystem->GetJointEntity(robotEntity, jointName);
+                if (jointEntity.IsValid() && world->HasComponent<JointComponent>(jointEntity)) {
+                    const auto& jointComp = world->GetComponent<JointComponent>(jointEntity);
+                    bool isContinuous = (jointComp.type == Render::Robot::JointType::Continuous);
+                    
+                    if (isContinuous) {
+                        // Continuous关节：使用较大的力矩（适合轮关节驱动）
+                        float targetTorque = 20.0f + 10.0f * std::sin(time * 0.2f + static_cast<float>(i) * 1.5f);
+                        robotControlSystem->SetJointTargetTorque(robotEntity, jointName, targetTorque);
+                    } else {
+                        // Revolute关节：使用较小的力矩
+                        float targetTorque = 10.0f * std::sin(time * 0.2f + static_cast<float>(i) * 1.5f);
+                        robotControlSystem->SetJointTargetTorque(robotEntity, jointName, targetTorque);
+                    }
+                }
+            }
+        }
         
         // 更新IMU（示例：模拟IMU数据）
         Render::Robot::IMUData imuData;

@@ -67,6 +67,38 @@ struct JointComponent {
     EntityID parentLinkEntity;  // 父link实体ID
     EntityID childLinkEntity;  // 子link实体ID
     
+    // ==================== 关节控制 ====================
+    
+    /**
+     * @brief 关节控制模式
+     */
+    enum class ControlMode {
+        Position,    ///< 位置控制（使用PD控制器）
+        Velocity,    ///< 速度控制（使用P控制器）
+        Torque       ///< 力矩控制（直接施加力矩）
+    };
+    
+    ControlMode controlMode = ControlMode::Position;  ///< 当前控制模式
+    
+    // 控制目标值
+    float targetPosition = 0.0f;   ///< 目标位置（角度或距离）
+    float targetVelocity = 0.0f;  ///< 目标速度（rad/s 或 m/s）
+    float targetTorque = 0.0f;     ///< 目标力矩（N·m 或 N）
+    
+    // 位置控制参数（PD控制器）
+    float positionKp = 100.0f;      ///< 位置比例增益
+    float positionKd = 10.0f;      ///< 位置微分增益
+    
+    // 速度控制参数（P控制器）
+    float velocityKp = 50.0f;      ///< 速度比例增益
+    
+    // 力矩限制
+    float maxTorque = 100.0f;      ///< 最大力矩限制（N·m 或 N）
+    
+    // 当前状态（由RobotControlSystem更新）
+    float currentPosition = 0.0f;  ///< 当前位置（角度或距离）
+    float currentVelocity = 0.0f;  ///< 当前速度（rad/s 或 m/s）
+    
     JointComponent() 
         : type(Render::Robot::JointType::Unknown)
         , axis(Vector3::UnitZ())

@@ -359,6 +359,7 @@ set(RENDER_SOURCES
     src/robot/tf_visualizer.cpp
     src/robot/imu_interface.cpp
     src/robot/robot_systems.cpp
+    src/robot/robot_control_system.cpp
 
     # Application
     src/application/app_context.cpp

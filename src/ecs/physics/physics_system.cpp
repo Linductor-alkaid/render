@@ -1127,6 +1127,15 @@ void PhysicsSystem::CreateConstraint(EntityID entity) {
                 hinge->setLimit(constraint.lowerLimit, constraint.upperLimit);
             }
             
+            // 设置马达（如果启用）
+            if (constraint.useMotor || constraint.usePositionControl) {
+                // 对于位置控制，马达会在UpdateConstraints中每帧更新
+                // 这里先启用马达，初始速度设为0
+                float initialVelocity = constraint.useMotor ? constraint.motorTargetVelocity : 0.0f;
+                float maxImpulse = constraint.motorMaxForce > 0.0f ? constraint.motorMaxForce : 100.0f;
+                hinge->enableAngularMotor(true, initialVelocity, maxImpulse);
+            }
+            
             bulletConstraint = hinge;
             break;
         }
@@ -1220,6 +1229,86 @@ void PhysicsSystem::CreateConstraint(EntityID entity) {
     }
 }
 
+void PhysicsSystem::UpdateConstraintMotor(EntityID entity, ConstraintComponent& constraint) {
+    if (!constraint.bulletConstraint) {
+        return;
+    }
+    
+    // 只处理Hinge约束的马达（其他类型后续扩展）
+    if (constraint.type != ConstraintType::Hinge) {
+        return;
+    }
+    
+    btHingeConstraint* hinge = static_cast<btHingeConstraint*>(constraint.bulletConstraint);
+    
+    // 处理位置控制模式
+    if (constraint.usePositionControl) {
+        // 获取当前关节角度
+        float currentAngle = hinge->getHingeAngle();
+        
+        // 获取当前角速度（从子link的刚体计算，因为关节运动是子link相对于父link的旋转）
+        float currentVelocity = 0.0f;
+        if (m_world && entity.IsValid() && 
+            m_world->HasComponent<RigidBodyComponent>(entity)) {
+            const auto& rbB = m_world->GetComponent<RigidBodyComponent>(entity);
+            if (rbB.bulletRigidBody) {
+                btRigidBody* bodyB = static_cast<btRigidBody*>(rbB.bulletRigidBody);
+                btVector3 angVelB = bodyB->getAngularVelocity();
+                
+                // 获取约束轴方向（从约束的frame中获取）
+                // Hinge约束的轴是frame的Z轴，使用frameB（子link的frame）
+                btTransform frameB = hinge->getFrameOffsetB();
+                btVector3 axisInLocal = frameB.getBasis().getColumn(2);  // Z轴是铰链轴
+                btVector3 axisInWorld = bodyB->getCenterOfMassTransform().getBasis() * axisInLocal;
+                currentVelocity = angVelB.dot(axisInWorld);
+            }
+        }
+        
+        // 计算位置误差
+        float error = constraint.targetPosition - currentAngle;
+        
+        // 限制误差范围，避免过大的控制输出（减少抖动）
+        float maxError = 3.14159f;  // 限制在 ±180度范围内
+        error = std::clamp(error, -maxError, maxError);
+        
+        // 计算速度误差（负号因为速度是位置的导数，误差减小时速度应为负）
+        float velocityError = -currentVelocity;
+        
+        // 限制速度误差范围
+        float maxVelError = 10.0f;  // 限制速度误差范围
+        velocityError = std::clamp(velocityError, -maxVelError, maxVelError);
+        
+        // PD控制器计算目标速度
+        // 注意：positionKp 的单位是 (rad/s) / rad，positionKd 的单位是 (rad/s) / (rad/s)
+        // 为了减少抖动，我们需要限制增益的影响范围
+        float targetVelocity = constraint.positionKp * error + constraint.positionKd * velocityError;
+        
+        // 限制目标速度（避免过大，使用更合理的限制）
+        // 根据关节限制范围动态调整最大速度
+        float maxVelocity = 5.0f;  // 默认最大角速度 5 rad/s
+        if (constraint.motorMaxForce > 0.0f) {
+            // 根据最大力矩调整最大速度（更大的力矩允许更大的速度）
+            maxVelocity = std::min(10.0f, constraint.motorMaxForce * 0.05f);
+        }
+        targetVelocity = std::clamp(targetVelocity, -maxVelocity, maxVelocity);
+        
+        // 设置马达目标速度
+        // maxImpulse 是每步的最大冲量，应该足够大以产生平滑运动
+        float maxImpulse = constraint.motorMaxForce > 0.0f ? constraint.motorMaxForce : 100.0f;
+        // 为了减少抖动，可以稍微降低maxImpulse，但不要太小
+        maxImpulse = std::max(50.0f, maxImpulse * 0.8f);
+        hinge->enableAngularMotor(true, targetVelocity, maxImpulse);
+        
+    } else if (constraint.useMotor) {
+        // 速度控制模式：直接使用目标速度
+        float maxImpulse = constraint.motorMaxForce > 0.0f ? constraint.motorMaxForce : 100.0f;
+        hinge->enableAngularMotor(true, constraint.motorTargetVelocity, maxImpulse);
+    } else {
+        // 禁用马达
+        hinge->enableAngularMotor(false, 0.0f, 0.0f);
+    }
+}
+
 void PhysicsSystem::DestroyConstraint(EntityID entity) {
     if (!m_world || !entity.IsValid()) {
         return;
@@ -1286,6 +1375,9 @@ void PhysicsSystem::UpdateConstraints() {
             // 更新约束状态（如果启用状态改变）
             btTypedConstraint* bulletConstraint = static_cast<btTypedConstraint*>(constraint.bulletConstraint);
             bulletConstraint->setEnabled(constraint.enabled);
+            
+            // 更新马达参数
+            UpdateConstraintMotor(entity, constraint);
         }
     }
 }

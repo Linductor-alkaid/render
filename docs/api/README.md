@@ -140,6 +140,15 @@
   - 碰撞层和掩码
   - **当前阶段**: 阶段 1-2 已完成（基础架构 + 碰撞检测系统）
 
+### 机器人系统 🤖 **v1.0**
+- **[Robot](Robot.md)** - 机器人系统 API 参考手册 🆕
+  - URDF文件加载和解析
+  - 机器人模型构建（Link、Joint）
+  - 关节控制（位置、速度、力矩）
+  - 物理约束集成（Bullet Physics）
+  - TF（Transform）可视化
+  - 正向运动学计算
+
 ### 应用层系统 🆕 **Phase 2**
 - **[ApplicationHost](ApplicationHost.md)** - 应用宿主，统一入口和生命周期管理 🆕
 - **[ModuleRegistry](ModuleRegistry.md)** - 模块注册表，管理应用模块的生命周期和依赖 🆕

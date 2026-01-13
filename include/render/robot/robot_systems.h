@@ -24,6 +24,7 @@
 #include "render/robot/tf_visualizer.h"
 #include "render/robot/joint_tf_system.h"
 #include "render/robot/robot_model.h"
+#include "render/robot/robot_control_system.h"
 #include "render/ecs/system.h"
 #include "render/ecs/entity.h"
 #include "render/ecs/physics/physics_components.h"

@@ -25,6 +25,7 @@
 #include "render/types.h"
 #include "render/ecs/physics/physics_material.h"
 #include "render/ecs/physics/physics_debug_renderer.h"
+#include "render/ecs/physics/physics_components.h"
 #include <vector>
 #include <unordered_map>
 #include <set>
@@ -193,6 +194,13 @@ private:
     // ==================== 约束管理 ====================
     void CreateConstraint(EntityID entity);
     void DestroyConstraint(EntityID entity);
+    
+    /**
+     * @brief 更新约束马达参数
+     * @param entity 约束实体ID
+     * @param constraint 约束组件引用
+     */
+    void UpdateConstraintMotor(EntityID entity, ConstraintComponent& constraint);
     
     // ==================== 碰撞检测 ====================
     void DetectCollisionsAndTriggers();

@@ -77,18 +77,20 @@ EntityID URDFLoadSystem::LoadRobot(const std::string& urdfPath, const std::strin
     m_world->AddComponent(robotEntity, transformComp);
     
     // 创建所有link实体（使用URDF文件所在目录）
+    // 注意：直接获取组件的引用，而不是使用局部变量
+    auto& robotCompRef = m_world->GetComponent<RobotComponent>(robotEntity);
     for (const auto& pair : model->links) {
         const std::string& linkName = pair.first;
         const Render::Robot::URDFLink& link = pair.second;
         EntityID linkEntity = CreateLinkEntity(link, urdfDir);
         if (linkEntity.IsValid()) {
-            robotComp.linkEntityMap[linkName] = linkEntity;
+            robotCompRef.linkEntityMap[linkName] = linkEntity;
             model->linkEntities[linkName] = linkEntity;
             
             // 如果是基座link，设置父子关系
             bool isBaseLink = (linkName == model->baseLink);
             if (isBaseLink) {
-                robotComp.baseLinkEntity = linkEntity;
+                robotCompRef.baseLinkEntity = linkEntity;
                 
                 // 设置link为机器人的子实体
                 // 基座link的位置就是机器人的位置（相对于机器人实体为(0,0,0)）
@@ -105,15 +107,12 @@ EntityID URDFLoadSystem::LoadRobot(const std::string& urdfPath, const std::strin
         }
     }
     
-    // 更新RobotComponent
-    m_world->GetComponent<RobotComponent>(robotEntity) = robotComp;
-    
     // 创建所有joint实体并设置父子关系
     for (const auto& pair : model->joints) {
         const Render::Robot::URDFJoint& joint = pair.second;
         
-        auto parentIt = robotComp.linkEntityMap.find(joint.parentLink);
-        auto childIt = robotComp.linkEntityMap.find(joint.childLink);
+        auto parentIt = robotCompRef.linkEntityMap.find(joint.parentLink);
+        auto childIt = robotCompRef.linkEntityMap.find(joint.childLink);
         
         if (parentIt == robotComp.linkEntityMap.end()) {
             Logger::GetInstance().WarningFormat("[URDFLoadSystem] Joint '%s': parent link '%s' not found in linkEntityMap", 

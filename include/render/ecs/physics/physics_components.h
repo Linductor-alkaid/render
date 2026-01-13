@@ -314,6 +314,58 @@ struct ConstraintComponent {
     float springStiffness = 0.0f;                    ///< 弹簧刚度
     float springDamping = 0.0f;                       ///< 弹簧阻尼
     
+    // ==================== 马达控制（用于关节驱动）====================
+    
+    /**
+     * @brief 是否启用马达
+     * 
+     * 启用后，约束会尝试达到目标速度
+     */
+    bool useMotor = false;                            ///< 是否启用马达
+    
+    /**
+     * @brief 目标速度
+     * 
+     * 对于旋转关节：角速度（rad/s）
+     * 对于平移关节：线速度（m/s）
+     */
+    float motorTargetVelocity = 0.0f;                 ///< 目标速度（rad/s 或 m/s）
+    
+    /**
+     * @brief 最大马达力/力矩
+     * 
+     * 对于旋转关节：最大力矩（N·m）
+     * 对于平移关节：最大力（N）
+     */
+    float motorMaxForce = 0.0f;                      ///< 最大马达力/力矩（N 或 N·m）
+    
+    // ==================== 位置控制（用于位置控制模式）====================
+    
+    /**
+     * @brief 是否启用位置控制
+     * 
+     * 启用后，使用PD控制器计算目标速度以达到目标位置
+     */
+    bool usePositionControl = false;                  ///< 是否启用位置控制
+    
+    /**
+     * @brief 目标位置
+     * 
+     * 对于旋转关节：目标角度（rad）
+     * 对于平移关节：目标距离（m）
+     */
+    float targetPosition = 0.0f;                      ///< 目标位置（角度或距离）
+    
+    /**
+     * @brief 位置比例增益（PD控制器的Kp）
+     */
+    float positionKp = 100.0f;                       ///< 位置比例增益
+    
+    /**
+     * @brief 位置微分增益（PD控制器的Kd）
+     */
+    float positionKd = 10.0f;                         ///< 位置微分增益
+    
     bool enabled = true;                              ///< 是否启用
     
     void* bulletConstraint = nullptr;                 ///< Bullet 约束指针（内部使用）
