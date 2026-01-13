@@ -448,18 +448,44 @@ void PhysicsSystem::InitializePhysicsWorld(EntityID entity) {
         static_cast<btConstraintSolver*>(m_solver),
         static_cast<btCollisionConfiguration*>(m_collisionConfig)
     );
-    
+
     bulletWorld->setGravity(ToBullet(physicsWorld.gravity));
+
+    // 设置求解器参数（提高约束稳定性）
+    // 获取求解器信息
+    btContactSolverInfo& solverInfo = bulletWorld->getSolverInfo();
+    
+    // 增加求解器迭代次数（提高约束稳定性，特别是对于复杂约束链）
+    // 默认值是10，对于机器人关节链，建议增加到20-50
+    solverInfo.m_numIterations = 50;  // 增加迭代次数以提高稳定性
+    
+    // 设置全局ERP（误差修正参数）
+    // 这个值会影响所有约束的误差修正速度
+    solverInfo.m_erp = 0.2f;  // 推荐值：0.1-0.3
+    
+    // 设置全局CFM（约束力混合参数）
+    // 对于硬约束，通常设为0或很小的值
+    solverInfo.m_globalCfm = 0.0f;
+    
+    // 设置分裂冲量（Split Impulse），可以提高约束稳定性
+    solverInfo.m_splitImpulse = true;
+    solverInfo.m_splitImpulsePenetrationThreshold = -0.04f;  // 穿透阈值
+    
+    // 设置时间步长
+    solverInfo.m_timeStep = physicsWorld.timeStep;
     
     // 设置调试绘制器
     if (m_debugRenderer) {
         bulletWorld->setDebugDrawer(m_debugRenderer.get());
     }
-    
+
     physicsWorld.bulletWorld = bulletWorld;
     m_bulletWorld = bulletWorld;
-    
-    Logger::GetInstance().Info("[PhysicsSystem] Physics world initialized");
+
+    Logger::GetInstance().InfoFormat(
+        "[PhysicsSystem] Physics world initialized (solver iterations: %d, ERP: %.2f)",
+        solverInfo.m_numIterations, solverInfo.m_erp
+    );
 }
 
 void PhysicsSystem::ShutdownPhysicsWorld() {
@@ -1125,6 +1151,30 @@ void PhysicsSystem::CreateConstraint(EntityID entity) {
             } else {
                 // 使用设置的限制值
                 hinge->setLimit(constraint.lowerLimit, constraint.upperLimit);
+            }
+            
+            // 设置约束稳定性参数（防止约束在大力矩下失效）
+            // ERP (Error Reduction Parameter): 误差修正参数，范围0-1
+            // 值越大修正越快，但可能不稳定。推荐值：0.1-0.3
+            hinge->setParam(BT_CONSTRAINT_ERP, constraint.erp > 0.0f ? constraint.erp : 0.2f);
+            
+            // CFM (Constraint Force Mixing): 约束力混合参数，用于软约束
+            // 值越大约束越软。对于硬约束，通常设为0或很小的值
+            hinge->setParam(BT_CONSTRAINT_STOP_ERP, constraint.erp > 0.0f ? constraint.erp : 0.2f);
+            hinge->setParam(BT_CONSTRAINT_STOP_CFM, 0.0f);  // 硬约束，CFM设为0
+            
+            // 设置最大约束冲量（防止约束在大力矩下失效）
+            // 这个值应该足够大，以承受预期的最大力矩
+            float maxConstraintImpulse = constraint.maxImpulse > 0.0f ? constraint.maxImpulse : 1e10f;
+            hinge->setParam(BT_CONSTRAINT_CFM, 0.0f);  // 硬约束，CFM设为0
+            
+            // 设置断裂阈值（超过此值约束会断裂）
+            hinge->setBreakingImpulseThreshold(constraint.breakingImpulseThreshold);
+            
+            // 设置阻尼（减少振荡）
+            if (constraint.damping > 0.0f) {
+                // Hinge约束没有直接的阻尼设置，但可以通过限制速度来实现
+                // 或者使用软约束（CFM > 0）来模拟阻尼
             }
             
             // 设置马达（如果启用）

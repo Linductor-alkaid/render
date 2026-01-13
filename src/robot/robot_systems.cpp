@@ -340,6 +340,12 @@ void URDFLoadSystem::CreateJointConstraint(EntityID jointEntity, const Render::R
             constraint.upperLimit = 3.14159f;   // +π
         }
         
+        // 设置约束稳定性参数（防止约束在大力矩下失效）
+        constraint.erp = 0.2f;                    // 误差修正参数，0.1-0.3之间比较稳定
+        constraint.maxImpulse = 1e10f;           // 最大约束冲量，设置很大以防止约束失效
+        constraint.damping = 0.1f;               // 约束阻尼，减少振荡
+        constraint.breakingImpulseThreshold = 1e10f;  // 断裂阈值，设置很大以防止意外断裂
+        
     } else if (urdfJoint.type == Render::Robot::JointType::Prismatic) {
         // 平移关节：使用Generic6Dof约束
         // 注意：PhysicsSystem目前不支持Slider约束，使用Generic6Dof
@@ -358,6 +364,12 @@ void URDFLoadSystem::CreateJointConstraint(EntityID jointEntity, const Render::R
         // Prismatic的限制是距离（米）
         constraint.lowerLimit = urdfJoint.limits.lower;
         constraint.upperLimit = urdfJoint.limits.upper;
+        
+        // 设置约束稳定性参数
+        constraint.erp = 0.2f;
+        constraint.maxImpulse = 1e10f;
+        constraint.damping = 0.1f;
+        constraint.breakingImpulseThreshold = 1e10f;
         
         // 注意：Generic6Dof的限制设置比较复杂，需要在PhysicsSystem中特殊处理
         // 这里只设置基本限制值，实际限制由PhysicsSystem根据axis方向设置

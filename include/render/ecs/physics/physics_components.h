@@ -309,6 +309,12 @@ struct ConstraintComponent {
     float lowerLimit = 0.0f;                          ///< 下限
     float upperLimit = 0.0f;                          ///< 上限
     
+    // 约束稳定性参数
+    float erp = 0.2f;                                 ///< 误差修正参数（Error Reduction Parameter），范围0-1，越大修正越快但可能不稳定
+    float maxImpulse = 1e10f;                        ///< 最大约束冲量（N·s），防止约束在大力矩下失效，默认很大
+    float damping = 0.0f;                             ///< 约束阻尼，减少振荡
+    float breakingImpulseThreshold = 1e10f;         ///< 断裂阈值（N·s），超过此值约束会断裂，默认很大（不断裂）
+    
     // 弹簧参数（Generic6DofSpring）
     bool enableSpring = false;                        ///< 是否启用弹簧
     float springStiffness = 0.0f;                    ///< 弹簧刚度
