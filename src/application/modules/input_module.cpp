@@ -28,6 +28,7 @@
 #include "render/application/modules/ui_runtime_module.h"
 #include "render/application/module_registry.h"
 #include "render/logger.h"
+#include "render/renderer.h"
 #include "render/ui/ui_input_router.h"
 #include "render/types.h"
 
@@ -79,7 +80,12 @@ void InputModule::OnPreFrame(const FrameUpdateArgs&, AppContext& ctx) {
     }
 
     SDL_Event event;
+    int eventCount = 0;
+    int resizeEventCount = 0;
+    
     while (SDL_PollEvent(&event)) {
+        eventCount++;
+        
         // 先检查退出事件，确保能够正常关闭窗口
         // 注意：UIRuntimeModule的优先级更高，它可能已经处理了非退出事件
         // 但退出事件需要在这里处理，以设置m_quitRequested标志
@@ -87,6 +93,53 @@ void InputModule::OnPreFrame(const FrameUpdateArgs&, AppContext& ctx) {
             event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
             m_quitRequested = true;
             // 继续处理，让其他系统也能收到退出事件
+        }
+        
+        // 处理窗口大小变化事件（必须在 ProcessSDLEvent 之前处理）
+        if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+            resizeEventCount++;
+            int width = event.window.data1;
+            int height = event.window.data2;
+            
+            Logger::GetInstance().InfoFormat("[InputModule] *** SDL window resize event detected: %dx%d (event #%d) ***", 
+                                            width, height, resizeEventCount);
+            
+            // 验证窗口ID是否匹配（确保是我们关心的窗口）
+            SDL_Window* eventWindow = SDL_GetWindowFromEvent(&event);
+            bool windowMatches = false;
+            
+            if (ctx.renderer) {
+                auto context = ctx.renderer->GetContext();
+                if (context && context->GetWindow()) {
+                    SDL_Window* ourWindow = context->GetWindow();
+                    windowMatches = (eventWindow == ourWindow);
+                    Logger::GetInstance().DebugFormat("[InputModule] Window ID check: eventWindow=%p, ourWindow=%p, matches=%s", 
+                                                       eventWindow, ourWindow, windowMatches ? "yes" : "no");
+                } else {
+                    Logger::GetInstance().WarningFormat("[InputModule] Cannot get window from context");
+                }
+            } else {
+                Logger::GetInstance().WarningFormat("[InputModule] Renderer is null");
+            }
+            
+            // 从 AppContext 获取 Renderer 和 OpenGLContext
+            if (ctx.renderer) {
+                auto context = ctx.renderer->GetContext();
+                if (context) {
+                    // 即使窗口ID不匹配，也处理事件（可能是多窗口场景）
+                    // 但记录警告
+                    if (!windowMatches && eventWindow != nullptr) {
+                        Logger::GetInstance().WarningFormat("[InputModule] Window ID mismatch, but processing resize anyway");
+                    }
+                    Logger::GetInstance().InfoFormat("[InputModule] Calling HandleWindowResize(%d, %d)", width, height);
+                    context->HandleWindowResize(width, height);
+                    Logger::GetInstance().InfoFormat("[InputModule] HandleWindowResize completed");
+                } else {
+                    Logger::GetInstance().ErrorFormat("[InputModule] OpenGLContext is null, cannot handle window resize");
+                }
+            } else {
+                Logger::GetInstance().ErrorFormat("[InputModule] Renderer is null, cannot handle window resize");
+            }
         }
         
         ProcessSDLEvent(event);

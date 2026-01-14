@@ -38,6 +38,7 @@
 #include "render/debug/sprite_animation_debugger.h"
 #include "render/lod_system.h"  // LOD 系统支持
 #include "render/lod_instanced_renderer.h"  // LOD 实例化渲染器（阶段2.2）
+#include <SDL3/SDL.h>  // 用于 SDL_GetWindowSize
 
 #include <utility>
 #include <algorithm>
@@ -4497,7 +4498,16 @@ void UniformSystem::SetTimeUniforms() {
 // ============================================================
 
 WindowSystem::WindowSystem(Renderer* renderer)
-    : m_renderer(renderer) {
+    : m_renderer(renderer)
+    , m_config()  // 使用默认配置
+    , m_lastWidth(0)
+    , m_lastHeight(0)
+    , m_lockedWidth(1280)
+    , m_lockedHeight(720)
+    , m_nextCallbackId(1)
+    , m_currentViewportWidth(0)
+    , m_currentViewportHeight(0)
+    , m_viewportNeedsUpdate(true) {
     if (!m_renderer) {
         Logger::GetInstance().ErrorFormat("[WindowSystem] Renderer is null");
     }
@@ -4537,7 +4547,34 @@ void WindowSystem::OnCreate(World* world) {
     
     int width = context->GetWidth();
     int height = context->GetHeight();
-    Logger::GetInstance().InfoFormat("[WindowSystem] WindowSystem created (initial size: %dx%d, using resize callbacks)", 
+    
+    // 初始化窗口尺寸记录
+    m_lastWidth = width;
+    m_lastHeight = height;
+    m_lockedWidth = width;
+    m_lockedHeight = height;
+    m_config.lockedWidth = width;
+    m_config.lockedHeight = height;
+    
+    // 确保默认配置：保持FOV不变（FixedFrustum），视口填充整个窗口
+    m_config.mode = ViewportAdaptationMode::FixedFrustum;
+    m_config.handleExtremeAspectRatio = false;
+    
+    // 初始化视口尺寸
+    m_currentViewportWidth = width;
+    m_currentViewportHeight = height;
+    m_viewportNeedsUpdate = true;
+    
+    // 立即设置视口
+    if (m_renderer->IsInitialized()) {
+        auto renderState = m_renderer->GetRenderState();
+        if (renderState) {
+            renderState->SetViewport(0, 0, width, height);
+            m_viewportNeedsUpdate = false;
+        }
+    }
+    
+    Logger::GetInstance().InfoFormat("[WindowSystem] WindowSystem created (initial size: %dx%d, mode: FixedFrustum, viewport fills window)", 
                                     width, height);
 }
 
@@ -4556,55 +4593,404 @@ void WindowSystem::OnDestroy() {
 void WindowSystem::Update(float deltaTime) {
     (void)deltaTime;  // 未使用
     
-    // ✅ 删除轮询检测代码
-    // 窗口大小变化由回调机制处理，Update不再需要检测
-    
     // 延迟获取 CameraSystem（仅在首次）
     if (!m_cameraSystem && m_world) {
         m_cameraSystem = m_world->GetSystemNoLock<CameraSystem>();
     }
+    
+    // 检查窗口大小是否变化（作为回调机制的补充）
+    // 因为用户拖动窗口时，SDL事件可能没有被正确处理
+    // 直接从SDL窗口获取实际大小，而不是从OpenGLContext的缓存获取
+    if (m_renderer && m_renderer->IsInitialized()) {
+        auto context = m_renderer->GetContext();
+        if (context) {
+            SDL_Window* window = context->GetWindow();
+            if (window) {
+                int currentWidth = 0, currentHeight = 0;
+                SDL_GetWindowSize(window, &currentWidth, &currentHeight);
+                
+                // 如果窗口大小变化了，触发OnWindowResized
+                if (currentWidth > 0 && currentHeight > 0) {
+                    // 首次初始化时，m_currentViewportWidth 和 m_currentViewportHeight 可能为0
+                    if (m_currentViewportWidth == 0 && m_currentViewportHeight == 0) {
+                        m_currentViewportWidth = currentWidth;
+                        m_currentViewportHeight = currentHeight;
+                        Logger::GetInstance().InfoFormat("[WindowSystem] Initial window size detected: %dx%d", 
+                                                        currentWidth, currentHeight);
+                        // 首次也需要应用视口
+                        ApplyViewport();
+                    } else if (m_currentViewportWidth != currentWidth || m_currentViewportHeight != currentHeight) {
+                        Logger::GetInstance().InfoFormat("[WindowSystem] *** Detected window size change: %dx%d -> %dx%d ***", 
+                                                        m_currentViewportWidth, m_currentViewportHeight,
+                                                        currentWidth, currentHeight);
+                        OnWindowResized(currentWidth, currentHeight);
+                    }
+                } else {
+                    Logger::GetInstance().WarningFormat("[WindowSystem] Invalid window size from SDL: %dx%d", 
+                                                       currentWidth, currentHeight);
+                }
+            } else {
+                Logger::GetInstance().WarningFormat("[WindowSystem] SDL window is null");
+            }
+        } else {
+            Logger::GetInstance().WarningFormat("[WindowSystem] OpenGLContext is null");
+        }
+    }
+    
+    // 每帧强制更新视口，确保视口设置正确
+    // 这是最可靠的方法，确保视口始终跟随窗口大小
+    ApplyViewport();
+}
+
+// ==================== 适配策略配置方法 ====================
+
+void WindowSystem::SetAdaptationMode(ViewportAdaptationMode mode) {
+    m_config.mode = mode;
+    Logger::GetInstance().InfoFormat("[WindowSystem] Adaptation mode set to %d", static_cast<int>(mode));
+}
+
+void WindowSystem::SetAdaptationConfig(const ViewportAdaptationConfig& config) {
+    m_config = config;
+    
+    // 同步锁定尺寸到内部变量
+    if (m_config.mode == ViewportAdaptationMode::Locked) {
+        m_lockedWidth = m_config.lockedWidth;
+        m_lockedHeight = m_config.lockedHeight;
+    }
+    
+    Logger::GetInstance().InfoFormat("[WindowSystem] Adaptation config updated (mode: %d, min: %dx%d, max: %dx%d)", 
+                                    static_cast<int>(m_config.mode),
+                                    m_config.minWidth, m_config.minHeight,
+                                    m_config.maxWidth, m_config.maxHeight);
+}
+
+// ==================== 窗口大小回调管理 ====================
+
+uint32_t WindowSystem::AddResizeCallback(WindowResizeCallback callback) {
+    uint32_t id = m_nextCallbackId++;
+    m_resizeCallbacks[id] = std::move(callback);
+    Logger::GetInstance().DebugFormat("[WindowSystem] Added resize callback with ID %u", id);
+    return id;
+}
+
+bool WindowSystem::RemoveResizeCallback(uint32_t callbackId) {
+    auto it = m_resizeCallbacks.find(callbackId);
+    if (it != m_resizeCallbacks.end()) {
+        m_resizeCallbacks.erase(it);
+        Logger::GetInstance().DebugFormat("[WindowSystem] Removed resize callback with ID %u", callbackId);
+        return true;
+    }
+    return false;
+}
+
+void WindowSystem::ClearResizeCallbacks() {
+    size_t count = m_resizeCallbacks.size();
+    m_resizeCallbacks.clear();
+    Logger::GetInstance().DebugFormat("[WindowSystem] Cleared %zu resize callbacks", count);
+}
+
+void WindowSystem::NotifyResizeCallbacks(int width, int height) {
+    for (const auto& [id, callback] : m_resizeCallbacks) {
+        try {
+            callback(width, height);
+        } catch (const std::exception& e) {
+            Logger::GetInstance().ErrorFormat("[WindowSystem] Exception in resize callback %u: %s", id, e.what());
+        }
+    }
+}
+
+void WindowSystem::ApplyViewport() {
+    // 在渲染前应用视口设置，确保视口始终正确
+    if (!m_renderer || !m_renderer->IsInitialized()) {
+        return;
+    }
+    
+    auto renderState = m_renderer->GetRenderState();
+    if (!renderState) {
+        return;
+    }
+    
+    auto context = m_renderer->GetContext();
+    if (!context) {
+        return;
+    }
+    
+    // 直接从SDL窗口获取实际大小，而不是从OpenGLContext的缓存获取
+    SDL_Window* window = context->GetWindow();
+    if (!window) {
+        return;
+    }
+    
+    int width = 0, height = 0;
+    SDL_GetWindowSize(window, &width, &height);
+    
+    if (width > 0 && height > 0) {
+        // 计算视口尺寸
+        float viewportX, viewportY, viewportWidth, viewportHeight;
+        HandleExtremeAspectRatio(width, height, viewportX, viewportY, viewportWidth, viewportHeight);
+        
+        // 总是设置视口（不检查是否需要更新），确保视口始终正确
+        renderState->SetViewport(static_cast<int>(viewportX), static_cast<int>(viewportY),
+                               static_cast<int>(viewportWidth), static_cast<int>(viewportHeight));
+        
+        // 更新保存的视口尺寸
+        bool sizeChanged = (m_currentViewportWidth != width || m_currentViewportHeight != height);
+        if (sizeChanged) {
+            m_currentViewportWidth = width;
+            m_currentViewportHeight = height;
+            Logger::GetInstance().InfoFormat("[WindowSystem] ApplyViewport: Updated viewport to (%.0f, %.0f, %.0f, %.0f) for window %dx%d", 
+                                             viewportX, viewportY, viewportWidth, viewportHeight, width, height);
+        }
+    }
+}
+
+// ==================== 适配策略实现 ====================
+
+void WindowSystem::ClampWindowSize(int& width, int& height) const {
+    if (m_config.minWidth > 0 && width < m_config.minWidth) {
+        width = m_config.minWidth;
+    }
+    if (m_config.minHeight > 0 && height < m_config.minHeight) {
+        height = m_config.minHeight;
+    }
+    if (m_config.maxWidth > 0 && width > m_config.maxWidth) {
+        width = m_config.maxWidth;
+    }
+    if (m_config.maxHeight > 0 && height > m_config.maxHeight) {
+        height = m_config.maxHeight;
+    }
+}
+
+void WindowSystem::HandleExtremeAspectRatio(int& width, int& height, float& viewportX, float& viewportY,
+                                            float& viewportWidth, float& viewportHeight) const {
+    if (!m_config.handleExtremeAspectRatio) {
+        viewportX = 0.0f;
+        viewportY = 0.0f;
+        viewportWidth = static_cast<float>(width);
+        viewportHeight = static_cast<float>(height);
+        return;
+    }
+    
+    // 定义合理的宽高比范围（例如 4:3 到 21:9）
+    const float minAspect = 4.0f / 3.0f;   // 约 1.33
+    const float maxAspect = 21.0f / 9.0f;  // 约 2.33
+    const float targetAspect = 16.0f / 9.0f;  // 目标宽高比
+    
+    float aspect = static_cast<float>(width) / static_cast<float>(height);
+    
+    if (aspect < minAspect || aspect > maxAspect) {
+        // 使用letterbox或pillarbox
+        float targetWidth, targetHeight;
+        
+        if (aspect > maxAspect) {
+            // 太宽，使用pillarbox（左右黑边）
+            targetHeight = static_cast<float>(height);
+            targetWidth = targetHeight * targetAspect;
+        } else {
+            // 太高，使用letterbox（上下黑边）
+            targetWidth = static_cast<float>(width);
+            targetHeight = targetWidth / targetAspect;
+        }
+        
+        viewportX = (static_cast<float>(width) - targetWidth) * 0.5f;
+        viewportY = (static_cast<float>(height) - targetHeight) * 0.5f;
+        viewportWidth = targetWidth;
+        viewportHeight = targetHeight;
+    } else {
+        viewportX = 0.0f;
+        viewportY = 0.0f;
+        viewportWidth = static_cast<float>(width);
+        viewportHeight = static_cast<float>(height);
+    }
+}
+
+void WindowSystem::ApplyFixedFrustumStrategy(int width, int height) {
+    // 方案1：固定视角范围，改变宽高比（当前实现）
+    if (!m_cameraSystem) {
+        return;
+    }
+    
+    if (height == 0) {
+        return;  // 避免除零
+    }
+    
+    float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+    
+    // 遍历所有相机组件，更新宽高比
+    auto cameras = m_world->Query<CameraComponent>();
+    
+    for (const auto& entity : cameras) {
+        auto& cameraComp = m_world->GetComponent<CameraComponent>(entity);
+        
+        if (!cameraComp.camera) {
+            continue;
+        }
+        
+        // 更新宽高比，保持FOV/正交范围不变
+        cameraComp.camera->SetAspectRatio(aspectRatio);
+    }
+    
+    if (!cameras.empty()) {
+        Logger::GetInstance().DebugFormat("[WindowSystem] FixedFrustum: Updated %zu camera(s) aspect ratio to %.3f", 
+                                         cameras.size(), aspectRatio);
+    }
+}
+
+void WindowSystem::ApplyFixedSizeStrategy(int width, int height) {
+    // 方案2：固定画面大小，调整FOV/正交范围
+    if (!m_cameraSystem) {
+        return;
+    }
+    
+    if (height == 0 || m_lastWidth == 0 || m_lastHeight == 0) {
+        // 首次调用或无效尺寸，只更新宽高比
+        m_lastWidth = width;
+        m_lastHeight = height;
+        ApplyFixedFrustumStrategy(width, height);
+        return;
+    }
+    
+    float oldAspect = static_cast<float>(m_lastWidth) / static_cast<float>(m_lastHeight);
+    float newAspect = static_cast<float>(width) / static_cast<float>(height);
+    
+    // 遍历所有相机组件
+    auto cameras = m_world->Query<CameraComponent>();
+    
+    for (const auto& entity : cameras) {
+        auto& cameraComp = m_world->GetComponent<CameraComponent>(entity);
+        
+        if (!cameraComp.camera) {
+            continue;
+        }
+        
+        Camera* camera = cameraComp.camera.get();
+        
+        if (camera->GetProjectionType() == ProjectionType::Perspective) {
+            // 透视投影：调整FOV以保持画面内容大小不变
+            float oldFOV = camera->GetFieldOfView();
+            float oldFOVRad = oldFOV * MathUtils::DEG2RAD;
+            
+            // 计算新FOV：newFOV = 2 * atan(tan(oldFOV/2) * oldAspect / newAspect)
+            float newFOVRad = 2.0f * std::atan(std::tan(oldFOVRad * 0.5f) * oldAspect / newAspect);
+            float newFOV = newFOVRad * MathUtils::RAD2DEG;
+            
+            // 限制FOV在合理范围内（10-170度）
+            newFOV = std::clamp(newFOV, 10.0f, 170.0f);
+            
+            camera->SetFieldOfView(newFOV);
+            camera->SetAspectRatio(newAspect);
+            
+            Logger::GetInstance().DebugFormat("[WindowSystem] FixedSize: Adjusted FOV from %.2f to %.2f degrees", 
+                                             oldFOV, newFOV);
+        } else {
+            // 正交投影：按比例调整正交范围
+            float scaleX = static_cast<float>(width) / static_cast<float>(m_lastWidth);
+            float scaleY = static_cast<float>(height) / static_cast<float>(m_lastHeight);
+            
+            // 获取当前正交范围（需要从Camera获取，但Camera没有直接接口）
+            // 这里我们使用宽高比变化来近似调整
+            // 注意：正交投影的调整需要知道当前的left/right/top/bottom值
+            // 由于Camera接口限制，这里先更新宽高比
+            // 如果需要精确控制，需要扩展Camera接口
+            camera->SetAspectRatio(newAspect);
+            
+            Logger::GetInstance().DebugFormat("[WindowSystem] FixedSize: Adjusted orthographic scale (%.3f, %.3f)", 
+                                             scaleX, scaleY);
+        }
+    }
+    
+    m_lastWidth = width;
+    m_lastHeight = height;
+    
+    if (!cameras.empty()) {
+        Logger::GetInstance().DebugFormat("[WindowSystem] FixedSize: Updated %zu camera(s)", cameras.size());
+    }
+}
+
+void WindowSystem::ApplyLockedStrategy(int width, int height) {
+    // 方案3：锁定窗口，禁止变化
+    auto context = m_renderer->GetContext();
+    if (!context) {
+        return;
+    }
+    
+    // 如果窗口大小与锁定尺寸不同，恢复锁定尺寸
+    if (width != m_lockedWidth || height != m_lockedHeight) {
+        Logger::GetInstance().InfoFormat("[WindowSystem] Locked: Window size changed to %dx%d, restoring to %dx%d", 
+                                        width, height, m_lockedWidth, m_lockedHeight);
+        
+        // 恢复窗口大小
+        context->SetWindowSize(m_lockedWidth, m_lockedHeight);
+        
+        // 使用锁定尺寸继续处理
+        width = m_lockedWidth;
+        height = m_lockedHeight;
+    }
+    
+    // 即使锁定，也需要更新相机宽高比（使用锁定尺寸）
+    ApplyFixedFrustumStrategy(width, height);
 }
 
 // ✅ 新增：窗口大小变化回调处理
 void WindowSystem::OnWindowResized(int width, int height) {
     // GL_THREAD_CHECK();  // ✅ 确保在OpenGL线程（需要在编译选项中启用）
     
+    Logger::GetInstance().InfoFormat("[WindowSystem] *** OnWindowResized called: %dx%d ***", width, height);
+    
     if (!m_world || !m_renderer) {
+        Logger::GetInstance().WarningFormat("[WindowSystem] OnWindowResized: m_world or m_renderer is null");
         return;
     }
     
-    Logger::GetInstance().InfoFormat("[WindowSystem] Window resized to %dx%d", width, height);
+    if (width <= 0 || height <= 0) {
+        Logger::GetInstance().WarningFormat("[WindowSystem] Invalid window size: %dx%d", width, height);
+        return;
+    }
     
-    // ==================== 更新相机宽高比 ====================
+    Logger::GetInstance().InfoFormat("[WindowSystem] Window resized to %dx%d (mode: %d)", 
+                                    width, height, static_cast<int>(m_config.mode));
+    
+    // 裁剪窗口尺寸到限制范围内
+    int clampedWidth = width;
+    int clampedHeight = height;
+    ClampWindowSize(clampedWidth, clampedHeight);
+    
+    if (clampedWidth != width || clampedHeight != height) {
+        Logger::GetInstance().InfoFormat("[WindowSystem] Window size clamped from %dx%d to %dx%d", 
+                                        width, height, clampedWidth, clampedHeight);
+        width = clampedWidth;
+        height = clampedHeight;
+    }
+    
+    // 延迟获取 CameraSystem（仅在首次）
     if (!m_cameraSystem) {
         m_cameraSystem = m_world->GetSystemNoLock<CameraSystem>();
     }
     
-    if (m_cameraSystem) {
-        if (height == 0) {
-            return;  // 避免除零
-        }
-        
-        float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
-        
-        // 遍历所有相机组件，更新宽高比
-        auto cameras = m_world->Query<CameraComponent>();
-        
-        for (const auto& entity : cameras) {
-            auto& cameraComp = m_world->GetComponent<CameraComponent>(entity);
+    // 根据适配策略处理窗口大小变化
+    switch (m_config.mode) {
+        case ViewportAdaptationMode::FixedFrustum:
+            ApplyFixedFrustumStrategy(width, height);
+            break;
             
-            if (!cameraComp.camera) {
-                continue;
+        case ViewportAdaptationMode::FixedSize:
+            ApplyFixedSizeStrategy(width, height);
+            break;
+            
+        case ViewportAdaptationMode::Locked:
+            ApplyLockedStrategy(width, height);
+            // 锁定策略可能会修改width和height，需要重新获取
+            if (m_renderer->GetContext()) {
+                width = m_renderer->GetContext()->GetWidth();
+                height = m_renderer->GetContext()->GetHeight();
             }
+            break;
             
-            // 更新宽高比
-            cameraComp.camera->SetAspectRatio(aspectRatio);
-        }
-        
-        if (!cameras.empty()) {
-            Logger::GetInstance().DebugFormat("[WindowSystem] Updated %zu camera(s) aspect ratio to %.3f", 
-                                             cameras.size(), aspectRatio);
-        }
+        default:
+            Logger::GetInstance().WarningFormat("[WindowSystem] Unknown adaptation mode: %d", 
+                                              static_cast<int>(m_config.mode));
+            ApplyFixedFrustumStrategy(width, height);
+            break;
     }
     
     // ==================== 更新视口 ====================
@@ -4612,13 +4998,18 @@ void WindowSystem::OnWindowResized(int width, int height) {
         return;
     }
     
-    auto renderState = m_renderer->GetRenderState();
-    if (renderState) {
-        renderState->SetViewport(0, 0, width, height);
-        Logger::GetInstance().DebugFormat("[WindowSystem] Viewport updated to %dx%d", width, height);
-    } else {
-        Logger::GetInstance().WarningFormat("[WindowSystem] RenderState is null, cannot update viewport");
-    }
+    // 保存当前视口尺寸
+    m_currentViewportWidth = width;
+    m_currentViewportHeight = height;
+    m_viewportNeedsUpdate = true;
+    
+    // 立即应用视口设置
+    ApplyViewport();
+    
+    Logger::GetInstance().InfoFormat("[WindowSystem] Window resized to %dx%d, viewport applied", width, height);
+    
+    // ==================== 通知所有注册的回调 ====================
+    NotifyResizeCallbacks(width, height);
 }
 
 // ============================================================

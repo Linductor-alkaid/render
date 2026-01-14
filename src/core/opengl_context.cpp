@@ -180,6 +180,31 @@ void OpenGLContext::SetWindowSize(int width, int height) {
     }
 }
 
+void OpenGLContext::HandleWindowResize(int width, int height) {
+    if (!m_initialized || !m_window) {
+        LOG_WARNING("OpenGLContext: HandleWindowResize called but context is not initialized");
+        return;
+    }
+    
+    if (width <= 0 || height <= 0) {
+        LOG_WARNING("OpenGLContext: Invalid window size: " + std::to_string(width) + "x" + std::to_string(height));
+        return;
+    }
+    
+    // 更新内部状态
+    m_width = width;
+    m_height = height;
+    
+    // 设置 OpenGL 视口
+    GL_THREAD_CHECK();
+    glViewport(0, 0, width, height);
+    
+    LOG_INFO("OpenGLContext: Window resized to " + std::to_string(width) + "x" + std::to_string(height));
+    
+    // 通知所有已注册的回调
+    NotifyResizeCallbacks(width, height);
+}
+
 void OpenGLContext::SetFullscreen(bool fullscreen) {
     if (m_window) {
         bool success = SDL_SetWindowFullscreen(m_window, fullscreen);

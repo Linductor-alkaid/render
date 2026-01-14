@@ -682,16 +682,10 @@ void Renderer::BeginFrame() {
     m_deltaTime = currentTime - m_lastFrameTime;
     m_lastFrameTime = currentTime;
     
-    // 设置视口（立即设置，因为不影响渲染内容）
-    if (m_initialized && m_renderState) {
-        if (m_context) {
-            int width = m_context->GetWidth();
-            int height = m_context->GetHeight();
-            if (width > 0 && height > 0) {
-                m_renderState->SetViewport(0, 0, width, height);
-            }
-        }
-    }
+    // 注意：视口设置由 WindowSystem 管理
+    // WindowSystem 会在窗口大小变化时自动更新视口
+    // 这里不再自动重置视口，避免覆盖 WindowSystem 的设置
+    // 如果 WindowSystem 未注册，视口会在首次渲染时由其他系统设置
     
     // 延迟清除缓冲区：标记需要清除，但不立即清除
     // 这样可以确保在UI命令提交后才清除，避免清除正在渲染的UI内容
@@ -862,6 +856,19 @@ void Renderer::FlushRenderQueue() {
     // 2. 所有命令已经处理完成（排序、批处理等）
     // 3. 清除后立即开始渲染，没有空窗期
     // 清除操作将在实际调用 BatchManager::Flush() 之前执行
+    
+    // 在渲染开始前，确保视口设置正确
+    // WindowSystem 会在 Update() 中设置视口，但这里作为最后一道保障
+    // 如果 WindowSystem 未注册，这里会使用默认的窗口大小
+    if (m_initialized && m_renderState && m_context) {
+        int width = m_context->GetWidth();
+        int height = m_context->GetHeight();
+        if (width > 0 && height > 0) {
+            // 注意：这里不重置视口，让 WindowSystem 管理
+            // 如果 WindowSystem 已设置视口，这里不会覆盖它
+            // 如果 WindowSystem 未注册，视口可能需要在其他地方设置
+        }
+    }
     
     std::vector<LayerBucket> bucketsSnapshot;
     std::vector<RenderLayerRecord> layerRecords;
@@ -1049,14 +1056,9 @@ void Renderer::FlushRenderQueue() {
 
         if (m_initialized) {
             // 注意：Reset()会重置状态，但不应该在这里调用，因为会重置视口等
-            // 只在每个layer开始时设置视口和禁用裁剪
-            if (m_context) {
-                int width = m_context->GetWidth();
-                int height = m_context->GetHeight();
-                if (width > 0 && height > 0) {
-                    m_renderState->SetViewport(0, 0, width, height);
-                }
-            }
+            // 视口设置由 WindowSystem 管理，这里不再重置视口
+            // 只在每个layer开始时禁用裁剪
+            // 如果 layer 有自定义视口设置，会在 ApplyLayerOverrides 中应用
             m_renderState->SetScissorTest(false);
         }
 

@@ -790,6 +790,9 @@ struct CameraComponent {
     std::string renderTargetName;  ///< 渲染目标名称（可选，用于调试）
     Ref<Framebuffer> renderTarget; ///< 渲染目标（nullptr = 渲染到屏幕）
     
+    // 注意：多视口支持（每个相机独立适配策略）可以在后续版本中添加
+    // 当前所有相机使用全局适配策略
+    
     // ==================== 构造函数 ====================
     
     /// 默认构造函数 - 显式初始化camera为nullptr

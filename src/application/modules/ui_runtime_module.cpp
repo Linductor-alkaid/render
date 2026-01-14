@@ -46,6 +46,7 @@
 #include "render/ui/widgets/ui_radio_button.h"
 #include "render/ui/widgets/ui_color_picker.h"
 #include "render/ui/widgets/ui_toggle.h"
+#include "render/ecs/systems.h"
 
 namespace Render::Application {
 
@@ -107,32 +108,58 @@ void UIRuntimeModule::OnPreFrame(const FrameUpdateArgs& frame, AppContext& ctx) 
     // 如果使用ImGui后端，需要在NewFrame之前处理事件
     // 注意：事件应该在PrepareFrame（调用NewFrame）之前处理
     // 由于UIRuntimeModule的优先级(250)高于InputModule(200)，我们先处理事件
-    // 但退出事件需要被InputModule处理，所以我们需要在UIRuntimeModule中先检查退出事件
-    // 然后让ImGui处理非退出事件，退出事件需要被重新推回队列让InputModule处理
-    // 但SDL3不支持重新推送事件，所以我们需要使用一个临时队列来存储退出事件
+    // 但退出事件和窗口大小变化事件需要被InputModule处理，所以我们需要在UIRuntimeModule中先检查这些事件
+    // 然后让ImGui处理其他事件，这些特殊事件需要被重新推回队列让InputModule处理
+    // 但SDL3不支持重新推送事件，所以我们需要使用一个临时队列来存储这些事件
     if (m_backendType == UI::UIRendererBackendType::ImGui) {
         SDL_Event event;
-        std::vector<SDL_Event> quitEvents; // 存储退出事件，稍后重新推送
+        std::vector<SDL_Event> specialEvents; // 存储需要InputModule处理的事件（退出事件、窗口大小变化事件）
+        int totalEvents = 0;
+        int resizeEvents = 0;
         
         while (SDL_PollEvent(&event)) {
-            // 检查是否是退出事件
+            totalEvents++;
+            
+            // 检查是否是退出事件或窗口大小变化事件
             bool isQuitEvent = (event.type == SDL_EVENT_QUIT || 
                                event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED);
+            bool isResizeEvent = (event.type == SDL_EVENT_WINDOW_RESIZED);
             
-            if (isQuitEvent) {
-                // 存储退出事件，稍后重新推回队列
-                quitEvents.push_back(event);
+            if (isResizeEvent) {
+                resizeEvents++;
+                int width = event.window.data1;
+                int height = event.window.data2;
+                Logger::GetInstance().InfoFormat("[UIRuntimeModule] Detected window resize event: %dx%d (will forward to InputModule)", 
+                                                 width, height);
+            }
+            
+            if (isQuitEvent || isResizeEvent) {
+                // 存储这些特殊事件，稍后重新推回队列让InputModule处理
+                specialEvents.push_back(event);
             } else {
-                // 对于非退出事件，让ImGui处理
+                // 对于其他事件，让ImGui处理
                 ProcessEvent(&event);
             }
         }
         
-        // 将退出事件重新推回队列，让InputModule处理
-        // 注意：SDL3不支持重新推送事件，所以我们需要使用SDL_PushEvent
-        for (const auto& quitEvent : quitEvents) {
-            SDL_PushEvent(const_cast<SDL_Event*>(&quitEvent));
+        if (totalEvents > 0) {
+            Logger::GetInstance().DebugFormat("[UIRuntimeModule] Processed %d events (ImGui backend), %d resize events, forwarding %zu special events", 
+                                             totalEvents, resizeEvents, specialEvents.size());
         }
+        
+        // 将特殊事件重新推回队列，让InputModule处理
+        // 注意：SDL3不支持重新推送事件，所以我们需要使用SDL_PushEvent
+        for (const auto& specialEvent : specialEvents) {
+            int result = SDL_PushEvent(const_cast<SDL_Event*>(&specialEvent));
+            if (result < 0) {
+                Logger::GetInstance().ErrorFormat("[UIRuntimeModule] Failed to push event back to queue: %s", SDL_GetError());
+            }
+        }
+    } else {
+        // Custom 后端：不处理事件，让 InputModule 直接处理
+        // 但我们可以记录一下是否有事件在队列中（仅用于调试）
+        // 注意：我们不能在这里调用 SDL_PollEvent，因为那会消耗事件
+        // 所以这里不做任何处理，让 InputModule 处理所有事件
     }
 
     m_canvas->BeginFrame(frame, ctx);
@@ -279,6 +306,23 @@ void UIRuntimeModule::EnsureInitialized(AppContext& ctx) {
     m_inputRouter->SetDebugConfig(&m_debugConfig);
 
     ctx.uiInputRouter = m_inputRouter.get();
+    
+    // 注册窗口大小回调，更新UICanvas
+    if (ctx.world && m_canvas) {
+        auto* windowSystem = ctx.world->GetSystem<ECS::WindowSystem>();
+        if (windowSystem) {
+            // 注册回调，在窗口大小变化时更新UICanvas
+            windowSystem->AddResizeCallback([this](int width, int height) {
+                if (m_canvas) {
+                    // UICanvas会在SyncWithRenderer时自动更新窗口大小
+                    // 这里可以触发立即同步（如果需要）
+                    Logger::GetInstance().DebugFormat("[UIRuntimeModule] Window resized to %dx%d, UI will update on next frame", 
+                                                     width, height);
+                }
+            });
+            Logger::GetInstance().Info("[UIRuntimeModule] Registered window resize callback");
+        }
+    }
 }
 
 void UIRuntimeModule::EnsureSampleWidgets() {

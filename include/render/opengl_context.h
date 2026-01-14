@@ -104,6 +104,14 @@ public:
     void SetWindowSize(int width, int height);
     
     /**
+     * @brief 处理窗口大小变化（由 SDL 事件触发）
+     * @param width 新的窗口宽度
+     * @param height 新的窗口高度
+     * @note 此方法用于响应 SDL_EVENT_WINDOW_RESIZED 事件，更新内部状态并触发回调
+     */
+    void HandleWindowResize(int width, int height);
+    
+    /**
      * @brief 设置全屏模式
      * @param fullscreen 是否全屏
      */

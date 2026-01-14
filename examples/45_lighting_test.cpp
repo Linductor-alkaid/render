@@ -240,6 +240,7 @@ int main(int argc, char* argv[]) {
     world.RegisterSystem<LightSystem>(renderer);
     world.RegisterSystem<UniformSystem>(renderer);
     world.RegisterSystem<MeshRenderSystem>(renderer);
+    world.RegisterSystem<WindowSystem>(renderer);
     world.PostInitialize();
 
     SetupCamera(world);
@@ -259,6 +260,16 @@ int main(int argc, char* argv[]) {
             }
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
                 running = false;
+            }
+            // 处理窗口大小变化事件
+            if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+                int width = event.window.data1;
+                int height = event.window.data2;
+                Logger::GetInstance().InfoFormat("[45_lighting_test] SDL window resize event: %dx%d", width, height);
+                auto context = renderer->GetContext();
+                if (context) {
+                    context->HandleWindowResize(width, height);
+                }
             }
         }
 

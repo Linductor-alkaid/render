@@ -34,6 +34,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <functional>
 
 namespace Render {
 
@@ -714,9 +715,44 @@ private:
 // ============================================================
 
 /**
+ * @brief 视口适配策略枚举
+ * 
+ * 定义窗口大小变化时视口的适配方式
+ */
+enum class ViewportAdaptationMode {
+    FixedFrustum,      ///< 方案1：固定视角范围，改变宽高比（当前实现）
+    FixedSize,         ///< 方案2：固定画面大小，调整FOV/正交范围
+    Locked             ///< 方案3：锁定窗口，禁止变化
+};
+
+/**
+ * @brief 视口适配配置结构
+ * 
+ * 配置窗口大小变化时的适配策略和相关参数
+ */
+struct ViewportAdaptationConfig {
+    ViewportAdaptationMode mode = ViewportAdaptationMode::FixedFrustum;  ///< 适配策略
+    
+    // 窗口尺寸限制
+    int minWidth = 0;      ///< 最小宽度（0表示无限制）
+    int minHeight = 0;     ///< 最小高度（0表示无限制）
+    int maxWidth = 0;      ///< 最大宽度（0表示无限制）
+    int maxHeight = 0;     ///< 最大高度（0表示无限制）
+    
+    // 其他选项
+    bool allowFullscreen = true;  ///< 是否允许全屏切换
+    bool handleExtremeAspectRatio = false;  ///< 是否处理极端宽高比（letterbox/pillarbox），默认false表示视口总是填充整个窗口
+    
+    // 锁定模式专用
+    int lockedWidth = 1280;   ///< 锁定模式的窗口宽度
+    int lockedHeight = 720;    ///< 锁定模式的窗口高度
+};
+
+/**
  * @brief Window 系统
  * 
  * 监控窗口大小变化，自动更新相机宽高比和视口
+ * 支持多种视口适配策略
  * 优先级：3（在相机系统之前）
  * 
  * @note 前置条件：
@@ -727,7 +763,8 @@ private:
  * @note 实现机制：
  * - 使用 OpenGLContext 的窗口大小变化回调机制（事件驱动）
  * - 不再使用轮询检测窗口大小变化
- * - 自动更新相机宽高比和渲染视口
+ * - 支持多种视口适配策略
+ * - 提供窗口大小回调接口供UI系统等使用
  */
 class WindowSystem : public System {
 public:
@@ -739,12 +776,106 @@ public:
     void OnCreate(World* world) override;
     void OnDestroy() override;
     
+    // ==================== 适配策略配置 ====================
+    
+    /**
+     * @brief 设置视口适配策略
+     * @param mode 适配策略模式
+     */
+    void SetAdaptationMode(ViewportAdaptationMode mode);
+    
+    /**
+     * @brief 获取当前适配策略
+     * @return 适配策略模式
+     */
+    [[nodiscard]] ViewportAdaptationMode GetAdaptationMode() const { return m_config.mode; }
+    
+    /**
+     * @brief 设置详细适配配置
+     * @param config 适配配置
+     */
+    void SetAdaptationConfig(const ViewportAdaptationConfig& config);
+    
+    /**
+     * @brief 获取当前适配配置
+     * @return 适配配置
+     */
+    [[nodiscard]] const ViewportAdaptationConfig& GetAdaptationConfig() const { return m_config; }
+    
+    // ==================== 窗口大小回调接口 ====================
+    
+    /**
+     * @brief 窗口大小变化回调函数类型
+     */
+    using WindowResizeCallback = std::function<void(int width, int height)>;
+    
+    /**
+     * @brief 添加窗口大小变化回调
+     * @param callback 回调函数
+     * @return 回调ID（可用于移除回调）
+     * 
+     * @note 回调会在窗口大小变化时被调用，供UI系统等使用
+     */
+    uint32_t AddResizeCallback(WindowResizeCallback callback);
+    
+    /**
+     * @brief 移除窗口大小变化回调
+     * @param callbackId 回调ID
+     * @return 成功返回true
+     */
+    bool RemoveResizeCallback(uint32_t callbackId);
+    
+    /**
+     * @brief 清除所有窗口大小变化回调
+     */
+    void ClearResizeCallbacks();
+    
+    /**
+     * @brief 应用视口设置（供Renderer在FlushRenderQueue时调用）
+     * 
+     * 这个方法会在渲染前确保视口设置正确
+     * 应该在 FlushRenderQueue() 开始时调用
+     */
+    void ApplyViewport();
+    
 private:
     /// 窗口大小变化回调处理
     void OnWindowResized(int width, int height);
     
+    /// 应用适配策略：FixedFrustum
+    void ApplyFixedFrustumStrategy(int width, int height);
+    
+    /// 应用适配策略：FixedSize
+    void ApplyFixedSizeStrategy(int width, int height);
+    
+    /// 应用适配策略：Locked
+    void ApplyLockedStrategy(int width, int height);
+    
+    /// 裁剪窗口尺寸到限制范围内
+    void ClampWindowSize(int& width, int& height) const;
+    
+    /// 处理极端宽高比（letterbox/pillarbox）
+    void HandleExtremeAspectRatio(int& width, int& height, float& viewportX, float& viewportY, 
+                                   float& viewportWidth, float& viewportHeight) const;
+    
+    /// 通知所有注册的回调
+    void NotifyResizeCallbacks(int width, int height);
+    
     Renderer* m_renderer;                    ///< 渲染器指针
     CameraSystem* m_cameraSystem = nullptr;  ///< 缓存的相机系统
+    
+    ViewportAdaptationConfig m_config;       ///< 适配策略配置
+    int m_lastWidth = 0;                     ///< 上次窗口宽度（用于FixedSize策略）
+    int m_lastHeight = 0;                    ///< 上次窗口高度（用于FixedSize策略）
+    int m_lockedWidth = 1280;               ///< 锁定模式的窗口宽度
+    int m_lockedHeight = 720;                ///< 锁定模式的窗口高度
+    int m_currentViewportWidth = 0;          ///< 当前视口宽度
+    int m_currentViewportHeight = 0;        ///< 当前视口高度
+    bool m_viewportNeedsUpdate = true;       ///< 视口是否需要更新（防止被Renderer::BeginFrame覆盖）
+    
+    // 窗口大小回调管理
+    uint32_t m_nextCallbackId = 1;          ///< 下一个回调ID
+    std::unordered_map<uint32_t, WindowResizeCallback> m_resizeCallbacks;  ///< 回调映射
 };
 
 // ============================================================
