@@ -211,10 +211,11 @@ private:
 };
 ```
 
-**实现机制（v1.1）**：
+**实现机制（v1.1+）**：
 - ✅ **事件驱动**：使用 `OpenGLContext` 的窗口大小变化回调机制
 - ✅ **高效**：不再使用轮询检测，只在窗口大小真正变化时触发
 - ✅ **即时响应**：窗口大小变化立即触发回调，无延迟
+- ✅ **SDL 事件支持**（v1.2，2025-01-15）：`InputModule` 自动处理 `SDL_EVENT_WINDOW_RESIZED` 事件，用户拖动窗口时自动更新视口
 
 **前置条件**：
 1. ⚠️ Renderer 必须已经初始化（调用 `Renderer::Initialize()`）
@@ -243,9 +244,15 @@ world->RegisterSystem<WindowSystem>(renderer.get());
 **工作流程**：
 
 ```
-用户调整窗口大小
+用户拖动窗口调整大小
         ↓
-OpenGLContext 检测到变化
+SDL 产生 SDL_EVENT_WINDOW_RESIZED 事件
+        ↓
+InputModule 捕获事件
+        ↓
+调用 OpenGLContext::HandleWindowResize()
+        ↓
+OpenGLContext 更新视口并触发回调
         ↓
 触发 WindowSystem::OnWindowResized() 回调
         ↓
@@ -255,10 +262,23 @@ OpenGLContext 检测到变化
 └──────────────────────┴──────────────────────┘
 ```
 
+**或者（程序主动调用）**：
+
+```
+程序调用 SetWindowSize()
+        ↓
+OpenGLContext 更新窗口并触发回调
+        ↓
+触发 WindowSystem::OnWindowResized() 回调
+        ↓
+更新相机宽高比和渲染视口
+```
+
 **注意事项**：
 - ⚠️ 回调在 OpenGL 线程中执行，确保不阻塞主线程
 - ⚠️ 如果 Renderer 未初始化，系统会记录错误日志并跳过
 - ✅ 系统销毁时，回调会随 OpenGLContext 自动清理
+- ✅ **自动支持用户拖动窗口**（v1.2，2025-01-15）：`InputModule` 会自动处理 SDL 窗口大小变化事件，无需额外配置
 
 **错误处理**：
 ```cpp

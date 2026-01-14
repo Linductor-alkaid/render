@@ -132,7 +132,7 @@ void SetWindowTitle(const std::string& title);
 
 ### SetWindowSize
 
-设置窗口大小。
+设置窗口大小（程序主动调用）。
 
 ```cpp
 void SetWindowSize(int width, int height);
@@ -153,6 +153,51 @@ context.AddResizeCallback([&camera](int w, int h) {
 // 改变窗口大小，相机会自动更新
 context.SetWindowSize(1280, 720);
 ```
+
+**参考**: [窗口大小变化回调](#窗口大小变化回调)
+
+---
+
+### HandleWindowResize
+
+处理窗口大小变化（由 SDL 事件触发）。
+
+```cpp
+void HandleWindowResize(int width, int height);
+```
+
+**功能**:
+- 更新内部窗口尺寸状态（`m_width`, `m_height`）
+- 更新 OpenGL 视口
+- **自动触发所有已注册的窗口大小变化回调** ⭐ **新增 (2025-01-15)**
+
+**使用场景**:
+- 当用户拖动窗口调整大小时，SDL 会产生 `SDL_EVENT_WINDOW_RESIZED` 事件
+- `InputModule` 会捕获该事件并调用此方法
+- 此方法会更新视口并触发所有已注册的回调（如 `WindowSystem` 的回调）
+
+**参数**:
+- `width` - 新的窗口宽度
+- `height` - 新的窗口高度
+
+**注意事项**:
+- 此方法通常由 `InputModule` 内部调用，用户代码一般不需要直接调用
+- 如果上下文未初始化或窗口为空，会记录警告并返回
+- 如果宽度或高度无效（≤0），会记录警告并返回
+
+**示例**:
+```cpp
+// 在 InputModule 中（自动处理）
+if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+    int width = event.window.data1;
+    int height = event.window.data2;
+    context->HandleWindowResize(width, height);
+}
+```
+
+**与 `SetWindowSize` 的区别**:
+- `SetWindowSize`: 程序主动改变窗口大小（调用 `SDL_SetWindowSize`）
+- `HandleWindowResize`: 响应 SDL 事件，处理用户拖动窗口导致的大小变化
 
 **参考**: [窗口大小变化回调](#窗口大小变化回调)
 
@@ -199,7 +244,7 @@ using WindowResizeCallback = std::function<void(int width, int height)>;
 void AddResizeCallback(WindowResizeCallback callback);
 ```
 
-**功能**: 当窗口大小改变时（通过 `SetWindowSize` 调用），所有已注册的回调将被调用。
+**功能**: 当窗口大小改变时（通过 `SetWindowSize` 或 `HandleWindowResize` 调用），所有已注册的回调将被调用。
 
 **线程安全**: 是
 
@@ -224,9 +269,10 @@ context.AddResizeCallback([](int w, int h) {
 ```
 
 **注意事项**:
-1. 回调会在 `SetWindowSize` 方法内部调用
+1. 回调会在 `SetWindowSize` 或 `HandleWindowResize` 方法内部调用
 2. 回调执行时已经持有内部互斥锁，避免在回调中执行耗时操作
 3. 如果回调抛出异常，会被捕获并记录，不会影响其他回调的执行
+4. 用户拖动窗口调整大小时，`InputModule` 会自动调用 `HandleWindowResize`，触发所有回调
 
 ---
 
@@ -441,6 +487,7 @@ int main() {
    - 避免在回调中执行耗时操作
    - 回调是线程安全的
    - 适用场景：更新相机宽高比、调整渲染目标大小等
+   - **自动支持用户拖动窗口**（v1.2，2025-01-15）：`InputModule` 会自动处理 `SDL_EVENT_WINDOW_RESIZED` 事件，调用 `HandleWindowResize()` 方法
 
 ---
 
