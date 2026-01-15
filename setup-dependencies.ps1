@@ -494,7 +494,10 @@ if (-not $SkipImGui) {
     if ($needsBranchSwitch) {
         Write-Host "Switching ImGui to 'docking' branch..." -ForegroundColor Yellow
         Push-Location $ImGuiDir
-        git fetch origin docking 2>&1 | Out-Null
+        $oldErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        git fetch origin docking *>$null
+        $ErrorActionPreference = $oldErrorAction
         git checkout docking
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Error: Failed to switch to 'docking' branch" -ForegroundColor Red
