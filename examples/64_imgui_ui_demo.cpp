@@ -20,13 +20,21 @@
  */
 /**
  * @file 64_imgui_ui_demo.cpp
- * @brief ImGui UI后端演示程序
+ * @brief ImGui UI后端演示程序（包含Docking功能）
  * 
  * 本示例展示了如何使用ImGui作为UI渲染后端：
  * - 初始化ImGui后端
  * - 使用ImGui API创建各种UI控件
  * - 显示ImGui示例窗口
  * - 演示基本的ImGui功能
+ * - 演示ImGui Docking（窗口停靠）功能
+ * 
+ * Docking功能说明：
+ * - 使用DockSpaceOverViewport()创建停靠空间
+ * - 所有窗口都可以停靠到视口边缘或其他窗口
+ * - 支持拖拽窗口标题栏进行停靠
+ * - 支持标签页界面
+ * - 按住SHIFT键可以禁用停靠
  */
 
 #include <SDL3/SDL.h>
@@ -233,6 +241,15 @@ UI::UITheme CreateGreenTheme() {
 
 // 在ImGui后端中渲染自定义UI
 void RenderImGuiUI() {
+    // 0. 创建DockSpace - 必须在任何窗口之前提交
+    // 这将允许所有窗口可以停靠到视口的边缘
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+        // 创建覆盖整个视口的停靠空间
+        // 参数：dockspace_id (0=自动生成), viewport (nullptr=主视口), flags, window_class
+        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+    }
+
     // 1. 显示ImGui示例窗口（包含所有控件演示）
     if (g_demoState.showDemoWindow) {
         ImGui::ShowDemoWindow(&g_demoState.showDemoWindow);
@@ -388,6 +405,147 @@ void RenderImGuiUI() {
         ImGui::Text("ImGui版本: %s", IMGUI_VERSION);
         ImGui::Text("ImGui版本号: %d", IMGUI_VERSION_NUM);
         ImGui::End();
+    }
+
+    // 5. Docking功能演示窗口
+    {
+        static bool showDockingDemo = true;
+        if (showDockingDemo) {
+            ImGui::Begin("Docking演示", &showDockingDemo);
+            ImGui::Text("这是Docking功能演示窗口");
+            ImGui::Separator();
+            ImGui::TextWrapped("使用说明：");
+            ImGui::BulletText("拖拽窗口标题栏可以将窗口停靠到边缘");
+            ImGui::BulletText("拖拽窗口标签页可以重新排列窗口");
+            ImGui::BulletText("按住SHIFT键拖拽可以禁用停靠");
+            ImGui::BulletText("点击窗口左上角的菜单按钮可以取消停靠整个节点");
+            ImGui::Separator();
+            ImGui::Text("当前窗口可以停靠到其他窗口或视口边缘");
+            ImGui::Text("尝试将多个窗口停靠在一起创建标签页界面！");
+            ImGui::End();
+        }
+    }
+
+    // 6. 控制面板窗口（演示多个可停靠窗口）
+    {
+        static bool showControlPanel = true;
+        if (showControlPanel) {
+            ImGui::Begin("控制面板", &showControlPanel);
+            ImGui::Text("这是一个控制面板窗口");
+            ImGui::Separator();
+            ImGui::Text("可以停靠到左侧或右侧");
+            ImGui::Separator();
+            ImGui::Text("帧率信息:");
+            ImGui::Text("  %.3f ms/frame", 1000.0f / ImGui::GetIO().Framerate);
+            ImGui::Text("  %.1f FPS", ImGui::GetIO().Framerate);
+            ImGui::Separator();
+            ImGui::Text("窗口状态:");
+            ImGui::Text("  Docking已启用: %s", 
+                (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) ? "是" : "否");
+            ImGui::End();
+        }
+    }
+
+    // 7. 属性编辑器窗口（演示另一个可停靠窗口）
+    {
+        static bool showPropertyEditor = true;
+        static float propertyValue1 = 0.5f;
+        static float propertyValue2 = 1.0f;
+        static int propertyInt = 42;
+        static bool propertyBool = true;
+        
+        if (showPropertyEditor) {
+            ImGui::Begin("属性编辑器", &showPropertyEditor);
+            ImGui::Text("属性编辑器窗口");
+            ImGui::Separator();
+            ImGui::SliderFloat("属性值1", &propertyValue1, 0.0f, 1.0f);
+            ImGui::SliderFloat("属性值2", &propertyValue2, 0.0f, 2.0f);
+            ImGui::SliderInt("整数属性", &propertyInt, 0, 100);
+            ImGui::Checkbox("布尔属性", &propertyBool);
+            ImGui::Separator();
+            ImGui::Text("当前值:");
+            ImGui::Text("  属性值1: %.3f", propertyValue1);
+            ImGui::Text("  属性值2: %.3f", propertyValue2);
+            ImGui::Text("  整数属性: %d", propertyInt);
+            ImGui::Text("  布尔属性: %s", propertyBool ? "真" : "假");
+            ImGui::End();
+        }
+    }
+
+    // 8. 日志窗口（演示另一个可停靠窗口）
+    {
+        static bool showLogWindow = true;
+        static ImGuiTextBuffer logBuffer;
+        static int logLineCount = 0;
+        
+        if (showLogWindow) {
+            ImGui::Begin("日志窗口", &showLogWindow);
+            
+            // 添加一些示例日志
+            if (logLineCount < 100) {
+                logBuffer.appendf("[%04d] 这是一条日志消息 %d\n", logLineCount, logLineCount);
+                logLineCount++;
+            }
+            
+            ImGui::Text("日志输出:");
+            ImGui::BeginChild("ScrollingRegion", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), false, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::TextUnformatted(logBuffer.begin(), logBuffer.end());
+            ImGui::EndChild();
+            
+            if (ImGui::Button("清空日志")) {
+                logBuffer.clear();
+                logLineCount = 0;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("添加日志")) {
+                logBuffer.appendf("[%04d] 新日志消息: %s\n", logLineCount++, "手动添加");
+            }
+            
+            ImGui::End();
+        }
+    }
+
+    // 9. 场景视图窗口（演示另一个可停靠窗口）
+    {
+        static bool showSceneView = true;
+        if (showSceneView) {
+            ImGui::Begin("场景视图", &showSceneView);
+            ImGui::Text("场景视图窗口");
+            ImGui::Separator();
+            ImGui::Text("这里可以显示3D场景预览");
+            ImGui::Text("窗口可以停靠到中央区域");
+            ImGui::Separator();
+            
+            // 模拟一个简单的场景视图区域
+            ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+            ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+            
+            // 绘制一个简单的背景
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), 
+                IM_COL32(30, 30, 30, 255));
+            drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), 
+                IM_COL32(100, 100, 100, 255));
+            
+            // 在中心绘制一个简单的网格
+            float gridSize = 20.0f;
+            ImU32 gridColor = IM_COL32(60, 60, 60, 255);
+            for (float x = canvasPos.x; x < canvasPos.x + canvasSize.x; x += gridSize) {
+                drawList->AddLine(ImVec2(x, canvasPos.y), ImVec2(x, canvasPos.y + canvasSize.y), gridColor);
+            }
+            for (float y = canvasPos.y; y < canvasPos.y + canvasSize.y; y += gridSize) {
+                drawList->AddLine(ImVec2(canvasPos.x, y), ImVec2(canvasPos.x + canvasSize.x, y), gridColor);
+            }
+            
+            // 在中心绘制一个简单的形状
+            ImVec2 center = ImVec2(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+            float radius = std::min(canvasSize.x, canvasSize.y) * 0.2f;
+            drawList->AddCircleFilled(center, radius, IM_COL32(100, 150, 200, 255), 32);
+            
+            ImGui::Dummy(canvasSize);
+            
+            ImGui::End();
+        }
     }
 }
 
