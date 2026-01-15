@@ -87,6 +87,9 @@ void ImGuiUIRendererBackend::Initialize(Application::AppContext& ctx) {
     (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;       // Enable Gamepad Controls
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable Docking
+    // 可选：启用多视口支持（Multi-Viewport）
+    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;    // Enable Multi-Viewport
 
     // Setup Dear ImGui style
     // 如果已经有主题管理器，会在后面同步主题

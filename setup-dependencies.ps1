@@ -444,10 +444,11 @@ if (-not $SkipBullet3) {
 }
 
 
-# 8. Clone ImGui
+# 8. Clone ImGui and switch to docking branch
 if (-not $SkipImGui) {
     $ImGuiDir = "imgui"
     $needsClone = $false
+    $needsBranchSwitch = $false
     
     if (Test-Path $ImGuiDir) {
         # Check if directory is empty
@@ -457,7 +458,22 @@ if (-not $SkipImGui) {
             Remove-Item -Path $ImGuiDir -Recurse -Force
             $needsClone = $true
         } else {
-            Write-Host "ImGui already exists and is complete, skipping clone" -ForegroundColor Green
+            Write-Host "ImGui already exists, checking branch..." -ForegroundColor Yellow
+            # Check current branch
+            Push-Location $ImGuiDir
+            $currentBranch = git rev-parse --abbrev-ref HEAD 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if ($currentBranch -ne "docking") {
+                    Write-Host "  Current branch is '$currentBranch', need to switch to 'docking'" -ForegroundColor Yellow
+                    $needsBranchSwitch = $true
+                } else {
+                    Write-Host "  Already on 'docking' branch" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "  Warning: Could not determine current branch, will attempt to switch" -ForegroundColor Yellow
+                $needsBranchSwitch = $true
+            }
+            Pop-Location
         }
     } else {
         $needsClone = $true
@@ -471,6 +487,28 @@ if (-not $SkipImGui) {
             Pop-Location
             exit 1
         }
+        $needsBranchSwitch = $true
+    }
+    
+    # Switch to docking branch if needed
+    if ($needsBranchSwitch) {
+        Write-Host "Switching ImGui to 'docking' branch..." -ForegroundColor Yellow
+        Push-Location $ImGuiDir
+        git fetch origin docking 2>&1 | Out-Null
+        git checkout docking
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: Failed to switch to 'docking' branch" -ForegroundColor Red
+            Pop-Location
+            Pop-Location  # Return to original directory (from ThirdPartyDir)
+            exit 1
+        }
+        git pull origin docking
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Warning: Failed to pull latest changes from 'docking' branch" -ForegroundColor Yellow
+        } else {
+            Write-Host "ImGui switched to 'docking' branch successfully" -ForegroundColor Green
+        }
+        Pop-Location
     }
 } else {
     Write-Host "Skipping ImGui (using --SkipImGui)" -ForegroundColor Gray
